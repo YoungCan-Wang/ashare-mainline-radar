@@ -1,0 +1,29 @@
+{
+  "rss_feeds": [
+    {
+      "name": "Sina Finance Stock",
+      "url": "https://rss.sina.com.cn/finance/stock.xml",
+      "tags": ["news", "market"]
+    }
+  ],
+  "web_pages": [
+    {
+      "name": "People's Bank of China",
+      "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html",
+      "tags": ["macro", "policy"]
+    },
+    {
+      "name": "CSRC News",
+      "url": "http://www.csrc.gov.cn/csrc/c100028/common_list.shtml",
+      "tags": ["policy", "market"]
+    },
+    {
+      "name": "NDRC News",
+      "url": "https://www.ndrc.gov.cn/xwdt/xwfb/",
+      "tags": ["macro", "policy"]
+    }
+  ],
+  "local_report_dirs": [
+    "data/research_reports/inbox"
+  ]
+}
