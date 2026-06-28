@@ -125,8 +125,11 @@ class MainlineRadar:
         warnings = [
             "本报告只用于研究和交易准备，不构成投资建议。",
             "v0.1 的主题归因主要来自配置文件，未配置题材可能只出现在全市场强势带里。",
-            "TickFlow 免费模式使用历史日 K，不提供盘中实时更新。",
         ]
+        if self.client.api_key:
+            warnings.append("当前使用 TickFlow 完整 API；实时/分钟线能力仍取决于账号权限和本报告配置。")
+        else:
+            warnings.append("TickFlow 免费模式使用历史日 K，不提供盘中实时更新。")
         return RadarReport(
             generated_at=utc_now_iso(),
             data_as_of=data_as_of,
