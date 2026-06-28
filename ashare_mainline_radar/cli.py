@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--strong-stock-limit", type=int, default=12)
     parser.add_argument("--send-feishu", action="store_true", help="Send a compact report to FEISHU_WEBHOOK_URL.")
     parser.add_argument("--feishu-webhook-url", default=os.getenv("FEISHU_WEBHOOK_URL"))
+    parser.add_argument("--fail-on-feishu-error", action="store_true")
     parser.add_argument("--tickflow-base-url", default=os.getenv("TICKFLOW_BASE_URL"))
     return parser
 
@@ -61,10 +62,14 @@ def main(argv: list[str] | None = None) -> int:
         if not args.feishu_webhook_url:
             print("FEISHU_WEBHOOK_URL is not set; skipped Feishu notification.")
         else:
+            sent_feishu = False
             try:
                 send_feishu_text(args.feishu_webhook_url, build_feishu_text(report))
+                sent_feishu = True
             except FeishuNotifyError as exc:
                 print(f"Feishu notification failed: {exc}")
-                return 2
-            print("Sent Feishu notification.")
+                if args.fail_on_feishu_error:
+                    return 2
+            if sent_feishu:
+                print("Sent Feishu notification.")
     return 0

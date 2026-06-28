@@ -125,7 +125,7 @@ FEISHU_WEBHOOK_URL
 TUSHARE_TOKEN
 ```
 
-`FEISHU_WEBHOOK_URL` 配置后，工作流会在生成报告后向飞书机器人发送主线、环境和强势个股候选摘要。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
+`FEISHU_WEBHOOK_URL` 配置后，工作流会在生成报告后向飞书机器人发送主线、环境和强势个股候选摘要。默认情况下，飞书侧临时失败不会阻断报告 artifact 上传；如果希望本地或 CI 严格失败，可以加 `--fail-on-feishu-error`。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
 
 ## 本地验证
 
