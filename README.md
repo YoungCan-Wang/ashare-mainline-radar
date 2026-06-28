@@ -139,6 +139,12 @@ reports/latest/notification_status.json
 FEISHU_WEBHOOK_URL="..." python3 scripts/check_feishu.py
 ```
 
+常见飞书 webhook 状态：
+
+- `sent`：飞书已接受消息。
+- `failed` + `code=19007` + `Bot Not Enabled`：飞书侧机器人未启用、被禁用或被移除；需要在飞书群机器人设置里启用当前机器人，或换一个状态正常的新 webhook。
+- `skipped`：没有配置 `FEISHU_WEBHOOK_URL`。
+
 ## 本地验证
 
 ```bash
