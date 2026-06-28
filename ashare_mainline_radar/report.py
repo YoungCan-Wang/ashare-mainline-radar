@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import IntelItem, RadarReport, SymbolSnapshot, ThemeSnapshot, pct
+from .models import DataSourceStatus, IntelItem, MarketPulse, RadarReport, SymbolSnapshot, ThemeSnapshot, pct
 
 
 def _fmt(value: float | None, digits: int = 2) -> str:
@@ -42,6 +42,20 @@ def _theme_row(rank: int, theme: ThemeSnapshot) -> str:
         f"{pct(theme.avg_ret_5d)} | {pct(theme.avg_ret_20d)} | {_ratio(theme.amount_heat)} | "
         f"{pct(theme.breadth_20d)} | {theme.catalyst_count} | {vehicles} |"
     )
+
+
+def _pulse_row(rank: int, pulse: MarketPulse) -> str:
+    leaders = ", ".join(f"{item.name} `{item.symbol}`" for item in pulse.leaders[:3]) if pulse.leaders else "-"
+    return (
+        f"| {rank} | {pulse.name} | {pulse.status} | {pulse.score:.1f} | {pulse.members} | "
+        f"{pct(pulse.avg_ret_5d)} | {pct(pulse.avg_ret_20d)} | {_ratio(pulse.amount_heat)} | "
+        f"{pct(pulse.positive_20d)} | {leaders} |"
+    )
+
+
+def _source_row(source: DataSourceStatus) -> str:
+    message = (source.message or "").replace("|", "/")
+    return f"| {source.name} | {source.kind} | {source.status} | {source.items} | {message} |"
 
 
 def _participation_note(theme: ThemeSnapshot) -> str:
@@ -85,6 +99,18 @@ def render_markdown(report: RadarReport) -> str:
         lines.append(_participation_note(top))
         lines.append("")
 
+    if report.market_pulses:
+        lines.append("## 市场环境与外围映射")
+        lines.append("")
+        lines.append("| 排名 | 环境组 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 代表标的 |")
+        lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+        for rank, pulse in enumerate(report.market_pulses, start=1):
+            lines.append(_pulse_row(rank, pulse))
+        lines.append("")
+        best_pulse = report.market_pulses[0]
+        lines.append(f"环境结论：**{best_pulse.name}** 当前最强，状态为 **{best_pulse.status}**，证据包括：{'; '.join(best_pulse.evidence)}。")
+        lines.append("")
+
     lines.append("## 主线拆解")
     lines.append("")
     for theme in report.themes[:6]:
@@ -121,6 +147,14 @@ def render_markdown(report: RadarReport) -> str:
             lines.append(f"- **{themes}** | {item.source}: {item.title}{url}")
     else:
         lines.append("- 暂无命中主题关键词的情报项；可把研报摘要或纪要放入 `data/research_reports/inbox/` 后重新运行。")
+    lines.append("")
+
+    lines.append("## 数据源状态")
+    lines.append("")
+    lines.append("| 数据源 | 类型 | 状态 | 条目 | 说明 |")
+    lines.append("| --- | --- | --- | ---: | --- |")
+    for source in report.source_statuses:
+        lines.append(_source_row(source))
     lines.append("")
 
     lines.append("## 风险提示")

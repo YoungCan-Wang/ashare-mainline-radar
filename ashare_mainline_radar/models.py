@@ -84,6 +84,29 @@ class IntelItem:
 
 
 @dataclass
+class DataSourceStatus:
+    name: str
+    kind: str
+    status: str
+    items: int = 0
+    message: str | None = None
+
+
+@dataclass
+class MarketPulse:
+    name: str
+    status: str
+    score: float
+    members: int
+    avg_ret_5d: float | None
+    avg_ret_20d: float | None
+    amount_heat: float | None
+    positive_20d: float | None
+    leaders: list[SymbolSnapshot] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ThemeSnapshot:
     name: str
     score: float
@@ -109,9 +132,11 @@ class RadarReport:
     scanned_symbols: int
     data_source: str
     themes: list[ThemeSnapshot]
+    market_pulses: list[MarketPulse]
     leader_tape: list[SymbolSnapshot]
     market_watchlist: list[SymbolSnapshot]
     intel_items: list[IntelItem]
+    source_statuses: list[DataSourceStatus]
     warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:

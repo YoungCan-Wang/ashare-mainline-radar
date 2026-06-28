@@ -1,9 +1,15 @@
 {
-  "rss_feeds": [
+  "rss_feeds": [],
+  "listing_pages": [
     {
-      "name": "Sina Finance Stock",
-      "url": "https://rss.sina.com.cn/finance/stock.xml",
-      "tags": ["news", "market"]
+      "name": "Yicai News",
+      "url": "https://www.yicai.com/news/",
+      "tags": ["news", "macro", "market"],
+      "max_items": 40,
+      "include_keywords": [
+        "A股", "市场", "股", "科技", "AI", "机器人", "半导体", "芯片",
+        "政策", "美元", "美股", "公告", "经济", "金融", "基金", "产业"
+      ]
     }
   ],
   "web_pages": [

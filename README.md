@@ -20,7 +20,7 @@ Skill 适合封装一次性工作流；主线参与需要长期运行、数据�
 - TickFlow HTTP API：A 股/ETF/美股/港股的标的池、标的元数据、日 K、实时行情等。
 - 免费模式：无需 API key，可用日 K、标的池、标的信息，适合收盘后主线扫描。
 - 完整模式：设置 `TICKFLOW_API_KEY` 后自动使用 `https://api.tickflow.org`，后续可扩展实时行情和分钟线。
-- 情报源：`configs/intel_sources.json` 支持 RSS、网页标题、手动导入研报文本/纪要。
+- 情报源：`configs/intel_sources.json` 支持 RSS、资讯列表页、网页标题、手动导入研报文本/纪要。
 
 TickFlow 文档：https://docs.tickflow.org/zh-Hans
 
@@ -65,12 +65,13 @@ python3 scripts/run_daily.py --mode universe --max-symbols 0
 
 ## 主线评分口径
 
-第一版评分由三部分构成：
+当前评分由四部分构成：
 
 - 价格趋势：5 日、20 日涨幅、是否接近 20 日高点。
 - 成交热度：5 日成交额均值相对 20 日成交额均值。
 - 主线广度：主题内上涨股票比例、有效成员数量、龙头强度。
 - 催化证据：新闻、宏观、研报摘录中命中的主题关键词。
+- 环境确认：A 股宽基、券商风险偏好、科技成长、外围科技映射、防御红利等环境组。
 
 报告会把分数拆成证据，不把它做成黑箱。
 
@@ -94,13 +95,15 @@ python3 scripts/run_daily.py --mode universe --max-symbols 0
 
 ## 研报和新闻
 
-券商研报多数受版权和登录限制影响，项目不内置抓取付费研报全文。建议把你有权限使用的研报摘要、纪要或 Markdown/TXT 放进：
+券商研报多数受版权和登录限制影响，项目不内置抓取付费研报全文。建议把你有权限使用的研报摘要、纪要或 Markdown/TXT/HTML 放进：
 
 ```text
 data/research_reports/inbox/
 ```
 
 运行时会自动读取这些本地文本，并用主题关键词打标签，作为主线催化证据。
+
+报告底部会输出“数据源状态”，用于检查 TickFlow、RSS、政策网页、本地研报箱是否成功拉取，避免某个源失败时误以为市场没有线索。
 
 ## GitHub Actions
 

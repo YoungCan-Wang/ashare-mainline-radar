@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import PROJECT_ROOT, resolve_project_path
-from .models import IntelItem
+from .models import DataSourceStatus, IntelItem
 
 
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
@@ -19,6 +20,8 @@ META_DESC_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 TAG_RE = re.compile(r"<[^>]+>")
+LINK_RE = re.compile(r"<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+HEADING_RE = re.compile(r"<h[1-3][^>]*>(.*?)</h[1-3]>", re.IGNORECASE | re.DOTALL)
 
 
 def _clean_text(value: str | None, limit: int = 500) -> str:
@@ -55,6 +58,10 @@ def _find_child_text(element: ET.Element, names: tuple[str, ...]) -> str | None:
     return None
 
 
+def _source_name(source: dict[str, Any]) -> str:
+    return str(source.get("name") or source.get("url") or "unknown")
+
+
 def parse_rss(source: dict[str, Any]) -> list[IntelItem]:
     text = _fetch_text(str(source["url"]))
     if not text:
@@ -64,7 +71,7 @@ def parse_rss(source: dict[str, Any]) -> list[IntelItem]:
     except ET.ParseError:
         return []
     items: list[IntelItem] = []
-    source_name = str(source.get("name") or source["url"])
+    source_name = _source_name(source)
     tags = [str(tag) for tag in source.get("tags", [])]
     candidates = [item for item in root.iter() if item.tag.rsplit("}", 1)[-1].lower() in {"item", "entry"}]
     for element in candidates[:30]:
@@ -104,6 +111,39 @@ def parse_web_page(source: dict[str, Any]) -> list[IntelItem]:
     ]
 
 
+def parse_listing_page(source: dict[str, Any]) -> list[IntelItem]:
+    url = str(source["url"])
+    text = _fetch_text(url)
+    if not text:
+        return []
+    source_name = _source_name(source)
+    tags = [str(tag) for tag in source.get("tags", [])]
+    include_keywords = [str(keyword).lower() for keyword in source.get("include_keywords", [])]
+    max_items = int(source.get("max_items", 30))
+    seen: set[str] = set()
+    items: list[IntelItem] = []
+    for href, raw_title in LINK_RE.findall(text):
+        heading_match = HEADING_RE.search(raw_title)
+        title = _clean_text(heading_match.group(1) if heading_match else raw_title, 180)
+        if len(title) < 8 or title in seen:
+            continue
+        if include_keywords and not any(keyword in title.lower() for keyword in include_keywords):
+            continue
+        seen.add(title)
+        items.append(
+            IntelItem(
+                source=source_name,
+                title=title,
+                url=urllib.parse.urljoin(url, href),
+                published_at=datetime.now(timezone.utc).date().isoformat(),
+                tags=tags,
+            )
+        )
+        if len(items) >= max_items:
+            break
+    return items
+
+
 def read_local_reports(paths: list[str]) -> list[IntelItem]:
     items: list[IntelItem] = []
     for raw_path in paths:
@@ -111,7 +151,7 @@ def read_local_reports(paths: list[str]) -> list[IntelItem]:
         if not path.exists():
             continue
         for file_path in sorted(path.glob("**/*")):
-            if file_path.suffix.lower() not in {".md", ".txt"} or not file_path.is_file():
+            if file_path.suffix.lower() not in {".md", ".txt", ".html"} or not file_path.is_file():
                 continue
             try:
                 text = file_path.read_text(encoding="utf-8", errors="replace")
@@ -146,15 +186,83 @@ def tag_intel_items(items: list[IntelItem], keywords_by_theme: dict[str, list[st
     return items
 
 
-def collect_intelligence(intel_config: dict[str, Any], keywords_by_theme: dict[str, list[str]], limit: int = 80) -> list[IntelItem]:
+def collect_intelligence_with_status(
+    intel_config: dict[str, Any],
+    keywords_by_theme: dict[str, list[str]],
+    limit: int = 80,
+) -> tuple[list[IntelItem], list[DataSourceStatus]]:
     items: list[IntelItem] = []
+    statuses: list[DataSourceStatus] = []
     for source in intel_config.get("rss_feeds", []):
-        items.extend(parse_rss(source))
+        name = _source_name(source)
+        try:
+            parsed = parse_rss(source)
+        except Exception as exc:  # pragma: no cover - defensive around external sources
+            statuses.append(DataSourceStatus(name=name, kind="rss", status="error", message=str(exc)))
+            continue
+        items.extend(parsed)
+        statuses.append(
+            DataSourceStatus(
+                name=name,
+                kind="rss",
+                status="ok" if parsed else "empty",
+                items=len(parsed),
+                message=None if parsed else "No RSS items parsed",
+            )
+        )
     for source in intel_config.get("web_pages", []):
-        items.extend(parse_web_page(source))
-    items.extend(read_local_reports([str(path) for path in intel_config.get("local_report_dirs", [])]))
+        name = _source_name(source)
+        try:
+            parsed = parse_web_page(source)
+        except Exception as exc:  # pragma: no cover - defensive around external sources
+            statuses.append(DataSourceStatus(name=name, kind="web_page", status="error", message=str(exc)))
+            continue
+        items.extend(parsed)
+        statuses.append(
+            DataSourceStatus(
+                name=name,
+                kind="web_page",
+                status="ok" if parsed else "empty",
+                items=len(parsed),
+                message=None if parsed else "Page fetch failed or no title parsed",
+            )
+        )
+    for source in intel_config.get("listing_pages", []):
+        name = _source_name(source)
+        try:
+            parsed = parse_listing_page(source)
+        except Exception as exc:  # pragma: no cover - defensive around external sources
+            statuses.append(DataSourceStatus(name=name, kind="listing_page", status="error", message=str(exc)))
+            continue
+        items.extend(parsed)
+        statuses.append(
+            DataSourceStatus(
+                name=name,
+                kind="listing_page",
+                status="ok" if parsed else "empty",
+                items=len(parsed),
+                message=None if parsed else "No listing titles matched filters",
+            )
+        )
+    local_dirs = [str(path) for path in intel_config.get("local_report_dirs", [])]
+    local_items = read_local_reports(local_dirs)
+    items.extend(local_items)
+    statuses.append(
+        DataSourceStatus(
+            name="local research inbox",
+            kind="local_reports",
+            status="ok" if local_items else "empty",
+            items=len(local_items),
+            message=", ".join(local_dirs) if local_dirs else "No local report dirs configured",
+        )
+    )
     tagged = tag_intel_items(items, keywords_by_theme)
-    return tagged[:limit]
+    return tagged[:limit], statuses
+
+
+def collect_intelligence(intel_config: dict[str, Any], keywords_by_theme: dict[str, list[str]], limit: int = 80) -> list[IntelItem]:
+    tagged, _statuses = collect_intelligence_with_status(intel_config, keywords_by_theme, limit=limit)
+    return tagged
 
 
 def intel_match_index(items: list[IntelItem]) -> dict[str, list[str]]:

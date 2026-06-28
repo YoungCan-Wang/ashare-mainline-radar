@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from .config import configured_symbols, theme_keywords, theme_symbol_map
-from .intelligence import collect_intelligence, intel_match_index
+from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
-from .models import RadarReport, SymbolSnapshot, utc_now_iso
+from .market_context import build_market_pulses
+from .models import DataSourceStatus, RadarReport, SymbolSnapshot, utc_now_iso
 from .tickflow import TickFlowClient
 
 
@@ -69,6 +70,22 @@ class MainlineRadar:
 
         instruments = self.client.get_instruments(symbols)
         klines = self.client.get_klines_batch(symbols, period=period, count=lookback_days, adjust=adjust)
+        source_statuses = [
+            DataSourceStatus(
+                name="TickFlow instruments",
+                kind="market_data",
+                status="ok" if instruments else "empty",
+                items=len(instruments),
+                message=self.client.source_label,
+            ),
+            DataSourceStatus(
+                name="TickFlow klines",
+                kind="market_data",
+                status="ok" if klines else "empty",
+                items=len(klines),
+                message=f"{period}, lookback={lookback_days}, requested={len(symbols)}",
+            ),
+        ]
         last_timestamps = [series.last_timestamp for series in klines.values() if series.last_timestamp is not None]
         data_as_of = None
         if last_timestamps:
@@ -85,10 +102,12 @@ class MainlineRadar:
             if snapshot:
                 snapshots[symbol] = snapshot
 
-        intel_items = collect_intelligence(self.intel_config, keywords)
+        intel_items, intel_statuses = collect_intelligence_with_status(self.intel_config, keywords)
+        source_statuses.extend(intel_statuses)
         catalyst_count_by_theme = catalyst_counts(intel_match_index(intel_items))
         themes = build_theme_snapshots(self.theme_config, snapshots, catalyst_count_by_theme)
         leader_tape = build_leader_tape(snapshots, limit=leader_limit)
+        market_pulses = build_market_pulses(self.theme_config, snapshots)
 
         market_symbols = [str(item["symbol"]) for item in self.theme_config.get("market_watchlist", [])]
         market_watchlist = [snapshots[symbol] for symbol in market_symbols if symbol in snapshots]
@@ -105,9 +124,11 @@ class MainlineRadar:
             scanned_symbols=len(snapshots),
             data_source=self.client.source_label,
             themes=themes,
+            market_pulses=market_pulses,
             leader_tape=leader_tape,
             market_watchlist=market_watchlist,
             intel_items=intel_items,
+            source_statuses=source_statuses,
             warnings=warnings,
         )
 

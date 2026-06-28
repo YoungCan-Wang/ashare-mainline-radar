@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import http.client
 import time
 import urllib.error
 import urllib.parse
@@ -41,11 +42,13 @@ class TickFlowClient:
         base_url: str | None = None,
         timeout: float = 20.0,
         min_interval: float = 0.05,
+        retries: int = 3,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("TICKFLOW_API_KEY")
         self.base_url = (base_url or os.getenv("TICKFLOW_BASE_URL") or (FULL_BASE_URL if self.api_key else FREE_BASE_URL)).rstrip("/")
         self.timeout = timeout
         self.min_interval = min_interval
+        self.retries = max(1, retries)
         self._last_request_at = 0.0
 
     @property
@@ -74,15 +77,22 @@ class TickFlowClient:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode("utf-8")
         request = urllib.request.Request(url, data=data, method=method.upper(), headers=headers)
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                self._last_request_at = time.monotonic()
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            message = exc.read().decode("utf-8", errors="replace")
-            raise TickFlowError(f"TickFlow HTTP {exc.code} for {path}: {message}") from exc
-        except urllib.error.URLError as exc:
-            raise TickFlowError(f"TickFlow request failed for {path}: {exc}") from exc
+        last_error: BaseException | None = None
+        for attempt in range(1, self.retries + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    self._last_request_at = time.monotonic()
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                message = exc.read().decode("utf-8", errors="replace")
+                if 400 <= exc.code < 500:
+                    raise TickFlowError(f"TickFlow HTTP {exc.code} for {path}: {message}") from exc
+                last_error = exc
+            except (urllib.error.URLError, http.client.HTTPException, TimeoutError) as exc:
+                last_error = exc
+            if attempt < self.retries:
+                time.sleep(0.4 * attempt)
+        raise TickFlowError(f"TickFlow request failed for {path}: {last_error}") from last_error
 
     def get_universe(self, universe_id: str) -> dict[str, Any]:
         payload = self._request("GET", f"/v1/universes/{urllib.parse.quote(universe_id)}")
