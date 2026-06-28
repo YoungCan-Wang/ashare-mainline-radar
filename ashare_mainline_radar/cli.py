@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
-from .feishu import FeishuNotifyError, build_feishu_text, send_feishu_text
+from .feishu import FeishuStatus, build_feishu_text, post_feishu_text, write_feishu_status
 from .report import write_report
 from .tickflow import TickFlowClient
 
@@ -61,15 +61,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.send_feishu:
         if not args.feishu_webhook_url:
             print("FEISHU_WEBHOOK_URL is not set; skipped Feishu notification.")
+            write_feishu_status(args.output_dir / "notification_status.json", FeishuStatus(status="skipped", message="FEISHU_WEBHOOK_URL is not set"))
         else:
-            sent_feishu = False
-            try:
-                send_feishu_text(args.feishu_webhook_url, build_feishu_text(report))
-                sent_feishu = True
-            except FeishuNotifyError as exc:
-                print(f"Feishu notification failed: {exc}")
+            status = post_feishu_text(args.feishu_webhook_url, build_feishu_text(report))
+            write_feishu_status(args.output_dir / "notification_status.json", status)
+            if status.status == "sent":
+                print("Sent Feishu notification.")
+            else:
+                print(f"Feishu notification failed: code={status.code} message={status.message}")
                 if args.fail_on_feishu_error:
                     return 2
-            if sent_feishu:
-                print("Sent Feishu notification.")
     return 0

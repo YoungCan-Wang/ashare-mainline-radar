@@ -3,12 +3,26 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
 
 from .models import RadarReport, pct
 
 
 class FeishuNotifyError(RuntimeError):
     pass
+
+
+@dataclass
+class FeishuStatus:
+    status: str
+    code: int | None = None
+    message: str | None = None
+    response: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def build_feishu_text(report: RadarReport) -> str:
@@ -46,7 +60,7 @@ def build_feishu_text(report: RadarReport) -> str:
     return "\n".join(lines)
 
 
-def send_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> None:
+def post_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> FeishuStatus:
     payload = {
         "msg_type": "text",
         "content": {
@@ -66,10 +80,28 @@ def send_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> None
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8", errors="replace")
     except urllib.error.URLError as exc:
-        raise FeishuNotifyError(f"Feishu webhook request failed: {exc}") from exc
+        return FeishuStatus(status="failed", message=f"Feishu webhook request failed: {exc}")
     try:
         parsed = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise FeishuNotifyError(f"Feishu webhook returned non-JSON response: {body[:160]}") from exc
-    if parsed.get("StatusCode") not in (None, 0) or parsed.get("code") not in (None, 0):
-        raise FeishuNotifyError(f"Feishu webhook returned error: {parsed}") from None
+    except json.JSONDecodeError:
+        return FeishuStatus(status="failed", message=f"Feishu webhook returned non-JSON response: {body[:160]}")
+    status_code = parsed.get("StatusCode")
+    code = parsed.get("code")
+    if status_code not in (None, 0):
+        return FeishuStatus(status="failed", code=status_code, message=str(parsed.get("msg") or parsed), response=parsed)
+    if code not in (None, 0):
+        return FeishuStatus(status="failed", code=code, message=str(parsed.get("msg") or parsed), response=parsed)
+    return FeishuStatus(status="sent", code=0, message=str(parsed.get("msg") or "ok"), response=parsed)
+
+
+def send_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> None:
+    status = post_feishu_text(webhook_url, text, timeout=timeout)
+    if status.status != "sent":
+        raise FeishuNotifyError(f"Feishu webhook returned error: {status.to_dict()}") from None
+
+
+def write_feishu_status(path: str | Path, status: FeishuStatus) -> Path:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(status.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    return output_path
