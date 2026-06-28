@@ -36,7 +36,7 @@ python3 -m pip install -e ".[dev]"
 没有 API key 也可以直接跑：
 
 ```bash
-python3 scripts/run_daily.py --mode curated --lookback-days 80
+python3 scripts/run_daily.py --mode curated --lookback-days 180
 ```
 
 输出：
@@ -47,7 +47,7 @@ python3 scripts/run_daily.py --mode curated --lookback-days 80
 如果要扫描全市场：
 
 ```bash
-python3 scripts/run_daily.py --mode universe --max-symbols 0 --lookback-days 80
+python3 scripts/run_daily.py --mode universe --max-symbols 0 --lookback-days 180
 ```
 
 为了避免免费接口请求太多，调试时可以限制样本：
@@ -72,8 +72,16 @@ python3 scripts/run_daily.py --mode universe --max-symbols 0
 - 主线广度：主题内上涨股票比例、有效成员数量、龙头强度。
 - 催化证据：新闻、宏观、研报摘录中命中的主题关键词。
 - 环境确认：A 股宽基、券商风险偏好、科技成长、外围科技映射、防御红利等环境组。
+- 强势个股：从当前主线里筛选 5/20 日趋势、成交热度和接近 20 日高位的个股，并用历史信号回测。
 
 报告会把分数拆成证据，不把它做成黑箱。
+
+强势个股回测口径：
+
+- 用历史某一天之前可见的 5 日、20 日涨幅、成交热度和 20 日高位距离生成信号。
+- 信号日后下一交易日开盘进入。
+- 默认固定持有 5 个交易日，按收盘价退出。
+- 报告输出信号数、胜率、平均收益、最差收益和平均最大回撤。
 
 ## 主题配置
 
@@ -113,7 +121,11 @@ data/research_reports/inbox/
 
 ```text
 TICKFLOW_API_KEY
+FEISHU_WEBHOOK_URL
+TUSHARE_TOKEN
 ```
+
+`FEISHU_WEBHOOK_URL` 配置后，工作流会在生成报告后向飞书机器人发送主线、环境和强势个股候选摘要。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
 
 ## 本地验证
 

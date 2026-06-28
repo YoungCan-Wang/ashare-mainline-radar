@@ -3,7 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import DataSourceStatus, IntelItem, MarketPulse, RadarReport, SymbolSnapshot, ThemeSnapshot, pct
+from .models import (
+    DataSourceStatus,
+    IntelItem,
+    MarketPulse,
+    RadarReport,
+    StrongStockCandidate,
+    SymbolSnapshot,
+    ThemeSnapshot,
+    pct,
+)
 
 
 def _fmt(value: float | None, digits: int = 2) -> str:
@@ -58,6 +67,20 @@ def _source_row(source: DataSourceStatus) -> str:
     return f"| {source.name} | {source.kind} | {source.status} | {source.items} | {message} |"
 
 
+def _strong_stock_row(rank: int, item: StrongStockCandidate) -> str:
+    backtest = item.backtest
+    signals = 0 if backtest is None else backtest.signals
+    win_rate = None if backtest is None else backtest.win_rate
+    avg_return = None if backtest is None else backtest.avg_return
+    worst_return = None if backtest is None else backtest.worst_return
+    drawdown = None if backtest is None else backtest.avg_max_drawdown
+    return (
+        f"| {rank} | {item.theme} | {item.name} `{item.symbol}` | {item.status} | {item.score:.1f} | "
+        f"{pct(item.ret_5d)} | {pct(item.ret_20d)} | {_ratio(item.amount_ratio)} | "
+        f"{signals} | {pct(win_rate)} | {pct(avg_return)} | {pct(worst_return)} | {pct(drawdown)} |"
+    )
+
+
 def _participation_note(theme: ThemeSnapshot) -> str:
     if theme.status == "主线成立":
         return "参与思路：优先等龙头或 ETF 在强势均线附近缩量回踩、再放量转强；若主题广度跌破半数或龙头连续放量滞涨，降低仓位。"
@@ -109,6 +132,24 @@ def render_markdown(report: RadarReport) -> str:
         lines.append("")
         best_pulse = report.market_pulses[0]
         lines.append(f"环境结论：**{best_pulse.name}** 当前最强，状态为 **{best_pulse.status}**，证据包括：{'; '.join(best_pulse.evidence)}。")
+        lines.append("")
+
+    if report.strong_stocks.candidates:
+        lines.append("## 强势个股与历史回测")
+        lines.append("")
+        lines.append(
+            f"候选来自当前主线：{', '.join(report.strong_stocks.selected_themes)}。"
+            f" 回测口径：信号日后下一交易日开盘进入，固定持有 {report.strong_stocks.hold_days} 个交易日后按收盘退出。"
+        )
+        lines.append("")
+        lines.append("| 排名 | 主线 | 标的 | 当前状态 | 综合分 | 5日 | 20日 | 成交热度 | 信号数 | 胜率 | 平均收益 | 最差收益 | 平均最大回撤 |")
+        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for rank, item in enumerate(report.strong_stocks.candidates[:12], start=1):
+            lines.append(_strong_stock_row(rank, item))
+        lines.append("")
+        for item in report.strong_stocks.candidates[:5]:
+            if item.reasons:
+                lines.append(f"- **{item.name} `{item.symbol}`**：{'；'.join(item.reasons)}。")
         lines.append("")
 
     lines.append("## 主线拆解")

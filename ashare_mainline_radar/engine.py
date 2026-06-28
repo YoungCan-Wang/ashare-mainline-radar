@@ -9,6 +9,7 @@ from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
 from .market_context import build_market_pulses
 from .models import DataSourceStatus, RadarReport, SymbolSnapshot, utc_now_iso
+from .strong_stocks import build_strong_stock_report
 from .tickflow import TickFlowClient
 
 
@@ -63,6 +64,8 @@ class MainlineRadar:
         period: str = "1d",
         adjust: str = "forward",
         leader_limit: int = 25,
+        backtest_hold_days: int = 5,
+        strong_stock_limit: int = 12,
     ) -> RadarReport:
         universe_id, symbols = self._symbols_for_mode(mode, max_symbols)
         symbol_to_themes = theme_symbol_map(self.theme_config)
@@ -108,6 +111,14 @@ class MainlineRadar:
         themes = build_theme_snapshots(self.theme_config, snapshots, catalyst_count_by_theme)
         leader_tape = build_leader_tape(snapshots, limit=leader_limit)
         market_pulses = build_market_pulses(self.theme_config, snapshots)
+        strong_stocks = build_strong_stock_report(
+            theme_config=self.theme_config,
+            snapshots=snapshots,
+            klines=klines,
+            themes=themes,
+            hold_days=backtest_hold_days,
+            max_candidates=strong_stock_limit,
+        )
 
         market_symbols = [str(item["symbol"]) for item in self.theme_config.get("market_watchlist", [])]
         market_watchlist = [snapshots[symbol] for symbol in market_symbols if symbol in snapshots]
@@ -125,6 +136,7 @@ class MainlineRadar:
             data_source=self.client.source_label,
             themes=themes,
             market_pulses=market_pulses,
+            strong_stocks=strong_stocks,
             leader_tape=leader_tape,
             market_watchlist=market_watchlist,
             intel_items=intel_items,

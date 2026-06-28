@@ -26,6 +26,8 @@ jobs:
       contents: read
     env:
       TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
+      TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+      FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
       MAINLINE_RADAR_MODE: ${{ inputs.mode || 'curated' }}
       MAINLINE_MAX_SYMBOLS: ${{ inputs.max_symbols || '1200' }}
     steps:
@@ -38,7 +40,7 @@ jobs:
       - name: Run tests
         run: python -m pytest
       - name: Generate radar report
-        run: python scripts/run_daily.py --output-dir reports/latest
+        run: python scripts/run_daily.py --output-dir reports/latest --send-feishu
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:

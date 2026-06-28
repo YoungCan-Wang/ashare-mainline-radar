@@ -107,6 +107,44 @@ class MarketPulse:
 
 
 @dataclass
+class BacktestSummary:
+    symbol: str
+    name: str
+    theme: str
+    hold_days: int
+    signals: int
+    win_rate: float | None
+    avg_return: float | None
+    median_return: float | None
+    best_return: float | None
+    worst_return: float | None
+    avg_max_drawdown: float | None
+    last_signal_date: str | None = None
+
+
+@dataclass
+class StrongStockCandidate:
+    symbol: str
+    name: str
+    theme: str
+    score: float
+    status: str
+    ret_5d: float | None
+    ret_20d: float | None
+    amount_ratio: float | None
+    high_proximity_20d: float | None
+    reasons: list[str] = field(default_factory=list)
+    backtest: BacktestSummary | None = None
+
+
+@dataclass
+class StrongStockReport:
+    selected_themes: list[str]
+    hold_days: int
+    candidates: list[StrongStockCandidate]
+
+
+@dataclass
 class ThemeSnapshot:
     name: str
     score: float
@@ -133,6 +171,7 @@ class RadarReport:
     data_source: str
     themes: list[ThemeSnapshot]
     market_pulses: list[MarketPulse]
+    strong_stocks: StrongStockReport
     leader_tape: list[SymbolSnapshot]
     market_watchlist: list[SymbolSnapshot]
     intel_items: list[IntelItem]

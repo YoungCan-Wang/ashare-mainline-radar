@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
+from .feishu import FeishuNotifyError, build_feishu_text, send_feishu_text
 from .report import write_report
 from .tickflow import TickFlowClient
 
@@ -14,13 +15,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate an A-share market mainline radar report.")
     parser.add_argument("--mode", choices=["curated", "universe"], default=os.getenv("MAINLINE_RADAR_MODE", "curated"))
     parser.add_argument("--max-symbols", type=int, default=int(os.getenv("MAINLINE_MAX_SYMBOLS", "0")))
-    parser.add_argument("--lookback-days", type=int, default=80)
+    parser.add_argument("--lookback-days", type=int, default=180)
     parser.add_argument("--theme-config", type=Path, default=DEFAULT_THEME_CONFIG)
     parser.add_argument("--intel-config", type=Path, default=DEFAULT_INTEL_CONFIG)
     parser.add_argument("--output-dir", type=Path, default=Path("reports/latest"))
     parser.add_argument("--period", default="1d")
     parser.add_argument("--adjust", default="forward")
     parser.add_argument("--leader-limit", type=int, default=25)
+    parser.add_argument("--backtest-hold-days", type=int, default=5)
+    parser.add_argument("--strong-stock-limit", type=int, default=12)
+    parser.add_argument("--send-feishu", action="store_true", help="Send a compact report to FEISHU_WEBHOOK_URL.")
+    parser.add_argument("--feishu-webhook-url", default=os.getenv("FEISHU_WEBHOOK_URL"))
     parser.add_argument("--tickflow-base-url", default=os.getenv("TICKFLOW_BASE_URL"))
     return parser
 
@@ -40,6 +45,8 @@ def main(argv: list[str] | None = None) -> int:
         period=args.period,
         adjust=args.adjust,
         leader_limit=args.leader_limit,
+        backtest_hold_days=args.backtest_hold_days,
+        strong_stock_limit=args.strong_stock_limit,
     )
     markdown_path, json_path = write_report(report, args.output_dir)
     print(f"Wrote {markdown_path}")
@@ -47,4 +54,17 @@ def main(argv: list[str] | None = None) -> int:
     if report.themes:
         top = report.themes[0]
         print(f"Top mainline: {top.name} / {top.status} / score={top.score:.1f}")
+    if report.strong_stocks.candidates:
+        top_stock = report.strong_stocks.candidates[0]
+        print(f"Top strong stock: {top_stock.name} {top_stock.symbol} / score={top_stock.score:.1f}")
+    if args.send_feishu:
+        if not args.feishu_webhook_url:
+            print("FEISHU_WEBHOOK_URL is not set; skipped Feishu notification.")
+        else:
+            try:
+                send_feishu_text(args.feishu_webhook_url, build_feishu_text(report))
+            except FeishuNotifyError as exc:
+                print(f"Feishu notification failed: {exc}")
+                return 2
+            print("Sent Feishu notification.")
     return 0
