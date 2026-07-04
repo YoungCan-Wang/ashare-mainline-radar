@@ -9,6 +9,7 @@ from .models import (
     MarketPulse,
     RadarReport,
     StrongStockCandidate,
+    NextBuyPlan,
     SymbolSnapshot,
     ThemeSnapshot,
     pct,
@@ -81,6 +82,13 @@ def _strong_stock_row(rank: int, item: StrongStockCandidate) -> str:
     )
 
 
+def _next_buy_row(rank: int, item: NextBuyPlan) -> str:
+    return (
+        f"| {rank} | {item.name} `{item.symbol}` | {item.theme} | {item.decision} | "
+        f"{item.priority_score:.1f} | {_fmt(item.last_close)} | {item.entry_plan} | {item.invalidation} |"
+    )
+
+
 def _participation_note(theme: ThemeSnapshot) -> str:
     if theme.status == "主线成立":
         return "参与思路：优先等龙头或 ETF 在强势均线附近缩量回踩、再放量转强；若主题广度跌破半数或龙头连续放量滞涨，降低仓位。"
@@ -132,6 +140,30 @@ def render_markdown(report: RadarReport) -> str:
         lines.append("")
         best_pulse = report.market_pulses[0]
         lines.append(f"环境结论：**{best_pulse.name}** 当前最强，状态为 **{best_pulse.status}**，证据包括：{'; '.join(best_pulse.evidence)}。")
+        lines.append("")
+
+    if report.next_buy.primary:
+        primary = report.next_buy.primary
+        lines.append("## 下一笔买入候选")
+        lines.append("")
+        lines.append(
+            f"系统下一笔优先候选：**{primary.name} `{primary.symbol}`**，主线 **{primary.theme}**，"
+            f"决策：**{primary.decision}**，优先级 {primary.priority_score:.1f}。"
+        )
+        lines.append("")
+        lines.append("| 排名 | 标的 | 主线 | 决策 | 优先级 | 最新收盘 | 触发/参与条件 | 失效条件 |")
+        lines.append("| ---: | --- | --- | --- | ---: | ---: | --- | --- |")
+        for rank, item in enumerate([primary, *report.next_buy.alternatives], start=1):
+            lines.append(_next_buy_row(rank, item))
+        lines.append("")
+        lines.append("证据：")
+        for item in primary.evidence:
+            lines.append(f"- {item}")
+        lines.append("")
+        lines.append(f"仓位提示：{primary.position_note}")
+        lines.append("")
+        for item in primary.risk_notes:
+            lines.append(f"- {item}")
         lines.append("")
 
     if report.strong_stocks.candidates:

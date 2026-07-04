@@ -183,6 +183,7 @@ def build_strong_stock_report(
                     symbol=symbol,
                     name=snapshot.name,
                     theme=theme.name,
+                    last_close=snapshot.last_close,
                     score=score,
                     status=snapshot.status,
                     ret_5d=snapshot.ret_5d,

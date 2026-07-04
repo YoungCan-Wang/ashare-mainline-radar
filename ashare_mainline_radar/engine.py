@@ -9,6 +9,7 @@ from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
 from .market_context import build_market_pulses
 from .models import DataSourceStatus, RadarReport, SymbolSnapshot, utc_now_iso
+from .next_buy import build_next_buy_report
 from .strong_stocks import build_strong_stock_report
 from .tickflow import TickFlowClient
 
@@ -119,6 +120,7 @@ class MainlineRadar:
             hold_days=backtest_hold_days,
             max_candidates=strong_stock_limit,
         )
+        next_buy = build_next_buy_report(strong_stocks.candidates, themes, market_pulses)
 
         market_symbols = [str(item["symbol"]) for item in self.theme_config.get("market_watchlist", [])]
         market_watchlist = [snapshots[symbol] for symbol in market_symbols if symbol in snapshots]
@@ -140,6 +142,7 @@ class MainlineRadar:
             themes=themes,
             market_pulses=market_pulses,
             strong_stocks=strong_stocks,
+            next_buy=next_buy,
             leader_tape=leader_tape,
             market_watchlist=market_watchlist,
             intel_items=intel_items,

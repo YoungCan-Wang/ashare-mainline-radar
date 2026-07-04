@@ -127,6 +127,7 @@ class StrongStockCandidate:
     symbol: str
     name: str
     theme: str
+    last_close: float
     score: float
     status: str
     ret_5d: float | None
@@ -142,6 +143,28 @@ class StrongStockReport:
     selected_themes: list[str]
     hold_days: int
     candidates: list[StrongStockCandidate]
+
+
+@dataclass
+class NextBuyPlan:
+    symbol: str
+    name: str
+    theme: str
+    decision: str
+    priority_score: float
+    last_close: float
+    entry_plan: str
+    invalidation: str
+    position_note: str
+    evidence: list[str] = field(default_factory=list)
+    risk_notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class NextBuyReport:
+    primary: NextBuyPlan | None
+    alternatives: list[NextBuyPlan] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -172,6 +195,7 @@ class RadarReport:
     themes: list[ThemeSnapshot]
     market_pulses: list[MarketPulse]
     strong_stocks: StrongStockReport
+    next_buy: NextBuyReport
     leader_tape: list[SymbolSnapshot]
     market_watchlist: list[SymbolSnapshot]
     intel_items: list[IntelItem]

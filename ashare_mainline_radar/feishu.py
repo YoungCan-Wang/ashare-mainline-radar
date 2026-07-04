@@ -42,6 +42,13 @@ def build_feishu_text(report: RadarReport) -> str:
         pulse = report.market_pulses[0]
         lines.append("")
         lines.append(f"环境：{pulse.name}｜{pulse.status}｜强度 {pulse.score:.1f}")
+    if report.next_buy and report.next_buy.primary:
+        plan = report.next_buy.primary
+        lines.append("")
+        lines.append("下一笔优先候选：")
+        lines.append(f"{plan.name} {plan.symbol}｜{plan.theme}｜{plan.decision}｜优先级 {plan.priority_score:.1f}")
+        lines.append(f"参与条件：{plan.entry_plan}")
+        lines.append(f"失效条件：{plan.invalidation}")
     candidates = report.strong_stocks.candidates if report.strong_stocks else []
     if candidates:
         lines.append("")
