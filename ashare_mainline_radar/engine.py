@@ -19,6 +19,7 @@ from .policy import (
     policy_scores_by_theme,
 )
 from .strong_stocks import build_strong_stock_report
+from .target_prices import build_target_price_report
 from .tickflow import TickFlowClient
 
 
@@ -146,6 +147,13 @@ class MainlineRadar:
             themes=themes,
             max_candidates=accumulation_limit,
         )
+        target_prices = build_target_price_report(
+            strong_stocks=strong_stocks,
+            accumulation=accumulation,
+            klines=klines,
+            intel_items=intel_items,
+            themes=themes,
+        )
 
         market_symbols = [str(item["symbol"]) for item in self.theme_config.get("market_watchlist", [])]
         market_watchlist = [snapshots[symbol] for symbol in market_symbols if symbol in snapshots]
@@ -170,6 +178,7 @@ class MainlineRadar:
             next_buy=next_buy,
             accumulation=accumulation,
             policy_signals=policy_signals,
+            target_prices=target_prices,
             leader_tape=leader_tape,
             market_watchlist=market_watchlist,
             intel_items=intel_items,

@@ -11,6 +11,7 @@ from .models import (
     RadarReport,
     StrongStockCandidate,
     NextBuyPlan,
+    TargetPriceEstimate,
     ThemeBuyGroup,
     SymbolSnapshot,
     ThemeSnapshot,
@@ -113,6 +114,28 @@ def _policy_signal_row(rank: int, theme: str, status: str, score: float, count: 
     source_text = ", ".join(sources[:3]) if sources else "-"
     evidence_text = "；".join(evidence[:3]) if evidence else "-"
     return f"| {rank} | {theme} | {status} | {score:.1f} | {count} | {source_text} | {evidence_text} |"
+
+
+def _research_target_text(item: TargetPriceEstimate) -> str:
+    if not item.research_targets:
+        return "-"
+    refs = []
+    for ref in item.research_targets[:2]:
+        target = f"{_fmt(ref.target_low)}" if ref.target_low == ref.target_high else f"{_fmt(ref.target_low)}-{_fmt(ref.target_high)}"
+        refs.append(f"{ref.source}: {target}")
+    return "；".join(refs)
+
+
+def _target_price_row(rank: int, item: TargetPriceEstimate) -> str:
+    target = f"{_fmt(item.target_low)}-{_fmt(item.target_high)}"
+    upside = f"{pct(item.upside_low)}-{pct(item.upside_high)}"
+    rr_low = "n/a" if item.reward_risk_low is None else f"{item.reward_risk_low:.2f}"
+    rr_high = "n/a" if item.reward_risk_high is None else f"{item.reward_risk_high:.2f}"
+    return (
+        f"| {rank} | {item.candidate_type} | {item.name} `{item.symbol}` | {item.theme} | {item.basis} | "
+        f"{item.horizon} | {_fmt(item.last_close)} | {target} | {upside} | {_fmt(item.stop_price)} | "
+        f"{pct(item.downside_to_stop)} | {rr_low}-{rr_high} | {item.confidence} | {_research_target_text(item)} |"
+    )
 
 
 def _participation_note(theme: ThemeSnapshot) -> str:
@@ -226,6 +249,24 @@ def render_markdown(report: RadarReport) -> str:
         lines.append("")
         for item in primary.risk_notes:
             lines.append(f"- {item}")
+        lines.append("")
+
+    if report.target_prices.estimates:
+        lines.append("## 目标价与赔率")
+        lines.append("")
+        lines.append("这里给的是系统交易目标区间；除非研报文本明确写出目标价，否则不冒充券商盈利预测估值目标。")
+        lines.append("")
+        lines.append("| 排名 | 类型 | 标的 | 主线 | 依据 | 周期 | 当前价 | 系统目标区间 | 上行空间 | 失效价 | 到失效价 | R/R | 信心 | 研报目标参考 |")
+        lines.append("| ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
+        for rank, item in enumerate(report.target_prices.estimates[:16], start=1):
+            lines.append(_target_price_row(rank, item))
+        lines.append("")
+        for item in report.target_prices.estimates[:5]:
+            if item.evidence:
+                lines.append(f"- **{item.name} `{item.symbol}`**：{'；'.join(item.evidence)}。")
+        lines.append("")
+        for note in report.target_prices.notes:
+            lines.append(f"- {note}")
         lines.append("")
 
     lines.append("## 低位资金介入候选")

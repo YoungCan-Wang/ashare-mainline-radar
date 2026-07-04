@@ -61,6 +61,15 @@ def build_feishu_text(report: RadarReport) -> str:
             for group in report.next_buy.by_theme[:4]:
                 names = "；".join(f"{item.name} {item.symbol}" for item in group.plans[:2])
                 lines.append(f"- {group.theme}｜{group.theme_status}｜{names}")
+    target_estimates = report.target_prices.estimates if report.target_prices else []
+    if target_estimates:
+        lines.append("")
+        lines.append("目标价与赔率：")
+        for idx, item in enumerate(target_estimates[:3], start=1):
+            lines.append(
+                f"{idx}. {item.name} {item.symbol}｜{item.candidate_type}｜目标 {item.target_low:.2f}-{item.target_high:.2f}｜"
+                f"上行 {pct(item.upside_low)}-{pct(item.upside_high)}｜信心 {item.confidence}"
+            )
     accumulation_candidates = report.accumulation.candidates if report.accumulation else []
     if accumulation_candidates:
         lines.append("")

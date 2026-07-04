@@ -221,6 +221,44 @@ class PolicySignalReport:
 
 
 @dataclass
+class ResearchTargetReference:
+    source: str
+    title: str
+    target_low: float
+    target_high: float
+    url: str | None = None
+    published_at: str | None = None
+
+
+@dataclass
+class TargetPriceEstimate:
+    symbol: str
+    name: str
+    theme: str
+    candidate_type: str
+    basis: str
+    horizon: str
+    last_close: float
+    target_low: float
+    target_high: float
+    upside_low: float
+    upside_high: float
+    stop_price: float
+    downside_to_stop: float
+    reward_risk_low: float | None
+    reward_risk_high: float | None
+    confidence: str
+    evidence: list[str] = field(default_factory=list)
+    research_targets: list[ResearchTargetReference] = field(default_factory=list)
+
+
+@dataclass
+class TargetPriceReport:
+    estimates: list[TargetPriceEstimate]
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ThemeSnapshot:
     name: str
     score: float
@@ -253,6 +291,7 @@ class RadarReport:
     next_buy: NextBuyReport
     accumulation: AccumulationReport
     policy_signals: PolicySignalReport
+    target_prices: TargetPriceReport
     leader_tape: list[SymbolSnapshot]
     market_watchlist: list[SymbolSnapshot]
     intel_items: list[IntelItem]
