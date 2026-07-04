@@ -47,3 +47,6 @@ def test_build_next_buy_report_selects_primary() -> None:
     assert report.primary is not None
     assert report.primary.symbol == "002747.SZ"
     assert "失效" not in report.primary.decision
+    assert report.by_theme
+    assert report.by_theme[0].theme == "机器人"
+    assert report.by_theme[0].plans[0].symbol == "002747.SZ"

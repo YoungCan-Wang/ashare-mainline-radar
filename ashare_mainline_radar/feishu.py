@@ -49,6 +49,21 @@ def build_feishu_text(report: RadarReport) -> str:
         lines.append(f"{plan.name} {plan.symbol}｜{plan.theme}｜{plan.decision}｜优先级 {plan.priority_score:.1f}")
         lines.append(f"参与条件：{plan.entry_plan}")
         lines.append(f"失效条件：{plan.invalidation}")
+        if report.next_buy.by_theme:
+            lines.append("分主线顺势候选：")
+            for group in report.next_buy.by_theme[:4]:
+                names = "；".join(f"{item.name} {item.symbol}" for item in group.plans[:2])
+                lines.append(f"- {group.theme}｜{group.theme_status}｜{names}")
+    accumulation_candidates = report.accumulation.candidates if report.accumulation else []
+    if accumulation_candidates:
+        lines.append("")
+        lines.append("低位资金介入候选：")
+        for idx, item in enumerate(accumulation_candidates[:5], start=1):
+            amount_ratio = "n/a" if item.amount_ratio_5_20 is None else f"{item.amount_ratio_5_20:.2f}x"
+            lines.append(
+                f"{idx}. {item.name} {item.symbol}｜{item.primary_theme}｜{item.status}｜评分 {item.score:.1f}｜"
+                f"60日位置 {pct(item.range_position_60d)}｜成交5/20 {amount_ratio}"
+            )
     candidates = report.strong_stocks.candidates if report.strong_stocks else []
     if candidates:
         lines.append("")

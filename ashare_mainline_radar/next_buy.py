@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import MarketPulse, NextBuyPlan, NextBuyReport, StrongStockCandidate, ThemeSnapshot
+from .models import MarketPulse, NextBuyPlan, NextBuyReport, StrongStockCandidate, ThemeBuyGroup, ThemeSnapshot
 
 
 def _fmt_price(value: float) -> str:
@@ -122,6 +122,25 @@ def _build_plan(candidate: StrongStockCandidate, themes: list[ThemeSnapshot], ma
     )
 
 
+def _theme_groups(plans: list[NextBuyPlan], themes: list[ThemeSnapshot], per_theme_limit: int = 3) -> list[ThemeBuyGroup]:
+    grouped: dict[str, list[NextBuyPlan]] = {}
+    for plan in plans:
+        grouped.setdefault(plan.theme, []).append(plan)
+
+    status_by_theme = {theme.name: theme.status for theme in themes}
+    ordered_theme_names = [theme.name for theme in themes if theme.name in grouped]
+    ordered_theme_names.extend(sorted(theme for theme in grouped if theme not in status_by_theme))
+
+    return [
+        ThemeBuyGroup(
+            theme=theme_name,
+            theme_status=status_by_theme.get(theme_name, "未知"),
+            plans=grouped[theme_name][:per_theme_limit],
+        )
+        for theme_name in ordered_theme_names
+    ]
+
+
 def build_next_buy_report(
     candidates: list[StrongStockCandidate],
     themes: list[ThemeSnapshot],
@@ -135,6 +154,7 @@ def build_next_buy_report(
         "系统输出的是下一笔优先候选和条件化交易计划，不是无条件市价买入指令。",
         "若主线强度、市场环境或个股触发条件变弱，候选应自动降级。",
     ]
+    by_theme = _theme_groups(plans, themes)
     if not plans:
-        return NextBuyReport(primary=None, alternatives=[], notes=[*notes, "当前没有达到阈值的下一笔买入候选。"])
-    return NextBuyReport(primary=plans[0], alternatives=plans[1:limit], notes=notes)
+        return NextBuyReport(primary=None, alternatives=[], by_theme=[], notes=[*notes, "当前没有达到阈值的下一笔买入候选。"])
+    return NextBuyReport(primary=plans[0], alternatives=plans[1:limit], by_theme=by_theme, notes=notes)

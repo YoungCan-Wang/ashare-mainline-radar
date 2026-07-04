@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .accumulation import build_accumulation_report
 from .config import configured_symbols, theme_keywords, theme_symbol_map
 from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
@@ -67,6 +68,7 @@ class MainlineRadar:
         leader_limit: int = 25,
         backtest_hold_days: int = 5,
         strong_stock_limit: int = 12,
+        accumulation_limit: int = 12,
     ) -> RadarReport:
         universe_id, symbols = self._symbols_for_mode(mode, max_symbols)
         symbol_to_themes = theme_symbol_map(self.theme_config)
@@ -121,6 +123,12 @@ class MainlineRadar:
             max_candidates=strong_stock_limit,
         )
         next_buy = build_next_buy_report(strong_stocks.candidates, themes, market_pulses)
+        accumulation = build_accumulation_report(
+            snapshots=snapshots,
+            klines=klines,
+            themes=themes,
+            max_candidates=accumulation_limit,
+        )
 
         market_symbols = [str(item["symbol"]) for item in self.theme_config.get("market_watchlist", [])]
         market_watchlist = [snapshots[symbol] for symbol in market_symbols if symbol in snapshots]
@@ -143,6 +151,7 @@ class MainlineRadar:
             market_pulses=market_pulses,
             strong_stocks=strong_stocks,
             next_buy=next_buy,
+            accumulation=accumulation,
             leader_tape=leader_tape,
             market_watchlist=market_watchlist,
             intel_items=intel_items,

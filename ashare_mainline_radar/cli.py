@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--leader-limit", type=int, default=25)
     parser.add_argument("--backtest-hold-days", type=int, default=5)
     parser.add_argument("--strong-stock-limit", type=int, default=12)
+    parser.add_argument("--accumulation-limit", type=int, default=12)
     parser.add_argument("--send-feishu", action="store_true", help="Send a compact report to FEISHU_WEBHOOK_URL.")
     parser.add_argument("--feishu-webhook-url", default=os.getenv("FEISHU_WEBHOOK_URL"))
     parser.add_argument("--fail-on-feishu-error", action="store_true")
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         leader_limit=args.leader_limit,
         backtest_hold_days=args.backtest_hold_days,
         strong_stock_limit=args.strong_stock_limit,
+        accumulation_limit=args.accumulation_limit,
     )
     markdown_path, json_path = write_report(report, args.output_dir)
     print(f"Wrote {markdown_path}")
@@ -58,6 +60,12 @@ def main(argv: list[str] | None = None) -> int:
     if report.strong_stocks.candidates:
         top_stock = report.strong_stocks.candidates[0]
         print(f"Top strong stock: {top_stock.name} {top_stock.symbol} / score={top_stock.score:.1f}")
+    if report.accumulation.candidates:
+        top_accumulation = report.accumulation.candidates[0]
+        print(
+            "Top accumulation stock: "
+            f"{top_accumulation.name} {top_accumulation.symbol} / score={top_accumulation.score:.1f}"
+        )
     if args.send_feishu:
         if not args.feishu_webhook_url:
             print("FEISHU_WEBHOOK_URL is not set; skipped Feishu notification.")

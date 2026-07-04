@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 
 from .models import (
+    AccumulationCandidate,
     DataSourceStatus,
     IntelItem,
     MarketPulse,
     RadarReport,
     StrongStockCandidate,
     NextBuyPlan,
+    ThemeBuyGroup,
     SymbolSnapshot,
     ThemeSnapshot,
     pct,
@@ -89,6 +91,24 @@ def _next_buy_row(rank: int, item: NextBuyPlan) -> str:
     )
 
 
+def _theme_buy_group_row(rank: int, group: ThemeBuyGroup) -> str:
+    plans = "；".join(
+        f"{idx}. {plan.name} `{plan.symbol}` {plan.decision}({plan.priority_score:.1f})"
+        for idx, plan in enumerate(group.plans, start=1)
+    )
+    return f"| {rank} | {group.theme} | {group.theme_status} | {plans or '-'} |"
+
+
+def _accumulation_row(rank: int, item: AccumulationCandidate) -> str:
+    themes = ", ".join(item.themes) if item.themes else "未映射"
+    return (
+        f"| {rank} | {themes} | {item.name} `{item.symbol}` | {item.status} | {item.score:.1f} | "
+        f"{pct(item.range_position_60d)} | {pct(item.drawdown_60d)} | {pct(item.ret_5d)} | {pct(item.ret_20d)} | "
+        f"{_ratio(item.amount_ratio_5_20)} | {_ratio(item.amount_ratio_10_30)} | {pct(item.ma20_distance)} | "
+        f"{item.entry_plan} | {item.invalidation} |"
+    )
+
+
 def _participation_note(theme: ThemeSnapshot) -> str:
     if theme.status == "主线成立":
         return "参与思路：优先等龙头或 ETF 在强势均线附近缩量回踩、再放量转强；若主题广度跌破半数或龙头连续放量滞涨，降低仓位。"
@@ -156,6 +176,14 @@ def render_markdown(report: RadarReport) -> str:
         for rank, item in enumerate([primary, *report.next_buy.alternatives], start=1):
             lines.append(_next_buy_row(rank, item))
         lines.append("")
+        if report.next_buy.by_theme:
+            lines.append("分主线候选：系统不是只看第一主线；命中条件的活跃主线会保留自己的顺势首选和备选。")
+            lines.append("")
+            lines.append("| 排名 | 主线 | 状态 | 顺势候选 |")
+            lines.append("| ---: | --- | --- | --- |")
+            for rank, group in enumerate(report.next_buy.by_theme[:6], start=1):
+                lines.append(_theme_buy_group_row(rank, group))
+            lines.append("")
         lines.append("证据：")
         for item in primary.evidence:
             lines.append(f"- {item}")
@@ -165,6 +193,27 @@ def render_markdown(report: RadarReport) -> str:
         for item in primary.risk_notes:
             lines.append(f"- {item}")
         lines.append("")
+
+    lines.append("## 低位资金介入候选")
+    lines.append("")
+    lines.append("这张表不是顺势追强榜；它寻找仍处在60日中低位、成交额均线开始抬升、短线跌势收敛的股票，适合作为观察/试错池。")
+    lines.append("")
+    if report.accumulation.candidates:
+        lines.append("| 排名 | 主题 | 标的 | 状态 | 评分 | 60日位置 | 距60日高点 | 5日 | 20日 | 成交5/20 | 成交10/30 | 距20日线 | 触发/参与条件 | 失效条件 |")
+        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
+        for rank, item in enumerate(report.accumulation.candidates[:12], start=1):
+            lines.append(_accumulation_row(rank, item))
+        lines.append("")
+        for item in report.accumulation.candidates[:5]:
+            if item.reasons:
+                lines.append(f"- **{item.name} `{item.symbol}`**：{'；'.join(item.reasons)}。")
+    else:
+        lines.append("- 当前扫描范围内没有同时满足低位、放量和止跌条件的股票。")
+    if report.accumulation.notes:
+        lines.append("")
+        for note in report.accumulation.notes:
+            lines.append(f"- {note}")
+    lines.append("")
 
     if report.strong_stocks.candidates:
         lines.append("## 强势个股与历史回测")

@@ -161,9 +161,44 @@ class NextBuyPlan:
 
 
 @dataclass
+class ThemeBuyGroup:
+    theme: str
+    theme_status: str
+    plans: list[NextBuyPlan]
+
+
+@dataclass
 class NextBuyReport:
     primary: NextBuyPlan | None
     alternatives: list[NextBuyPlan] = field(default_factory=list)
+    by_theme: list[ThemeBuyGroup] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AccumulationCandidate:
+    symbol: str
+    name: str
+    themes: list[str]
+    primary_theme: str
+    status: str
+    score: float
+    last_close: float
+    range_position_60d: float | None
+    drawdown_60d: float | None
+    ret_5d: float | None
+    ret_20d: float | None
+    amount_ratio_5_20: float | None
+    amount_ratio_10_30: float | None
+    ma20_distance: float | None
+    entry_plan: str
+    invalidation: str
+    reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AccumulationReport:
+    candidates: list[AccumulationCandidate]
     notes: list[str] = field(default_factory=list)
 
 
@@ -196,6 +231,7 @@ class RadarReport:
     market_pulses: list[MarketPulse]
     strong_stocks: StrongStockReport
     next_buy: NextBuyReport
+    accumulation: AccumulationReport
     leader_tape: list[SymbolSnapshot]
     market_watchlist: list[SymbolSnapshot]
     intel_items: list[IntelItem]

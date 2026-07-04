@@ -6,7 +6,7 @@ on:
       mode:
         description: "Scan mode"
         required: false
-        default: "curated"
+        default: "universe"
         type: choice
         options:
           - curated
@@ -28,7 +28,7 @@ jobs:
       TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
       TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-      MAINLINE_RADAR_MODE: ${{ inputs.mode || 'curated' }}
+      MAINLINE_RADAR_MODE: ${{ inputs.mode || 'universe' }}
       MAINLINE_MAX_SYMBOLS: ${{ inputs.max_symbols || '1200' }}
     steps:
       - uses: actions/checkout@v4
