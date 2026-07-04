@@ -52,7 +52,7 @@ def _theme_row(rank: int, theme: ThemeSnapshot) -> str:
     return (
         f"| {rank} | {theme.name} | {theme.status} | {theme.score:.1f} | {theme.members} | "
         f"{pct(theme.avg_ret_5d)} | {pct(theme.avg_ret_20d)} | {_ratio(theme.amount_heat)} | "
-        f"{pct(theme.breadth_20d)} | {theme.catalyst_count} | {vehicles} |"
+        f"{pct(theme.breadth_20d)} | {theme.catalyst_count} | {theme.policy_catalyst_count} | {theme.policy_score:.1f} | {vehicles} |"
     )
 
 
@@ -109,6 +109,12 @@ def _accumulation_row(rank: int, item: AccumulationCandidate) -> str:
     )
 
 
+def _policy_signal_row(rank: int, theme: str, status: str, score: float, count: int, sources: list[str], evidence: list[str]) -> str:
+    source_text = ", ".join(sources[:3]) if sources else "-"
+    evidence_text = "；".join(evidence[:3]) if evidence else "-"
+    return f"| {rank} | {theme} | {status} | {score:.1f} | {count} | {source_text} | {evidence_text} |"
+
+
 def _participation_note(theme: ThemeSnapshot) -> str:
     if theme.status == "主线成立":
         return "参与思路：优先等龙头或 ETF 在强势均线附近缩量回踩、再放量转强；若主题广度跌破半数或龙头连续放量滞涨，降低仓位。"
@@ -132,8 +138,8 @@ def render_markdown(report: RadarReport) -> str:
     lines.append("")
     lines.append("## 主线排序")
     lines.append("")
-    lines.append("| 排名 | 主线 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 催化 | 参与载体 |")
-    lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+    lines.append("| 排名 | 主线 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 新闻/研报催化 | 政策条数 | 政策分 | 参与载体 |")
+    lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
     for rank, theme in enumerate(report.themes[:12], start=1):
         lines.append(_theme_row(rank, theme))
     lines.append("")
@@ -148,6 +154,34 @@ def render_markdown(report: RadarReport) -> str:
         )
         lines.append("")
         lines.append(_participation_note(top))
+        lines.append("")
+
+    if report.policy_signals.signals:
+        lines.append("## 政策催化雷达")
+        lines.append("")
+        lines.append(
+            f"本次抓到官方政策条目 {report.policy_signals.total_policy_items} 条，"
+            f"其中 {report.policy_signals.matched_policy_items} 条命中主题关键词。"
+        )
+        lines.append("")
+        lines.append("| 排名 | 主线 | 主线状态 | 政策分 | 政策条数 | 来源 | 代表政策线索 |")
+        lines.append("| ---: | --- | --- | ---: | ---: | --- | --- |")
+        for rank, signal in enumerate(report.policy_signals.signals[:8], start=1):
+            evidence = [item.title for item in signal.evidence]
+            lines.append(
+                _policy_signal_row(
+                    rank,
+                    signal.theme,
+                    signal.theme_status,
+                    signal.score,
+                    signal.item_count,
+                    signal.sources,
+                    evidence,
+                )
+            )
+        lines.append("")
+        for note in report.policy_signals.notes:
+            lines.append(f"- {note}")
         lines.append("")
 
     if report.market_pulses:

@@ -33,10 +33,19 @@ def theme_symbol_map(theme_config: dict[str, Any]) -> dict[str, list[str]]:
 
 
 def theme_keywords(theme_config: dict[str, Any]) -> dict[str, list[str]]:
-    return {
-        str(theme["name"]): [str(keyword) for keyword in theme.get("keywords", [])]
-        for theme in theme_config.get("themes", [])
-    }
+    keywords_by_theme: dict[str, list[str]] = {}
+    for theme in theme_config.get("themes", []):
+        raw_keywords = [*theme.get("keywords", []), *theme.get("policy_keywords", [])]
+        keywords_by_theme[str(theme["name"])] = list(dict.fromkeys(str(keyword) for keyword in raw_keywords))
+    return keywords_by_theme
+
+
+def theme_policy_keywords(theme_config: dict[str, Any]) -> dict[str, list[str]]:
+    keywords_by_theme: dict[str, list[str]] = {}
+    for theme in theme_config.get("themes", []):
+        raw_keywords = theme.get("policy_keywords") or theme.get("keywords", [])
+        keywords_by_theme[str(theme["name"])] = list(dict.fromkeys(str(keyword) for keyword in raw_keywords))
+    return keywords_by_theme
 
 
 def configured_symbols(theme_config: dict[str, Any]) -> list[str]:

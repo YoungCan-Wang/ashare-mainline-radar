@@ -22,6 +22,7 @@ META_DESC_RE = re.compile(
 TAG_RE = re.compile(r"<[^>]+>")
 LINK_RE = re.compile(r"<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
 HEADING_RE = re.compile(r"<h[1-3][^>]*>(.*?)</h[1-3]>", re.IGNORECASE | re.DOTALL)
+DATE_RE = re.compile(r"(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}-\d{1,2})")
 
 
 def _clean_text(value: str | None, limit: int = 500) -> str:
@@ -119,23 +120,34 @@ def parse_listing_page(source: dict[str, Any]) -> list[IntelItem]:
     source_name = _source_name(source)
     tags = [str(tag) for tag in source.get("tags", [])]
     include_keywords = [str(keyword).lower() for keyword in source.get("include_keywords", [])]
+    exclude_keywords = [str(keyword).lower() for keyword in source.get("exclude_keywords", [])]
+    include_href_keywords = [str(keyword).lower() for keyword in source.get("include_href_keywords", [])]
     max_items = int(source.get("max_items", 30))
     seen: set[str] = set()
     items: list[IntelItem] = []
-    for href, raw_title in LINK_RE.findall(text):
+    for match in LINK_RE.finditer(text):
+        href, raw_title = match.group(1), match.group(2)
+        absolute_url = urllib.parse.urljoin(url, href)
         heading_match = HEADING_RE.search(raw_title)
         title = _clean_text(heading_match.group(1) if heading_match else raw_title, 180)
+        title_lower = title.lower()
         if len(title) < 8 or title in seen:
             continue
-        if include_keywords and not any(keyword in title.lower() for keyword in include_keywords):
+        if include_href_keywords and not any(keyword in absolute_url.lower() for keyword in include_href_keywords):
             continue
+        if include_keywords and not any(keyword in title_lower for keyword in include_keywords):
+            continue
+        if exclude_keywords and any(keyword in title_lower for keyword in exclude_keywords):
+            continue
+        date_match = DATE_RE.search(_clean_text(text[match.end() : match.end() + 120], 120))
+        published_at = date_match.group(1).replace("年", "-").replace("月", "-").replace("日", "") if date_match else None
         seen.add(title)
         items.append(
             IntelItem(
                 source=source_name,
                 title=title,
-                url=urllib.parse.urljoin(url, href),
-                published_at=datetime.now(timezone.utc).date().isoformat(),
+                url=absolute_url,
+                published_at=published_at or datetime.now(timezone.utc).date().isoformat(),
                 tags=tags,
             )
         )

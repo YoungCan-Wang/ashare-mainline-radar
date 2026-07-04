@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
-import http.client
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -88,7 +89,7 @@ class TickFlowClient:
                 if 400 <= exc.code < 500:
                     raise TickFlowError(f"TickFlow HTTP {exc.code} for {path}: {message}") from exc
                 last_error = exc
-            except (urllib.error.URLError, http.client.HTTPException, TimeoutError) as exc:
+            except (urllib.error.URLError, http.client.HTTPException, TimeoutError, socket.timeout) as exc:
                 last_error = exc
             if attempt < self.retries:
                 time.sleep(0.4 * attempt)

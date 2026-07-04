@@ -203,6 +203,24 @@ class AccumulationReport:
 
 
 @dataclass
+class PolicyThemeSignal:
+    theme: str
+    theme_status: str
+    score: float
+    item_count: int
+    sources: list[str]
+    evidence: list[IntelItem] = field(default_factory=list)
+
+
+@dataclass
+class PolicySignalReport:
+    signals: list[PolicyThemeSignal]
+    total_policy_items: int
+    matched_policy_items: int
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ThemeSnapshot:
     name: str
     score: float
@@ -215,6 +233,8 @@ class ThemeSnapshot:
     amount_heat: float | None
     catalyst_count: int
     leaders: list[SymbolSnapshot]
+    policy_catalyst_count: int = 0
+    policy_score: float = 0.0
     vehicles: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
 
@@ -232,6 +252,7 @@ class RadarReport:
     strong_stocks: StrongStockReport
     next_buy: NextBuyReport
     accumulation: AccumulationReport
+    policy_signals: PolicySignalReport
     leader_tape: list[SymbolSnapshot]
     market_watchlist: list[SymbolSnapshot]
     intel_items: list[IntelItem]

@@ -5,12 +5,19 @@ from pathlib import Path
 from typing import Any
 
 from .accumulation import build_accumulation_report
-from .config import configured_symbols, theme_keywords, theme_symbol_map
+from .config import configured_symbols, theme_keywords, theme_policy_keywords, theme_symbol_map
 from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
 from .market_context import build_market_pulses
 from .models import DataSourceStatus, RadarReport, SymbolSnapshot, utc_now_iso
 from .next_buy import build_next_buy_report
+from .policy import (
+    apply_policy_keyword_matches,
+    build_policy_signal_report,
+    is_policy_item,
+    policy_counts_by_theme,
+    policy_scores_by_theme,
+)
 from .strong_stocks import build_strong_stock_report
 from .tickflow import TickFlowClient
 
@@ -73,6 +80,7 @@ class MainlineRadar:
         universe_id, symbols = self._symbols_for_mode(mode, max_symbols)
         symbol_to_themes = theme_symbol_map(self.theme_config)
         keywords = theme_keywords(self.theme_config)
+        policy_keywords = theme_policy_keywords(self.theme_config)
 
         instruments = self.client.get_instruments(symbols)
         klines = self.client.get_klines_batch(symbols, period=period, count=lookback_days, adjust=adjust)
@@ -109,9 +117,18 @@ class MainlineRadar:
                 snapshots[symbol] = snapshot
 
         intel_items, intel_statuses = collect_intelligence_with_status(self.intel_config, keywords)
+        intel_items = apply_policy_keyword_matches(intel_items, policy_keywords)
         source_statuses.extend(intel_statuses)
-        catalyst_count_by_theme = catalyst_counts(intel_match_index(intel_items))
-        themes = build_theme_snapshots(self.theme_config, snapshots, catalyst_count_by_theme)
+        non_policy_intel_items = [item for item in intel_items if not is_policy_item(item)]
+        catalyst_count_by_theme = catalyst_counts(intel_match_index(non_policy_intel_items))
+        themes = build_theme_snapshots(
+            self.theme_config,
+            snapshots,
+            catalyst_count_by_theme,
+            policy_counts_by_theme=policy_counts_by_theme(intel_items, policy_keywords),
+            policy_scores_by_theme=policy_scores_by_theme(intel_items, policy_keywords),
+        )
+        policy_signals = build_policy_signal_report(intel_items, themes, policy_keywords)
         leader_tape = build_leader_tape(snapshots, limit=leader_limit)
         market_pulses = build_market_pulses(self.theme_config, snapshots)
         strong_stocks = build_strong_stock_report(
@@ -152,6 +169,7 @@ class MainlineRadar:
             strong_stocks=strong_stocks,
             next_buy=next_buy,
             accumulation=accumulation,
+            policy_signals=policy_signals,
             leader_tape=leader_tape,
             market_watchlist=market_watchlist,
             intel_items=intel_items,

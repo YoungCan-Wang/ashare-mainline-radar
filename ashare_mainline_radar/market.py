@@ -102,8 +102,12 @@ def build_theme_snapshots(
     theme_config: dict[str, Any],
     snapshots: dict[str, SymbolSnapshot],
     catalysts_by_theme: dict[str, int] | None = None,
+    policy_counts_by_theme: dict[str, int] | None = None,
+    policy_scores_by_theme: dict[str, float] | None = None,
 ) -> list[ThemeSnapshot]:
     catalysts_by_theme = catalysts_by_theme or {}
+    policy_counts_by_theme = policy_counts_by_theme or {}
+    policy_scores_by_theme = policy_scores_by_theme or {}
     result: list[ThemeSnapshot] = []
     for theme in theme_config.get("themes", []):
         name = str(theme["name"])
@@ -120,6 +124,8 @@ def build_theme_snapshots(
         amount_heat = _avg([member.amount_ratio for member in members if member.amount_ratio is not None])
         leaders = sorted(members, key=lambda item: item.score, reverse=True)[:5]
         catalyst_count = catalysts_by_theme.get(name, 0)
+        policy_count = policy_counts_by_theme.get(name, 0)
+        policy_score = policy_scores_by_theme.get(name, 0.0)
 
         score = 45.0
         score += 20.0 * (breadth_20d or 0.0)
@@ -128,7 +134,8 @@ def build_theme_snapshots(
         score += 8.0 * _score_change(avg_ret_5d, 0.08)
         if amount_heat is not None:
             score += 10.0 * _clip(amount_heat - 1.0, -0.8, 1.4)
-        score += min(8.0, catalyst_count * 1.5)
+        score += min(6.0, catalyst_count * 1.2)
+        score += min(8.0, policy_score * 0.08)
         score += _clip((mean([leader.score for leader in leaders[:3]]) - 60.0) / 10.0, -4.0, 6.0) if leaders else 0.0
         score = round(_clip(score, 0.0, 100.0), 2)
 
@@ -140,6 +147,8 @@ def build_theme_snapshots(
             evidence.append(f"成交热度 {amount_heat:.2f}x")
         if catalyst_count:
             evidence.append(f"命中情报线索 {catalyst_count} 条")
+        if policy_count:
+            evidence.append(f"政策催化 {policy_count} 条，政策分 {policy_score:.1f}")
 
         result.append(
             ThemeSnapshot(
@@ -154,6 +163,8 @@ def build_theme_snapshots(
                 amount_heat=amount_heat,
                 catalyst_count=catalyst_count,
                 leaders=leaders,
+                policy_catalyst_count=policy_count,
+                policy_score=policy_score,
                 vehicles=list(theme.get("vehicles", [])),
                 evidence=evidence,
             )

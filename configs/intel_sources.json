@@ -10,6 +10,47 @@
         "A股", "市场", "股", "科技", "AI", "机器人", "半导体", "芯片",
         "政策", "美元", "美股", "公告", "经济", "金融", "基金", "产业"
       ]
+    },
+    {
+      "name": "NDRC Policy News",
+      "url": "https://www.ndrc.gov.cn/xwdt/xwfb/",
+      "tags": ["policy", "macro_policy", "ministry", "official"],
+      "max_items": 30,
+      "include_href_keywords": ["/xwdt/xwfb/"],
+      "exclude_keywords": ["会见", "政绩观", "学习教育", "机关", "报表"]
+    },
+    {
+      "name": "CSRC News",
+      "url": "https://www.csrc.gov.cn/csrc/xwfb/index.shtml",
+      "tags": ["policy", "regulator", "official", "market"],
+      "max_items": 30,
+      "include_href_keywords": ["/csrc/c106311/"],
+      "exclude_keywords": ["会见", "调研", "招聘", "报表"]
+    },
+    {
+      "name": "PBC News",
+      "url": "http://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html",
+      "tags": ["policy", "macro_policy", "regulator", "official"],
+      "max_items": 30,
+      "include_href_keywords": ["/goutongjiaoliu/113456/113469/"],
+      "include_keywords": ["货币政策", "降准", "降息", "流动性", "债券", "金融", "互换", "人民币", "宏观审慎", "资本市场"],
+      "exclude_keywords": ["会见", "表彰", "纪念章"]
+    },
+    {
+      "name": "MOF Policy Releases",
+      "url": "https://www.mof.gov.cn/zhengwuxinxi/zhengcefabu/",
+      "tags": ["policy", "macro_policy", "ministry", "official"],
+      "max_items": 30,
+      "include_href_keywords": ["/zhengwuxinxi/zhengcefabu/"],
+      "exclude_keywords": ["年度报表", "专题", "平台"]
+    },
+    {
+      "name": "MOFCOM Policy Releases",
+      "url": "https://www.mofcom.gov.cn/zwgk/zcfb/",
+      "tags": ["policy", "macro_policy", "ministry", "official"],
+      "max_items": 30,
+      "include_href_keywords": ["/zwgk/zcfb/"],
+      "exclude_keywords": ["专题", "平台", "年度报表"]
     }
   ],
   "web_pages": [

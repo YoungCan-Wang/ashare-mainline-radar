@@ -37,7 +37,14 @@ def build_feishu_text(report: RadarReport) -> str:
         for idx, theme in enumerate(report.themes[:3], start=1):
             lines.append(
                 f"{idx}. {theme.name}｜{theme.status}｜强度 {theme.score:.1f}｜20日广度 {pct(theme.breadth_20d)}"
+                f"｜政策 {theme.policy_catalyst_count} 条"
             )
+    if report.policy_signals and report.policy_signals.signals:
+        lines.append("")
+        lines.append("政策催化 TOP3：")
+        for idx, signal in enumerate(report.policy_signals.signals[:3], start=1):
+            title = signal.evidence[0].title if signal.evidence else "n/a"
+            lines.append(f"{idx}. {signal.theme}｜政策分 {signal.score:.1f}｜{title}")
     if report.market_pulses:
         pulse = report.market_pulses[0]
         lines.append("")
