@@ -134,3 +134,15 @@ class TickFlowClient:
                 if parsed.usable:
                     series[symbol] = parsed
         return series
+
+    def get_financial_metrics(self, symbols: list[str], chunk_size: int = 80) -> dict[str, list[dict[str, Any]]]:
+        metrics: dict[str, list[dict[str, Any]]] = {}
+        for batch in chunked(symbols, chunk_size):
+            payload = self._request(
+                "GET",
+                "/v1/financials/metrics",
+                params={"symbols": ",".join(batch)},
+            )
+            for symbol, records in (payload.get("data") or {}).items():
+                metrics[str(symbol)] = [dict(record) for record in (records or [])]
+        return metrics

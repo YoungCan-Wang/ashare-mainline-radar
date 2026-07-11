@@ -3,6 +3,7 @@ import json
 from ashare_mainline_radar.feishu import FeishuStatus, build_feishu_text, write_feishu_status
 from ashare_mainline_radar.models import (
     AccumulationReport,
+    FundamentalReport,
     NextBuyReport,
     PolicySignalReport,
     RadarReport,
@@ -26,6 +27,7 @@ def test_build_feishu_text_minimal_report() -> None:
         accumulation=AccumulationReport(candidates=[]),
         policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
         target_prices=TargetPriceReport(estimates=[]),
+        fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
         leader_tape=[],
         market_watchlist=[],
         intel_items=[],
