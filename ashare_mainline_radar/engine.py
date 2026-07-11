@@ -75,7 +75,7 @@ class MainlineRadar:
         period: str = "1d",
         adjust: str = "forward",
         leader_limit: int = 25,
-        backtest_hold_days: int = 5,
+        backtest_hold_days: int = 15,
         strong_stock_limit: int = 12,
         accumulation_limit: int = 12,
     ) -> RadarReport:
