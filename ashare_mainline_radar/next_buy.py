@@ -38,10 +38,16 @@ def _priority_score(candidate: StrongStockCandidate, theme_status: str, market_p
         score -= 5.0
     if candidate.backtest and candidate.backtest.worst_return is not None and candidate.backtest.worst_return < -0.15:
         score -= 4.0
+    if candidate.fundamental_status == "基本面拖累":
+        score -= 10.0
+    elif candidate.fundamental_status == "未覆盖":
+        score -= 2.0
     return round(max(0.0, min(100.0, score)), 2)
 
 
 def _decision(candidate: StrongStockCandidate) -> str:
+    if candidate.fundamental_status == "基本面拖累":
+        return "观察候选，等待基本面修复"
     if candidate.ret_5d is not None and candidate.ret_5d >= 0.15:
         return "优先候选，等待回踩"
     if candidate.status == "突破观察":
@@ -86,6 +92,8 @@ def _evidence(candidate: StrongStockCandidate, theme_status: str, market_pulses:
         evidence.append(f"20日涨幅 {candidate.ret_20d * 100:.2f}%")
     if candidate.amount_ratio is not None:
         evidence.append(f"成交热度 {candidate.amount_ratio:.2f}x")
+    if candidate.fundamental_score is not None:
+        evidence.append(f"{candidate.fundamental_status}，财务分 {candidate.fundamental_score:.1f}")
     if candidate.backtest:
         win = "n/a" if candidate.backtest.win_rate is None else f"{candidate.backtest.win_rate * 100:.1f}%"
         avg = "n/a" if candidate.backtest.avg_return is None else f"{candidate.backtest.avg_return * 100:.2f}%"
@@ -102,6 +110,10 @@ def _risk_notes(candidate: StrongStockCandidate) -> list[str]:
         notes.append("历史信号样本偏少，回测统计可信度有限。")
     if candidate.backtest and candidate.backtest.avg_return is not None and candidate.backtest.avg_return <= 0:
         notes.append("历史信号平均收益不佳，只能作为观察，不应作为优先买入。")
+    if candidate.fundamental_status == "基本面拖累":
+        notes.append("最新已公告财务指标形成拖累，不进入主动追涨序列，等待增长或现金流修复。")
+    elif candidate.fundamental_status == "未覆盖":
+        notes.append("核心财务指标未覆盖，候选可信度降级，实盘前需人工核对最新财报。")
     return notes
 
 

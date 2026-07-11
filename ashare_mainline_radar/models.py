@@ -134,6 +134,8 @@ class StrongStockCandidate:
     ret_20d: float | None
     amount_ratio: float | None
     high_proximity_20d: float | None
+    fundamental_score: float | None = None
+    fundamental_status: str = "未覆盖"
     reasons: list[str] = field(default_factory=list)
     backtest: BacktestSummary | None = None
 
@@ -193,6 +195,8 @@ class AccumulationCandidate:
     ma20_distance: float | None
     entry_plan: str
     invalidation: str
+    fundamental_score: float | None = None
+    fundamental_status: str = "未覆盖"
     reasons: list[str] = field(default_factory=list)
 
 
@@ -259,6 +263,32 @@ class TargetPriceReport:
 
 
 @dataclass
+class FundamentalSnapshot:
+    symbol: str
+    period_end: str
+    announce_date: str | None
+    revenue_yoy: float | None
+    net_income_yoy: float | None
+    roe: float | None
+    ocfps: float | None
+    bps: float | None
+    price_to_book: float | None
+    revenue_yoy_change: float | None
+    net_income_yoy_change: float | None
+    score: float
+    status: str
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FundamentalReport:
+    snapshots: list[FundamentalSnapshot]
+    covered_symbols: int
+    requested_symbols: int
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ThemeSnapshot:
     name: str
     score: float
@@ -292,6 +322,7 @@ class RadarReport:
     accumulation: AccumulationReport
     policy_signals: PolicySignalReport
     target_prices: TargetPriceReport
+    fundamentals: FundamentalReport
     leader_tape: list[SymbolSnapshot]
     market_watchlist: list[SymbolSnapshot]
     intel_items: list[IntelItem]

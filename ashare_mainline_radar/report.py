@@ -6,6 +6,7 @@ from pathlib import Path
 from .models import (
     AccumulationCandidate,
     DataSourceStatus,
+    FundamentalSnapshot,
     IntelItem,
     MarketPulse,
     RadarReport,
@@ -80,7 +81,7 @@ def _strong_stock_row(rank: int, item: StrongStockCandidate) -> str:
     drawdown = None if backtest is None else backtest.avg_max_drawdown
     return (
         f"| {rank} | {item.theme} | {item.name} `{item.symbol}` | {item.status} | {item.score:.1f} | "
-        f"{pct(item.ret_5d)} | {pct(item.ret_20d)} | {_ratio(item.amount_ratio)} | "
+        f"{pct(item.ret_5d)} | {pct(item.ret_20d)} | {_ratio(item.amount_ratio)} | {item.fundamental_status} | {_fmt(item.fundamental_score, 1)} | "
         f"{signals} | {pct(win_rate)} | {pct(avg_return)} | {pct(worst_return)} | {pct(drawdown)} |"
     )
 
@@ -106,7 +107,17 @@ def _accumulation_row(rank: int, item: AccumulationCandidate) -> str:
         f"| {rank} | {themes} | {item.name} `{item.symbol}` | {item.status} | {item.score:.1f} | "
         f"{pct(item.range_position_60d)} | {pct(item.drawdown_60d)} | {pct(item.ret_5d)} | {pct(item.ret_20d)} | "
         f"{_ratio(item.amount_ratio_5_20)} | {_ratio(item.amount_ratio_10_30)} | {pct(item.ma20_distance)} | "
+        f"{item.fundamental_status} | {_fmt(item.fundamental_score, 1)} | "
         f"{item.entry_plan} | {item.invalidation} |"
+    )
+
+
+def _fundamental_row(rank: int, item: FundamentalSnapshot) -> str:
+    return (
+        f"| {rank} | `{item.symbol}` | {item.period_end} | {item.status} | {item.score:.1f} | "
+        f"{_fmt(item.revenue_yoy, 1)}% | {_fmt(item.net_income_yoy, 1)}% | {_fmt(item.roe, 1)}% | "
+        f"{_fmt(item.ocfps)} | {_fmt(item.price_to_book)}x | {_fmt(item.revenue_yoy_change, 1)}pct | "
+        f"{_fmt(item.net_income_yoy_change, 1)}pct |"
     )
 
 
@@ -251,6 +262,25 @@ def render_markdown(report: RadarReport) -> str:
             lines.append(f"- {item}")
         lines.append("")
 
+    lines.append("## 基本面兑现与估值参考")
+    lines.append("")
+    lines.append(
+        f"候选池请求 {report.fundamentals.requested_symbols} 只，核心财务指标覆盖 "
+        f"{report.fundamentals.covered_symbols} 只；该评分已经参与顺势组和低位介入组重排。"
+    )
+    lines.append("")
+    if report.fundamentals.snapshots:
+        lines.append("| 排名 | 标的 | 报告期 | 状态 | 财务分 | 营收同比 | 净利同比 | ROE | 每股经营现金流 | PB参考 | 营收增速变化 | 利润增速变化 |")
+        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for rank, item in enumerate(report.fundamentals.snapshots[:20], start=1):
+            lines.append(_fundamental_row(rank, item))
+    else:
+        lines.append("- 本次未取得候选池核心财务指标，技术与政策候选照常生成，但可信度按未覆盖处理。")
+    lines.append("")
+    for note in report.fundamentals.notes:
+        lines.append(f"- {note}")
+    lines.append("")
+
     if report.target_prices.estimates:
         lines.append("## 目标价与赔率")
         lines.append("")
@@ -274,8 +304,8 @@ def render_markdown(report: RadarReport) -> str:
     lines.append("这张表不是顺势追强榜；它寻找仍处在60日中低位、成交额均线开始抬升、短线跌势收敛的股票，适合作为观察/试错池。")
     lines.append("")
     if report.accumulation.candidates:
-        lines.append("| 排名 | 主题 | 标的 | 状态 | 评分 | 60日位置 | 距60日高点 | 5日 | 20日 | 成交5/20 | 成交10/30 | 距20日线 | 触发/参与条件 | 失效条件 |")
-        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
+        lines.append("| 排名 | 主题 | 标的 | 状态 | 评分 | 60日位置 | 距60日高点 | 5日 | 20日 | 成交5/20 | 成交10/30 | 距20日线 | 基本面 | 财务分 | 触发/参与条件 | 失效条件 |")
+        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- | --- |")
         for rank, item in enumerate(report.accumulation.candidates[:12], start=1):
             lines.append(_accumulation_row(rank, item))
         lines.append("")
@@ -298,8 +328,8 @@ def render_markdown(report: RadarReport) -> str:
             f" 回测口径：信号日后下一交易日开盘进入，固定持有 {report.strong_stocks.hold_days} 个交易日后按收盘退出。"
         )
         lines.append("")
-        lines.append("| 排名 | 主线 | 标的 | 当前状态 | 综合分 | 5日 | 20日 | 成交热度 | 信号数 | 胜率 | 平均收益 | 最差收益 | 平均最大回撤 |")
-        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| 排名 | 主线 | 标的 | 当前状态 | 综合分 | 5日 | 20日 | 成交热度 | 基本面 | 财务分 | 信号数 | 胜率 | 平均收益 | 最差收益 | 平均最大回撤 |")
+        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
         for rank, item in enumerate(report.strong_stocks.candidates[:12], start=1):
             lines.append(_strong_stock_row(rank, item))
         lines.append("")

@@ -6,6 +6,7 @@ from typing import Any
 
 from .accumulation import build_accumulation_report
 from .config import configured_symbols, theme_keywords, theme_policy_keywords, theme_symbol_map
+from .fundamentals import apply_fundamental_overlay, build_fundamental_report
 from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
 from .market_context import build_market_pulses
@@ -20,7 +21,7 @@ from .policy import (
 )
 from .strong_stocks import build_strong_stock_report
 from .target_prices import build_target_price_report
-from .tickflow import TickFlowClient
+from .tickflow import TickFlowClient, TickFlowError
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -138,15 +139,51 @@ class MainlineRadar:
             klines=klines,
             themes=themes,
             hold_days=backtest_hold_days,
-            max_candidates=strong_stock_limit,
+            max_candidates=strong_stock_limit * 3,
         )
-        next_buy = build_next_buy_report(strong_stocks.candidates, themes, market_pulses)
         accumulation = build_accumulation_report(
             snapshots=snapshots,
             klines=klines,
             themes=themes,
-            max_candidates=accumulation_limit,
+            max_candidates=accumulation_limit * 3,
         )
+        fundamental_symbols = _dedupe(
+            [item.symbol for item in strong_stocks.candidates]
+            + [item.symbol for item in accumulation.candidates]
+        )
+        raw_metrics: dict[str, list[dict[str, object]]] = {}
+        financial_status = "skipped"
+        financial_message = "TickFlow完整API密钥未配置"
+        if self.client.api_key and fundamental_symbols:
+            try:
+                raw_metrics = self.client.get_financial_metrics(fundamental_symbols)
+                financial_status = "ok" if raw_metrics else "empty"
+                financial_message = "候选池核心财务指标"
+            except TickFlowError as exc:
+                financial_status = "unavailable"
+                financial_message = str(exc)[:240]
+        fundamentals = build_fundamental_report(
+            raw_metrics=raw_metrics,
+            prices={symbol: snapshot.last_close for symbol, snapshot in snapshots.items()},
+            requested_symbols=fundamental_symbols,
+        )
+        source_statuses.append(
+            DataSourceStatus(
+                name="TickFlow financial metrics",
+                kind="fundamentals",
+                status=financial_status,
+                items=fundamentals.covered_symbols,
+                message=financial_message,
+            )
+        )
+        apply_fundamental_overlay(
+            strong_stocks=strong_stocks,
+            accumulation=accumulation,
+            fundamentals=fundamentals,
+            strong_limit=strong_stock_limit,
+            accumulation_limit=accumulation_limit,
+        )
+        next_buy = build_next_buy_report(strong_stocks.candidates, themes, market_pulses)
         target_prices = build_target_price_report(
             strong_stocks=strong_stocks,
             accumulation=accumulation,
@@ -179,6 +216,7 @@ class MainlineRadar:
             accumulation=accumulation,
             policy_signals=policy_signals,
             target_prices=target_prices,
+            fundamentals=fundamentals,
             leader_tape=leader_tape,
             market_watchlist=market_watchlist,
             intel_items=intel_items,

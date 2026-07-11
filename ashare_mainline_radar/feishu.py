@@ -49,6 +49,11 @@ def build_feishu_text(report: RadarReport) -> str:
         pulse = report.market_pulses[0]
         lines.append("")
         lines.append(f"环境：{pulse.name}｜{pulse.status}｜强度 {pulse.score:.1f}")
+    if report.fundamentals and report.fundamentals.snapshots:
+        lines.append("")
+        lines.append("基本面兑现 TOP3：")
+        for idx, item in enumerate(report.fundamentals.snapshots[:3], start=1):
+            lines.append(f"{idx}. {item.symbol}｜{item.status}｜财务分 {item.score:.1f}｜营收同比 {item.revenue_yoy or 0:.1f}%｜净利同比 {item.net_income_yoy or 0:.1f}%")
     if report.next_buy and report.next_buy.primary:
         plan = report.next_buy.primary
         lines.append("")
