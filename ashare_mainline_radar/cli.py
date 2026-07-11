@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
-from .feishu import FeishuStatus, build_feishu_text, post_feishu_text, write_feishu_status
+from .feishu import FeishuStatus, build_feishu_card, post_feishu_card, write_feishu_status
 from .report import write_report
 from .tickflow import TickFlowClient
 
@@ -22,7 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--period", default="1d")
     parser.add_argument("--adjust", default="forward")
     parser.add_argument("--leader-limit", type=int, default=25)
-    parser.add_argument("--backtest-hold-days", type=int, default=5)
+    parser.add_argument(
+        "--backtest-hold-days",
+        type=int,
+        default=int(os.getenv("MAINLINE_HOLD_DAYS", "15")),
+        help="Expected holding period in trading days; defaults to 15 for a 10-20 day style.",
+    )
     parser.add_argument("--strong-stock-limit", type=int, default=12)
     parser.add_argument("--accumulation-limit", type=int, default=12)
     parser.add_argument("--send-feishu", action="store_true", help="Send a compact report to FEISHU_WEBHOOK_URL.")
@@ -52,8 +58,12 @@ def main(argv: list[str] | None = None) -> int:
         accumulation_limit=args.accumulation_limit,
     )
     markdown_path, json_path = write_report(report, args.output_dir)
+    feishu_card = build_feishu_card(report)
+    feishu_card_path = args.output_dir / "feishu_card.json"
+    feishu_card_path.write_text(json.dumps(feishu_card, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {markdown_path}")
     print(f"Wrote {json_path}")
+    print(f"Wrote {feishu_card_path}")
     if report.themes:
         top = report.themes[0]
         print(f"Top mainline: {top.name} / {top.status} / score={top.score:.1f}")
@@ -71,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             print("FEISHU_WEBHOOK_URL is not set; skipped Feishu notification.")
             write_feishu_status(args.output_dir / "notification_status.json", FeishuStatus(status="skipped", message="FEISHU_WEBHOOK_URL is not set"))
         else:
-            status = post_feishu_text(args.feishu_webhook_url, build_feishu_text(report))
+            status = post_feishu_card(args.feishu_webhook_url, feishu_card)
             write_feishu_status(args.output_dir / "notification_status.json", status)
             if status.status == "sent":
                 print("Sent Feishu notification.")

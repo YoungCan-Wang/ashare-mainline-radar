@@ -86,6 +86,16 @@ class TickFlowClient:
                     return json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 message = exc.read().decode("utf-8", errors="replace")
+                if exc.code == 429:
+                    last_error = exc
+                    retry_after = exc.headers.get("Retry-After")
+                    try:
+                        wait_seconds = float(retry_after) if retry_after else 2.1 * attempt
+                    except ValueError:
+                        wait_seconds = 2.1 * attempt
+                    if attempt < self.retries:
+                        time.sleep(max(2.1, wait_seconds))
+                        continue
                 if 400 <= exc.code < 500:
                     raise TickFlowError(f"TickFlow HTTP {exc.code} for {path}: {message}") from exc
                 last_error = exc
@@ -99,10 +109,10 @@ class TickFlowClient:
         payload = self._request("GET", f"/v1/universes/{urllib.parse.quote(universe_id)}")
         return dict(payload.get("data") or {})
 
-    def get_instruments(self, symbols: list[str], chunk_size: int = 80) -> dict[str, dict[str, Any]]:
+    def get_instruments(self, symbols: list[str], chunk_size: int = 1000) -> dict[str, dict[str, Any]]:
         instruments: dict[str, dict[str, Any]] = {}
         for batch in chunked(symbols, chunk_size):
-            payload = self._request("GET", "/v1/instruments", params={"symbols": ",".join(batch)})
+            payload = self._request("POST", "/v1/instruments", body={"symbols": batch})
             data = payload.get("data") or []
             for item in data:
                 symbol = str(item.get("symbol"))
@@ -115,7 +125,7 @@ class TickFlowClient:
         period: str = "1d",
         count: int = 80,
         adjust: str = "forward",
-        chunk_size: int = 40,
+        chunk_size: int = 80,
     ) -> dict[str, KlineSeries]:
         series: dict[str, KlineSeries] = {}
         for batch in chunked(symbols, chunk_size):

@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .models import RadarReport, pct
+from .models import NextBuyPlan, RadarReport, StrongStockCandidate, TargetPriceEstimate, pct
 
 
 class FeishuNotifyError(RuntimeError):
@@ -103,13 +103,171 @@ def build_feishu_text(report: RadarReport) -> str:
     return "\n".join(lines)
 
 
-def post_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> FeishuStatus:
-    payload = {
-        "msg_type": "text",
-        "content": {
-            "text": text,
+def _dedupe_plans(report: RadarReport) -> list[NextBuyPlan]:
+    plans: list[NextBuyPlan] = []
+    if report.next_buy.primary:
+        plans.append(report.next_buy.primary)
+    plans.extend(report.next_buy.alternatives)
+    for group in report.next_buy.by_theme:
+        plans.extend(group.plans)
+    return list({plan.symbol: plan for plan in plans}.values())
+
+
+def _attempt_ready(candidate: StrongStockCandidate | None, plan: NextBuyPlan) -> bool:
+    if candidate is None or candidate.fundamental_status == "基本面拖累":
+        return False
+    is_fund = "ETF" in candidate.name.upper() or "基金" in candidate.name
+    if candidate.fundamental_status == "未覆盖" and not is_fund:
+        return False
+    backtest = candidate.backtest
+    return bool(
+        plan.priority_score >= 70
+        and backtest
+        and backtest.signals >= 5
+        and backtest.win_rate is not None
+        and backtest.win_rate >= 0.55
+        and backtest.avg_return is not None
+        and backtest.avg_return > 0
+        and (candidate.ret_5d is None or candidate.ret_5d < 0.15)
+    )
+
+
+def _target_text(target: TargetPriceEstimate | None) -> str:
+    if target is None:
+        return "目标区待确认"
+    return f"目标 {target.target_low:.2f}-{target.target_high:.2f}｜赔率 {target.reward_risk_low or 0:.1f}-{target.reward_risk_high or 0:.1f}"
+
+
+def _trade_block(
+    plan: NextBuyPlan,
+    candidate: StrongStockCandidate | None,
+    target: TargetPriceEstimate | None,
+    include_entry: bool,
+) -> str:
+    backtest = candidate.backtest if candidate else None
+    win = "n/a" if not backtest or backtest.win_rate is None else f"{backtest.win_rate * 100:.0f}%"
+    avg = "n/a" if not backtest or backtest.avg_return is None else f"{backtest.avg_return * 100:.1f}%"
+    is_fund = bool(candidate and ("ETF" in candidate.name.upper() or "基金" in candidate.name))
+    fundamental = "ETF分散载体" if is_fund else candidate.fundamental_status if candidate else "基本面未覆盖"
+    lines = [
+        f"**{plan.name} `{plan.symbol}`**｜{plan.theme}｜优先级 {plan.priority_score:.1f}",
+        f"{report_hold_days(candidate)}日回测：胜率 {win}｜均值 {avg}｜{fundamental}",
+        _target_text(target),
+    ]
+    if include_entry:
+        lines.append(f"**触发：** {plan.entry_plan}")
+    lines.append(f"**退出：** {plan.invalidation}")
+    return "\n".join(lines)
+
+
+def report_hold_days(candidate: StrongStockCandidate | None) -> int:
+    return candidate.backtest.hold_days if candidate and candidate.backtest else 15
+
+
+def _div(content: str) -> dict[str, Any]:
+    return {"tag": "markdown", "content": content}
+
+
+def build_feishu_card(report: RadarReport) -> dict[str, Any]:
+    candidates = {item.symbol: item for item in report.strong_stocks.candidates}
+    targets = {item.symbol: item for item in report.target_prices.estimates}
+    plans = _dedupe_plans(report)
+    hold = [
+        plan
+        for plan in plans
+        if (candidate := candidates.get(plan.symbol))
+        and candidate.status in {"主升确认", "趋势延续"}
+        and candidate.fundamental_status != "基本面拖累"
+        and candidate.backtest
+        and candidate.backtest.signals >= 3
+        and candidate.backtest.win_rate is not None
+        and candidate.backtest.win_rate >= 0.5
+        and candidate.backtest.avg_return is not None
+        and candidate.backtest.avg_return > 0
+    ][:3]
+    attempt = [plan for plan in plans if _attempt_ready(candidates.get(plan.symbol), plan)][:2]
+    occupied = {item.symbol for item in [*attempt, *hold]}
+    waiting = [plan for plan in plans if plan.symbol not in occupied][:3]
+
+    top_themes = "　".join(f"**{theme.name}** {theme.score:.0f}" for theme in report.themes[:3]) or "暂无确认主线"
+    market = report.market_pulses[0] if report.market_pulses else None
+    market_text = f"{market.name}｜{market.status}｜{market.score:.0f}" if market else "环境未确认"
+    hold_days = report.strong_stocks.hold_days
+    elements: list[dict[str, Any]] = [
+        _div(
+            f"**行情 {report.data_as_of or 'n/a'}**　扫描 {report.scanned_symbols} 只\n"
+            f"主线：{top_themes}\n环境：{market_text}　策略周期：**{hold_days}个交易日**"
+        ),
+        {"tag": "hr"},
+        _div("<font color='red'>**一、可尝试建仓（触发后）**</font>\n只在触发条件出现后分批，不等于开盘直接买。"),
+    ]
+    if attempt:
+        for plan in attempt:
+            elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), True)))
+    else:
+        elements.append(_div("**今日没有同时通过15日回测、基本面和位置约束的新开仓标的。**"))
+
+    elements.extend([{"tag": "hr"}, _div("<font color='green'>**二、已有仓位可继续持有**</font>\n仅适用于已经持有；主线和退出条件失效时不再拿。")])
+    if hold:
+        for plan in hold:
+            elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), False)))
+    else:
+        elements.append(_div("当前没有达到继续持有标准的顺势候选。"))
+
+    elements.extend([{"tag": "hr"}, _div("<font color='orange'>**三、等待回踩或确认**</font>")])
+    if waiting:
+        for plan in waiting:
+            elements.append(_div(f"**{plan.name} `{plan.symbol}`**｜{plan.theme}\n{plan.entry_plan}"))
+    else:
+        elements.append(_div("暂无等待候选。"))
+
+    low_position = report.accumulation.candidates[:3]
+    if low_position:
+        lines = ["<font color='grey'>**四、低位资金观察（不是立即建仓）**</font>"]
+        for item in low_position:
+            lines.append(
+                f"{item.name} `{item.symbol}`｜{item.primary_theme}｜{item.status}｜"
+                f"评分 {item.score:.1f}｜成交5/20 {item.amount_ratio_5_20 or 0:.2f}x"
+            )
+        elements.extend([{"tag": "hr"}, _div("\n".join(lines))])
+
+    elements.extend(
+        [
+            {"tag": "hr"},
+            _div(
+                "**统一纪律**\n"
+                "首笔只用计划仓位的1/3；确认后再加。持有10-20个交易日不是死拿，"
+                "跌破失效位、主线退出前三或基本面降级时提前退出。\n"
+                "<font color='grey'>仅用于研究和交易准备，不构成投资建议。</font>"
+            ),
+        ]
+    )
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "style": {
+                "text_size": {
+                    "normal_v2": {"default": "normal", "pc": "normal", "mobile": "normal"}
+                }
+            },
+        },
+        "header": {
+            "template": "red",
+            "title": {
+                "tag": "plain_text",
+                "content": f"A股主线作战卡｜10-20日｜{report.data_as_of or 'n/a'}",
+            },
+        },
+        "body": {
+            "direction": "vertical",
+            "padding": "12px 12px 12px 12px",
+            "elements": elements,
         },
     }
+
+
+def _post_feishu_payload(webhook_url: str, payload: dict[str, Any], timeout: float) -> FeishuStatus:
     request = urllib.request.Request(
         webhook_url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -135,6 +293,14 @@ def post_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> Feis
     if code not in (None, 0):
         return FeishuStatus(status="failed", code=code, message=str(parsed.get("msg") or parsed), response=parsed)
     return FeishuStatus(status="sent", code=0, message=str(parsed.get("msg") or "ok"), response=parsed)
+
+
+def post_feishu_card(webhook_url: str, card: dict[str, Any], timeout: float = 15.0) -> FeishuStatus:
+    return _post_feishu_payload(webhook_url, {"msg_type": "interactive", "card": card}, timeout)
+
+
+def post_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> FeishuStatus:
+    return _post_feishu_payload(webhook_url, {"msg_type": "text", "content": {"text": text}}, timeout)
 
 
 def send_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> None:

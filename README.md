@@ -19,6 +19,7 @@ Skill 适合封装一次性工作流；主线参与需要长期运行、数据�
 ## 数据源
 
 - TickFlow HTTP API：A 股/ETF/美股/港股的标的池、标的元数据、日 K、实时行情及核心财务指标等。
+- 全市场扫描使用批量接口，并对 `429` 限流响应自动退避重试。
 - 免费模式：无需 API key，可用日 K、标的池、标的信息，适合收盘后主线扫描。
 - 完整模式：设置 `TICKFLOW_API_KEY` 后自动使用 `https://api.tickflow.org`，后续可扩展实时行情和分钟线。
 - 情报源：`configs/intel_sources.json` 支持 RSS、资讯列表页、网页标题、手动导入研报文本/纪要。
@@ -44,6 +45,7 @@ python3 scripts/run_daily.py --mode curated --lookback-days 180
 
 - `reports/latest/mainline_report.md`
 - `reports/latest/mainline_report.json`
+- `reports/latest/feishu_card.json`
 
 如果要扫描全市场：
 
@@ -101,6 +103,8 @@ python3 scripts/run_daily.py --mode universe --max-symbols 0
 - 触发/参与条件。
 - 失效条件。
 - 仓位提示和风险提示。
+
+默认交易风格按持有约 10-20 个交易日设计，历史信号回测使用 15 个交易日作为中位基准。可通过 `--backtest-hold-days` 或 `MAINLINE_HOLD_DAYS` 调整。
 
 报告还会生成 `accumulation.candidates`，专门回答“低位但资金开始介入的股票能不能找”。它和强势股不是同一张榜：
 
@@ -166,7 +170,7 @@ FEISHU_WEBHOOK_URL
 TUSHARE_TOKEN
 ```
 
-`FEISHU_WEBHOOK_URL` 配置后，工作流会在生成报告后向飞书机器人发送主线、环境和强势个股候选摘要。默认情况下，飞书侧临时失败不会阻断报告 artifact 上传；如果希望本地或 CI 严格失败，可以加 `--fail-on-feishu-error`。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
+`FEISHU_WEBHOOK_URL` 配置后，工作流会发送红色交互卡片，按“可尝试建仓、已有仓位可继续持有、等待回踩、低位观察”组织结果，并展示入场触发、失效条件、目标区和15日回测。默认情况下，飞书侧临时失败不会阻断报告 artifact 上传；如果希望本地或 CI 严格失败，可以加 `--fail-on-feishu-error`。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
 
 飞书通知状态会写入：
 
