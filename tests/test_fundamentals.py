@@ -81,3 +81,41 @@ def test_fundamental_report_allows_empty_degraded_input() -> None:
     report = build_fundamental_report({}, {}, ["000001.SZ"])
     assert report.covered_symbols == 0
     assert report.requested_symbols == 1
+
+
+def test_negative_roe_cannot_be_classified_as_fundamental_delivery() -> None:
+    raw = {
+        "LOSS.SZ": [
+            {
+                "period_end": "2026-03-31",
+                "revenue_yoy": 45,
+                "net_income_yoy": 300,
+                "roe_diluted": -0.3,
+                "ocfps": 0.1,
+                "bps": 3,
+            }
+        ]
+    }
+    report = build_fundamental_report(raw, {"LOSS.SZ": 12}, ["LOSS.SZ"])
+    item = report.snapshots[0]
+    assert item.score <= 55
+    assert item.status != "基本面兑现"
+
+
+def test_negative_operating_cash_flow_requires_quality_confirmation() -> None:
+    raw = {
+        "CASH.SZ": [
+            {
+                "period_end": "2026-03-31",
+                "revenue_yoy": 50,
+                "net_income_yoy": 100,
+                "roe_diluted": 5,
+                "ocfps": -0.5,
+                "bps": 3,
+            }
+        ]
+    }
+    report = build_fundamental_report(raw, {"CASH.SZ": 12}, ["CASH.SZ"])
+    item = report.snapshots[0]
+    assert item.score <= 72
+    assert item.status == "兑现待质量确认"

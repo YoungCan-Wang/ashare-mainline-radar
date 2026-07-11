@@ -29,6 +29,17 @@ def _same_period_prior(records: list[dict[str, object]], latest: dict[str, objec
     return next((record for record in records if str(record.get("period_end") or "") == target), None)
 
 
+def _annualized_roe(roe: float | None, period_end: object) -> float | None:
+    if roe is None:
+        return None
+    period = str(period_end or "")
+    try:
+        month = int(period[5:7])
+    except (TypeError, ValueError):
+        return roe
+    return roe * (12.0 / month) if month in {3, 6, 9, 12} else roe
+
+
 def _snapshot(symbol: str, records: list[dict[str, object]], last_close: float | None) -> FundamentalSnapshot | None:
     usable = [record for record in records if record.get("period_end")]
     if not usable:
@@ -39,6 +50,7 @@ def _snapshot(symbol: str, records: list[dict[str, object]], last_close: float |
     revenue_yoy = _number(latest.get("revenue_yoy"))
     net_income_yoy = _number(latest.get("net_income_yoy"))
     roe = _number(latest.get("roe_diluted")) or _number(latest.get("roe"))
+    annualized_roe = _annualized_roe(roe, latest.get("period_end"))
     ocfps = _number(latest.get("ocfps"))
     bps = _number(latest.get("bps"))
     price_to_book = (last_close / bps) if last_close and bps and bps > 0 else None
@@ -52,16 +64,32 @@ def _snapshot(symbol: str, records: list[dict[str, object]], last_close: float |
         score += _clip(revenue_yoy / 25.0, -1.0, 1.0) * 12.0
     if net_income_yoy is not None:
         score += _clip(net_income_yoy / 35.0, -1.0, 1.0) * 16.0
-    if roe is not None:
-        score += _clip((roe - 5.0) / 15.0, -0.5, 1.0) * 10.0
+    if annualized_roe is not None:
+        score += _clip((annualized_roe - 5.0) / 15.0, -0.5, 1.0) * 10.0
     if ocfps is not None:
         score += 5.0 if ocfps > 0 else -7.0
     if revenue_change is not None:
         score += _clip(revenue_change / 15.0, -1.0, 1.0) * 4.0
     if profit_change is not None:
         score += _clip(profit_change / 25.0, -1.0, 1.0) * 6.0
+    if roe is not None and roe <= 0:
+        score = min(score, 55.0)
+    if revenue_yoy is not None and revenue_yoy <= 0:
+        score = min(score, 62.0)
+    if net_income_yoy is not None and net_income_yoy <= 0:
+        score = min(score, 55.0)
+    if ocfps is not None and ocfps < 0:
+        score = min(score, 72.0)
     score = round(_clip(score, 0.0, 100.0), 2)
-    status = "基本面兑现" if score >= 67 else "基本面观察" if score >= 52 else "基本面拖累"
+    quality_confirmed = all(value is not None and value > 0 for value in (revenue_yoy, net_income_yoy, roe, ocfps))
+    if score >= 67 and quality_confirmed:
+        status = "基本面兑现"
+    elif score >= 62:
+        status = "兑现待质量确认"
+    elif score >= 52:
+        status = "基本面观察"
+    else:
+        status = "基本面拖累"
 
     evidence: list[str] = []
     if revenue_yoy is not None:
@@ -69,7 +97,10 @@ def _snapshot(symbol: str, records: list[dict[str, object]], last_close: float |
     if net_income_yoy is not None:
         evidence.append(f"净利润同比 {net_income_yoy:.1f}%")
     if roe is not None:
-        evidence.append(f"ROE {roe:.1f}%")
+        roe_text = f"ROE {roe:.1f}%"
+        if annualized_roe is not None and annualized_roe != roe:
+            roe_text += f"（年化参考 {annualized_roe:.1f}%）"
+        evidence.append(roe_text)
     if ocfps is not None:
         evidence.append(f"每股经营现金流 {ocfps:.2f}")
     if price_to_book is not None:
