@@ -6,6 +6,7 @@ from typing import Any
 from .accumulation import build_accumulation_report
 from .config import configured_symbols, theme_keywords, theme_policy_keywords, theme_symbol_map
 from .fundamentals import apply_fundamental_overlay, build_fundamental_report
+from .golden_pit import build_golden_pit_report
 from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
 from .market_context import build_market_pulses
@@ -18,6 +19,7 @@ from .policy import (
     policy_counts_by_theme,
     policy_scores_by_theme,
 )
+from .risk_gate import build_trading_gate
 from .strong_stocks import build_strong_stock_report
 from .target_prices import build_target_price_report
 from .tickflow import TickFlowClient, TickFlowError
@@ -132,6 +134,7 @@ class MainlineRadar:
         policy_signals = build_policy_signal_report(intel_items, themes, policy_keywords)
         leader_tape = build_leader_tape(snapshots, limit=leader_limit)
         market_pulses = build_market_pulses(self.theme_config, snapshots)
+        trading_gate = build_trading_gate(self.theme_config, snapshots, market_pulses)
         strong_stocks = build_strong_stock_report(
             theme_config=self.theme_config,
             snapshots=snapshots,
@@ -146,9 +149,16 @@ class MainlineRadar:
             themes=themes,
             max_candidates=accumulation_limit * 3,
         )
+        preliminary_golden_pits = build_golden_pit_report(
+            snapshots=snapshots,
+            klines=klines,
+            themes=themes,
+            gate=trading_gate,
+        )
         fundamental_symbols = _dedupe(
             [item.symbol for item in strong_stocks.candidates]
             + [item.symbol for item in accumulation.candidates]
+            + [item.symbol for item in preliminary_golden_pits.candidates]
         )
         raw_metrics: dict[str, list[dict[str, object]]] = {}
         financial_status = "skipped"
@@ -182,7 +192,14 @@ class MainlineRadar:
             strong_limit=strong_stock_limit,
             accumulation_limit=accumulation_limit,
         )
-        next_buy = build_next_buy_report(strong_stocks.candidates, themes, market_pulses)
+        golden_pits = build_golden_pit_report(
+            snapshots=snapshots,
+            klines=klines,
+            themes=themes,
+            gate=trading_gate,
+            fundamentals=fundamentals,
+        )
+        next_buy = build_next_buy_report(strong_stocks.candidates, themes, market_pulses, trading_gate)
         target_prices = build_target_price_report(
             strong_stocks=strong_stocks,
             accumulation=accumulation,
@@ -210,9 +227,11 @@ class MainlineRadar:
             data_source=self.client.source_label,
             themes=themes,
             market_pulses=market_pulses,
+            trading_gate=trading_gate,
             strong_stocks=strong_stocks,
             next_buy=next_buy,
             accumulation=accumulation,
+            golden_pits=golden_pits,
             policy_signals=policy_signals,
             target_prices=target_prices,
             fundamentals=fundamentals,

@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from .models import MarketPulse, NextBuyPlan, NextBuyReport, StrongStockCandidate, ThemeBuyGroup, ThemeSnapshot
+from .models import (
+    MarketPulse,
+    NextBuyPlan,
+    NextBuyReport,
+    StrongStockCandidate,
+    ThemeBuyGroup,
+    ThemeSnapshot,
+    TradingGate,
+)
 
 
 def _fmt_price(value: float) -> str:
@@ -157,6 +165,7 @@ def build_next_buy_report(
     candidates: list[StrongStockCandidate],
     themes: list[ThemeSnapshot],
     market_pulses: list[MarketPulse],
+    trading_gate: TradingGate | None = None,
     limit: int = 3,
 ) -> NextBuyReport:
     plans = [_build_plan(candidate, themes, market_pulses) for candidate in candidates]
@@ -169,4 +178,11 @@ def build_next_buy_report(
     by_theme = _theme_groups(plans, themes)
     if not plans:
         return NextBuyReport(primary=None, alternatives=[], by_theme=[], notes=[*notes, "当前没有达到阈值的下一笔买入候选。"])
+    if trading_gate and trading_gate.level == "red":
+        return NextBuyReport(
+            primary=None,
+            alternatives=[],
+            by_theme=by_theme,
+            notes=[*notes, f"市场交易闸门为“{trading_gate.state}”，顺势候选全部转入等待确认。"],
+        )
     return NextBuyReport(primary=plans[0], alternatives=plans[1:limit], by_theme=by_theme, notes=notes)

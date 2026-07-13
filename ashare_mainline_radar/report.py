@@ -7,14 +7,14 @@ from .models import (
     AccumulationCandidate,
     DataSourceStatus,
     FundamentalSnapshot,
-    IntelItem,
+    GoldenPitCandidate,
     MarketPulse,
+    NextBuyPlan,
     RadarReport,
     StrongStockCandidate,
-    NextBuyPlan,
+    SymbolSnapshot,
     TargetPriceEstimate,
     ThemeBuyGroup,
-    SymbolSnapshot,
     ThemeSnapshot,
     pct,
 )
@@ -112,6 +112,15 @@ def _accumulation_row(rank: int, item: AccumulationCandidate) -> str:
     )
 
 
+def _golden_pit_row(rank: int, item: GoldenPitCandidate) -> str:
+    return (
+        f"| {rank} | {item.name} `{item.symbol}` | {item.theme} | {item.stage} | {item.score:.1f} | "
+        f"{pct(item.drawdown_from_20d_high)} | {pct(item.ret_1d)} | {pct(item.relative_1d)} | "
+        f"{_ratio(item.amount_ratio_1_5)} | {item.fundamental_status} | {item.action} | "
+        f"{item.confirmation} | {item.invalidation} |"
+    )
+
+
 def _fundamental_row(rank: int, item: FundamentalSnapshot) -> str:
     return (
         f"| {rank} | `{item.symbol}` | {item.period_end} | {item.status} | {item.score:.1f} | "
@@ -169,6 +178,14 @@ def render_markdown(report: RadarReport) -> str:
     lines.append(f"- 标的池：`{report.universe}`")
     lines.append(f"- 有效标的数：`{report.scanned_symbols}`")
     lines.append(f"- 数据源：{report.data_source}")
+    lines.append("")
+    lines.append("## 今日交易闸门")
+    lines.append("")
+    lines.append(f"**{report.trading_gate.state}**（{report.trading_gate.level}，环境分 {report.trading_gate.score:.1f}）")
+    lines.append("")
+    for reason in report.trading_gate.reasons:
+        lines.append(f"- {reason}")
+    lines.append(f"- 允许动作：{'；'.join(report.trading_gate.allowed_actions)}")
     lines.append("")
     lines.append("## 主线排序")
     lines.append("")
@@ -261,6 +278,35 @@ def render_markdown(report: RadarReport) -> str:
         for item in primary.risk_notes:
             lines.append(f"- {item}")
         lines.append("")
+    elif report.next_buy.by_theme:
+        lines.append("## 顺势候选等待区")
+        lines.append("")
+        lines.append(f"当前交易闸门为 **{report.trading_gate.state}**，不生成下一笔买入候选；以下仅保留等待确认名单。")
+        lines.append("")
+        lines.append("| 排名 | 主线 | 状态 | 顺势候选 |")
+        lines.append("| ---: | --- | --- | --- |")
+        for rank, group in enumerate(report.next_buy.by_theme[:6], start=1):
+            lines.append(_theme_buy_group_row(rank, group))
+        lines.append("")
+
+    lines.append("## 主线黄金坑雷达")
+    lines.append("")
+    lines.append("黄金坑只扫描前三主线核心股；先识别坑位，再等待止跌确认。市场闸门关闭时一律不把候选写成买点。")
+    lines.append("")
+    if report.golden_pits.candidates:
+        lines.append("| 排名 | 标的 | 主线 | 阶段 | 评分 | 距20日高点 | 单日 | 相对大盘 | 当日/前5日成交 | 基本面 | 当前动作 | 确认条件 | 失效条件 |")
+        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |")
+        for rank, item in enumerate(report.golden_pits.candidates, start=1):
+            lines.append(_golden_pit_row(rank, item))
+        lines.append("")
+        for item in report.golden_pits.candidates[:5]:
+            lines.append(f"- **{item.name} `{item.symbol}`**：{'；'.join(item.reasons)}。")
+    else:
+        lines.append("- 当前没有达到约束的黄金坑候选，宁可空缺也不把下跌中继包装成机会。")
+    lines.append("")
+    for note in report.golden_pits.notes:
+        lines.append(f"- {note}")
+    lines.append("")
 
     lines.append("## 基本面兑现与估值参考")
     lines.append("")

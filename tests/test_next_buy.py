@@ -1,4 +1,4 @@
-from ashare_mainline_radar.models import BacktestSummary, StrongStockCandidate, ThemeSnapshot
+from ashare_mainline_radar.models import BacktestSummary, StrongStockCandidate, ThemeSnapshot, TradingGate
 from ashare_mainline_radar.next_buy import build_next_buy_report
 
 
@@ -49,4 +49,38 @@ def test_build_next_buy_report_selects_primary() -> None:
     assert "失效" not in report.primary.decision
     assert report.by_theme
     assert report.by_theme[0].theme == "机器人"
+    assert report.by_theme[0].plans[0].symbol == "002747.SZ"
+
+
+def test_red_gate_suppresses_new_buy_but_keeps_waiting_candidates() -> None:
+    candidate = StrongStockCandidate(
+        symbol="002747.SZ",
+        name="埃斯顿",
+        theme="机器人",
+        last_close=20.0,
+        score=90.0,
+        status="趋势延续",
+        ret_5d=0.05,
+        ret_20d=0.18,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.04,
+    )
+    theme = ThemeSnapshot(
+        name="机器人",
+        score=88,
+        status="主线成立",
+        members=8,
+        breadth_5d=0.6,
+        breadth_20d=0.8,
+        avg_ret_5d=0.03,
+        avg_ret_20d=0.12,
+        amount_heat=1.1,
+        catalyst_count=0,
+        leaders=[],
+    )
+    gate = TradingGate("red", "暂停新仓", 25, 0, ["三大指数大跌"], ["观察"])
+
+    report = build_next_buy_report([candidate], [theme], [], gate)
+
+    assert report.primary is None
     assert report.by_theme[0].plans[0].symbol == "002747.SZ"

@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-
 CN_MARKET_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
@@ -43,7 +42,7 @@ class KlineSeries:
     amount: list[float]
 
     @classmethod
-    def from_compact(cls, symbol: str, payload: dict[str, Any]) -> "KlineSeries":
+    def from_compact(cls, symbol: str, payload: dict[str, Any]) -> KlineSeries:
         return cls(
             symbol=symbol,
             timestamp=list(payload.get("timestamp") or []),
@@ -114,6 +113,16 @@ class MarketPulse:
     positive_20d: float | None
     leaders: list[SymbolSnapshot] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TradingGate:
+    level: str
+    state: str
+    score: float
+    max_initial_position_fraction: float
+    reasons: list[str] = field(default_factory=list)
+    allowed_actions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -213,6 +222,34 @@ class AccumulationCandidate:
 @dataclass
 class AccumulationReport:
     candidates: list[AccumulationCandidate]
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class GoldenPitCandidate:
+    symbol: str
+    name: str
+    theme: str
+    stage: str
+    score: float
+    last_close: float
+    drawdown_from_20d_high: float
+    ret_1d: float | None
+    ret_5d: float | None
+    relative_1d: float | None
+    amount_ratio_1_5: float | None
+    ma20_distance: float | None
+    fundamental_score: float | None
+    fundamental_status: str
+    confirmation: str
+    invalidation: str
+    action: str
+    reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class GoldenPitReport:
+    candidates: list[GoldenPitCandidate]
     notes: list[str] = field(default_factory=list)
 
 
@@ -327,9 +364,11 @@ class RadarReport:
     data_source: str
     themes: list[ThemeSnapshot]
     market_pulses: list[MarketPulse]
+    trading_gate: TradingGate
     strong_stocks: StrongStockReport
     next_buy: NextBuyReport
     accumulation: AccumulationReport
+    golden_pits: GoldenPitReport
     policy_signals: PolicySignalReport
     target_prices: TargetPriceReport
     fundamentals: FundamentalReport
