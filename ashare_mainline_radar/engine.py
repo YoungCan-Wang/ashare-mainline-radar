@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +9,7 @@ from .fundamentals import apply_fundamental_overlay, build_fundamental_report
 from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
 from .market_context import build_market_pulses
-from .models import DataSourceStatus, RadarReport, SymbolSnapshot, utc_now_iso
+from .models import DataSourceStatus, RadarReport, SymbolSnapshot, cn_market_date_from_ms, utc_now_iso
 from .next_buy import build_next_buy_report
 from .policy import (
     apply_policy_keyword_matches,
@@ -105,7 +104,7 @@ class MainlineRadar:
         last_timestamps = [series.last_timestamp for series in klines.values() if series.last_timestamp is not None]
         data_as_of = None
         if last_timestamps:
-            data_as_of = datetime.fromtimestamp(max(last_timestamps) / 1000, timezone.utc).date().isoformat()
+            data_as_of = cn_market_date_from_ms(max(last_timestamps))
 
         snapshots: dict[str, SymbolSnapshot] = {}
         for symbol, series in klines.items():

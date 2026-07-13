@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from statistics import mean, median
 from typing import Any
 
-from .models import BacktestSummary, KlineSeries, StrongStockCandidate, StrongStockReport, SymbolSnapshot, ThemeSnapshot
+from .models import (
+    BacktestSummary,
+    KlineSeries,
+    StrongStockCandidate,
+    StrongStockReport,
+    SymbolSnapshot,
+    ThemeSnapshot,
+    cn_market_date_from_ms,
+)
 
 
 def _avg(values: list[float]) -> float | None:
@@ -18,9 +25,7 @@ def _pct_change(current: float, previous: float) -> float | None:
 
 
 def _date_from_ms(value: int | None) -> str | None:
-    if value is None:
-        return None
-    return datetime.fromtimestamp(value / 1000, timezone.utc).date().isoformat()
+    return cn_market_date_from_ms(value)
 
 
 def _signal_metrics(series: KlineSeries, idx: int) -> dict[str, float] | None:

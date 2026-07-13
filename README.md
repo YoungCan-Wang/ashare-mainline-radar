@@ -20,6 +20,7 @@ Skill 适合封装一次性工作流；主线参与需要长期运行、数据�
 
 - TickFlow HTTP API：A 股/ETF/美股/港股的标的池、标的元数据、日 K、实时行情及核心财务指标等。
 - 全市场扫描使用批量接口，并对 `429` 限流响应自动退避重试。
+- A股 K 线时间戳按 `Asia/Shanghai` 转换交易日，避免周一行情被 UTC 截断成周日。
 - 免费模式：无需 API key，可用日 K、标的池、标的信息，适合收盘后主线扫描。
 - 完整模式：设置 `TICKFLOW_API_KEY` 后自动使用 `https://api.tickflow.org`，后续可扩展实时行情和分钟线。
 - 情报源：`configs/intel_sources.json` 支持 RSS、资讯列表页、网页标题、手动导入研报文本/纪要。

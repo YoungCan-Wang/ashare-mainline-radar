@@ -3,10 +3,20 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
+
+
+CN_MARKET_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def cn_market_date_from_ms(value: int | None) -> str | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value / 1000, timezone.utc).astimezone(CN_MARKET_TIMEZONE).date().isoformat()
 
 
 def pct(value: float | None) -> str:
