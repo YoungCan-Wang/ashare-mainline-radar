@@ -49,6 +49,7 @@ def build_feishu_text(report: RadarReport) -> str:
         pulse = report.market_pulses[0]
         lines.append("")
         lines.append(f"环境：{pulse.name}｜{pulse.status}｜强度 {pulse.score:.1f}")
+    lines.append(f"交易闸门：{report.trading_gate.state}｜{'; '.join(report.trading_gate.reasons)}")
     if report.fundamentals and report.fundamentals.snapshots:
         lines.append("")
         lines.append("基本面兑现 TOP3：")
@@ -85,6 +86,11 @@ def build_feishu_text(report: RadarReport) -> str:
                 f"{idx}. {item.name} {item.symbol}｜{item.primary_theme}｜{item.status}｜评分 {item.score:.1f}｜"
                 f"60日位置 {pct(item.range_position_60d)}｜成交5/20 {amount_ratio}"
             )
+    if report.golden_pits.candidates:
+        lines.append("")
+        lines.append("主线黄金坑：")
+        for idx, item in enumerate(report.golden_pits.candidates[:5], start=1):
+            lines.append(f"{idx}. {item.name} {item.symbol}｜{item.theme}｜{item.stage}｜{item.action}｜评分 {item.score:.1f}")
     candidates = report.strong_stocks.candidates if report.strong_stocks else []
     if candidates:
         lines.append("")
@@ -186,6 +192,8 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
         and candidate.backtest.avg_return > 0
     ][:3]
     attempt = [plan for plan in plans if _attempt_ready(candidates.get(plan.symbol), plan)][:2]
+    if report.trading_gate.level == "red":
+        attempt = []
     occupied = {item.symbol for item in [*attempt, *hold]}
     waiting = [plan for plan in plans if plan.symbol not in occupied][:3]
 
@@ -193,10 +201,17 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     market = report.market_pulses[0] if report.market_pulses else None
     market_text = f"{market.name}｜{market.status}｜{market.score:.0f}" if market else "环境未确认"
     hold_days = report.strong_stocks.hold_days
+    gate_color = "red" if report.trading_gate.level == "red" else "orange" if report.trading_gate.level == "orange" else "green"
+    gate_reasons = "；".join(report.trading_gate.reasons) or "环境数据不足"
     elements: list[dict[str, Any]] = [
         _div(
             f"**行情 {report.data_as_of or 'n/a'}**　扫描 {report.scanned_symbols} 只\n"
             f"主线：{top_themes}\n环境：{market_text}　策略周期：**{hold_days}个交易日**"
+        ),
+        {"tag": "hr"},
+        _div(
+            f"<font color='{gate_color}'>**今日交易状态：{report.trading_gate.state}**</font>\n"
+            f"{gate_reasons}\n允许：{'；'.join(report.trading_gate.allowed_actions)}"
         ),
         {"tag": "hr"},
         _div("<font color='red'>**一、可尝试建仓（触发后）**</font>\n只在触发条件出现后分批，不等于开盘直接买。"),
@@ -205,9 +220,11 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
         for plan in attempt:
             elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), True)))
     else:
-        elements.append(_div("**今日没有同时通过15日回测、基本面和位置约束的新开仓标的。**"))
+        message = "**市场风险闸门已关闭，今日暂停新增仓位。**" if report.trading_gate.level == "red" else "**今日没有同时通过15日回测、基本面和位置约束的新开仓标的。**"
+        elements.append(_div(message))
 
-    elements.extend([{"tag": "hr"}, _div("<font color='green'>**二、已有仓位可继续持有**</font>\n仅适用于已经持有；主线和退出条件失效时不再拿。")])
+    hold_title = "已有仓位：仅留强去弱" if report.trading_gate.level == "red" else "已有仓位可继续持有"
+    elements.extend([{"tag": "hr"}, _div(f"<font color='green'>**二、{hold_title}**</font>\n仅适用于已经持有；主线和退出条件失效时不再拿。")])
     if hold:
         for plan in hold:
             elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), False)))
@@ -221,9 +238,19 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     else:
         elements.append(_div("暂无等待候选。"))
 
+    golden_pits = report.golden_pits.candidates[:3]
+    if golden_pits:
+        lines = ["<font color='orange'>**四、主线黄金坑（先等确认）**</font>"]
+        for item in golden_pits:
+            lines.append(
+                f"**{item.name} `{item.symbol}`**｜{item.theme}｜{item.stage}｜评分 {item.score:.1f}\n"
+                f"动作：{item.action}\n确认：{item.confirmation}\n失效：{item.invalidation}"
+            )
+        elements.extend([{"tag": "hr"}, _div("\n\n".join(lines))])
+
     low_position = report.accumulation.candidates[:3]
     if low_position:
-        lines = ["<font color='grey'>**四、低位资金观察（不是立即建仓）**</font>"]
+        lines = ["<font color='grey'>**五、低位资金观察（不是立即建仓）**</font>"]
         for item in low_position:
             lines.append(
                 f"{item.name} `{item.symbol}`｜{item.primary_theme}｜{item.status}｜"

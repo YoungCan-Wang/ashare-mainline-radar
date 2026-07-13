@@ -5,14 +5,27 @@ from ashare_mainline_radar.models import (
     AccumulationReport,
     BacktestSummary,
     FundamentalReport,
+    GoldenPitReport,
     NextBuyPlan,
     NextBuyReport,
     PolicySignalReport,
     RadarReport,
-    StrongStockReport,
     StrongStockCandidate,
+    StrongStockReport,
     TargetPriceReport,
+    TradingGate,
 )
+
+
+def _green_gate() -> TradingGate:
+    return TradingGate(
+        level="green",
+        state="允许寻找买点",
+        score=70,
+        max_initial_position_fraction=1 / 3,
+        reasons=["宽基环境正常"],
+        allowed_actions=["按触发条件分批"],
+    )
 
 
 def test_build_feishu_text_minimal_report() -> None:
@@ -25,9 +38,11 @@ def test_build_feishu_text_minimal_report() -> None:
         data_source="test",
         themes=[],
         market_pulses=[],
+        trading_gate=_green_gate(),
         strong_stocks=StrongStockReport(selected_themes=[], hold_days=5, candidates=[]),
         next_buy=NextBuyReport(primary=None),
         accumulation=AccumulationReport(candidates=[]),
+        golden_pits=GoldenPitReport(candidates=[]),
         policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
         target_prices=TargetPriceReport(estimates=[]),
         fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
@@ -106,9 +121,11 @@ def test_card_allows_etf_attempt_without_company_fundamentals() -> None:
         data_source="test",
         themes=[],
         market_pulses=[],
+        trading_gate=_green_gate(),
         strong_stocks=StrongStockReport(selected_themes=[candidate.theme], hold_days=15, candidates=[candidate]),
         next_buy=NextBuyReport(primary=plan),
         accumulation=AccumulationReport(candidates=[]),
+        golden_pits=GoldenPitReport(candidates=[]),
         policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
         target_prices=TargetPriceReport(estimates=[]),
         fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
@@ -127,3 +144,40 @@ def test_card_allows_etf_attempt_without_company_fundamentals() -> None:
     assert "科创芯片ETF嘉实" in contents
     assert "ETF分散载体" in contents
     assert "15日回测" in contents
+
+
+def test_red_gate_suppresses_attempt_section() -> None:
+    report = RadarReport(
+        generated_at="2026-07-13T00:00:00+00:00",
+        data_as_of="2026-07-13",
+        mode="universe",
+        universe="CN_Equity_A",
+        scanned_symbols=1200,
+        data_source="test",
+        themes=[],
+        market_pulses=[],
+        trading_gate=TradingGate("red", "暂停新仓", 24, 0, ["三大指数大跌"], ["观察黄金坑"]),
+        strong_stocks=StrongStockReport(selected_themes=[], hold_days=15, candidates=[]),
+        next_buy=NextBuyReport(primary=None),
+        accumulation=AccumulationReport(candidates=[]),
+        golden_pits=GoldenPitReport(candidates=[]),
+        policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
+        target_prices=TargetPriceReport(estimates=[]),
+        fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+        leader_tape=[],
+        market_watchlist=[],
+        intel_items=[],
+        source_statuses=[],
+        warnings=[],
+    )
+
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "")
+        for element in card["body"]["elements"]
+        if element.get("tag") == "markdown"
+    )
+
+    assert "今日交易状态：暂停新仓" in contents
+    assert "市场风险闸门已关闭" in contents
+    assert "已有仓位：仅留强去弱" in contents
