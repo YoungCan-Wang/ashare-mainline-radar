@@ -15,6 +15,7 @@ from .models import (
     SymbolSnapshot,
     TargetPriceEstimate,
     ThemeBuyGroup,
+    ThemeLifecycleSignal,
     ThemeSnapshot,
     pct,
 )
@@ -56,6 +57,15 @@ def _theme_row(rank: int, theme: ThemeSnapshot) -> str:
         f"{pct(theme.avg_ret_5d)} | {pct(theme.avg_ret_20d)} | {_ratio(theme.amount_heat)} | "
         f"{pct(theme.breadth_20d)} | {theme.price_phase} | {_fmt(theme.crowding_score, 1)} | "
         f"{theme.catalyst_count} | {theme.policy_catalyst_count} | {theme.policy_score:.1f} | {vehicles} |"
+    )
+
+
+def _theme_lifecycle_row(rank: int, signal: ThemeLifecycleSignal) -> str:
+    return (
+        f"| {rank} | {signal.theme} | {signal.stage} | {signal.score:.1f} | "
+        f"{signal.started_at or '-'} | {signal.confirmed_at or '-'} | {signal.stage_since} | "
+        f"{pct(signal.breadth_5d)} | {pct(signal.breadth_20d)} | {_ratio(signal.amount_heat)} | "
+        f"{signal.action} |"
     )
 
 
@@ -131,7 +141,9 @@ def _fundamental_row(rank: int, item: FundamentalSnapshot) -> str:
     )
 
 
-def _policy_signal_row(rank: int, theme: str, status: str, score: float, count: int, sources: list[str], evidence: list[str]) -> str:
+def _policy_signal_row(
+    rank: int, theme: str, status: str, score: float, count: int, sources: list[str], evidence: list[str]
+) -> str:
     source_text = ", ".join(sources[:3]) if sources else "-"
     evidence_text = "；".join(evidence[:3]) if evidence else "-"
     return f"| {rank} | {theme} | {status} | {score:.1f} | {count} | {source_text} | {evidence_text} |"
@@ -142,7 +154,11 @@ def _research_target_text(item: TargetPriceEstimate) -> str:
         return "-"
     refs = []
     for ref in item.research_targets[:2]:
-        target = f"{_fmt(ref.target_low)}" if ref.target_low == ref.target_high else f"{_fmt(ref.target_low)}-{_fmt(ref.target_high)}"
+        target = (
+            f"{_fmt(ref.target_low)}"
+            if ref.target_low == ref.target_high
+            else f"{_fmt(ref.target_low)}-{_fmt(ref.target_high)}"
+        )
         refs.append(f"{ref.source}: {target}")
     return "；".join(refs)
 
@@ -182,7 +198,9 @@ def render_markdown(report: RadarReport) -> str:
     lines.append("")
     lines.append("## 今日交易闸门")
     lines.append("")
-    lines.append(f"**{report.trading_gate.state}**（{report.trading_gate.level}，环境分 {report.trading_gate.score:.1f}）")
+    lines.append(
+        f"**{report.trading_gate.state}**（{report.trading_gate.level}，环境分 {report.trading_gate.score:.1f}）"
+    )
     lines.append("")
     for reason in report.trading_gate.reasons:
         lines.append(f"- {reason}")
@@ -194,10 +212,33 @@ def render_markdown(report: RadarReport) -> str:
     lines.append("")
     lines.append("## 主线排序")
     lines.append("")
-    lines.append("| 排名 | 主线 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 价格阶段 | 拥挤代理 | 新闻/研报催化 | 政策条数 | 政策分 | 参与载体 |")
-    lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |")
+    lines.append(
+        "| 排名 | 主线 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 价格阶段 | 拥挤代理 | 新闻/研报催化 | 政策条数 | 政策分 | 参与载体 |"
+    )
+    lines.append(
+        "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |"
+    )
     for rank, theme in enumerate(report.themes[:12], start=1):
         lines.append(_theme_row(rank, theme))
+    lines.append("")
+
+    lines.append("## 主线生命周期预警")
+    lines.append("")
+    lines.append("该状态由最近日K回放生成；风险闸门只约束参与动作，不会隐藏板块启动或回踩。")
+    lines.append("")
+    if report.theme_lifecycle.signals:
+        lines.append(
+            "| 排名 | 主线 | 当前阶段 | 强度 | 本轮启动 | 主线确认 | 阶段始于 | "
+            "5日广度 | 20日广度 | 成交热度 | 当前动作 |"
+        )
+        lines.append("| ---: | --- | --- | ---: | --- | --- | --- | ---: | ---: | ---: | --- |")
+        for rank, signal in enumerate(report.theme_lifecycle.signals[:12], start=1):
+            lines.append(_theme_lifecycle_row(rank, signal))
+    else:
+        lines.append("- 当前没有达到资金试探以上级别的主线生命周期信号。")
+    lines.append("")
+    for note in report.theme_lifecycle.notes:
+        lines.append(f"- {note}")
     lines.append("")
 
     if report.themes:
@@ -249,7 +290,9 @@ def render_markdown(report: RadarReport) -> str:
             lines.append(_pulse_row(rank, pulse))
         lines.append("")
         best_pulse = report.market_pulses[0]
-        lines.append(f"环境结论：**{best_pulse.name}** 当前最强，状态为 **{best_pulse.status}**，证据包括：{'; '.join(best_pulse.evidence)}。")
+        lines.append(
+            f"环境结论：**{best_pulse.name}** 当前最强，状态为 **{best_pulse.status}**，证据包括：{'; '.join(best_pulse.evidence)}。"
+        )
         lines.append("")
 
     if report.next_buy.primary:
@@ -299,7 +342,9 @@ def render_markdown(report: RadarReport) -> str:
     lines.append("黄金坑只扫描前三主线核心股；先识别坑位，再等待止跌确认。市场闸门关闭时一律不把候选写成买点。")
     lines.append("")
     if report.golden_pits.candidates:
-        lines.append("| 排名 | 标的 | 主线 | 阶段 | 评分 | 距20日高点 | 单日 | 相对大盘 | 当日/前5日成交 | 基本面 | 当前动作 | 确认条件 | 失效条件 |")
+        lines.append(
+            "| 排名 | 标的 | 主线 | 阶段 | 评分 | 距20日高点 | 单日 | 相对大盘 | 当日/前5日成交 | 基本面 | 当前动作 | 确认条件 | 失效条件 |"
+        )
         lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |")
         for rank, item in enumerate(report.golden_pits.candidates, start=1):
             lines.append(_golden_pit_row(rank, item))
@@ -338,7 +383,9 @@ def render_markdown(report: RadarReport) -> str:
     )
     lines.append("")
     if report.fundamentals.snapshots:
-        lines.append("| 排名 | 标的 | 报告期 | 状态 | 财务分 | 营收同比 | 净利同比 | ROE | 每股经营现金流 | PB参考 | 营收增速变化 | 利润增速变化 |")
+        lines.append(
+            "| 排名 | 标的 | 报告期 | 状态 | 财务分 | 营收同比 | 净利同比 | ROE | 每股经营现金流 | PB参考 | 营收增速变化 | 利润增速变化 |"
+        )
         lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         for rank, item in enumerate(report.fundamentals.snapshots[:20], start=1):
             lines.append(_fundamental_row(rank, item))
@@ -354,7 +401,9 @@ def render_markdown(report: RadarReport) -> str:
         lines.append("")
         lines.append("这里给的是系统交易目标区间；除非研报文本明确写出目标价，否则不冒充券商盈利预测估值目标。")
         lines.append("")
-        lines.append("| 排名 | 类型 | 标的 | 主线 | 依据 | 周期 | 当前价 | 系统目标区间 | 上行空间 | 失效价 | 到失效价 | R/R | 信心 | 研报目标参考 |")
+        lines.append(
+            "| 排名 | 类型 | 标的 | 主线 | 依据 | 周期 | 当前价 | 系统目标区间 | 上行空间 | 失效价 | 到失效价 | R/R | 信心 | 研报目标参考 |"
+        )
         lines.append("| ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
         for rank, item in enumerate(report.target_prices.estimates[:16], start=1):
             lines.append(_target_price_row(rank, item))
@@ -369,11 +418,17 @@ def render_markdown(report: RadarReport) -> str:
 
     lines.append("## 低位资金介入候选")
     lines.append("")
-    lines.append("这张表不是顺势追强榜；它寻找仍处在60日中低位、成交额均线开始抬升、短线跌势收敛的股票，适合作为观察/试错池。")
+    lines.append(
+        "这张表不是顺势追强榜；它寻找仍处在60日中低位、成交额均线开始抬升、短线跌势收敛的股票，适合作为观察/试错池。"
+    )
     lines.append("")
     if report.accumulation.candidates:
-        lines.append("| 排名 | 主题 | 标的 | 状态 | 评分 | 60日位置 | 距60日高点 | 5日 | 20日 | 成交5/20 | 成交10/30 | 距20日线 | 基本面 | 财务分 | 触发/参与条件 | 失效条件 |")
-        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- | --- |")
+        lines.append(
+            "| 排名 | 主题 | 标的 | 状态 | 评分 | 60日位置 | 距60日高点 | 5日 | 20日 | 成交5/20 | 成交10/30 | 距20日线 | 基本面 | 财务分 | 触发/参与条件 | 失效条件 |"
+        )
+        lines.append(
+            "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- | --- |"
+        )
         for rank, item in enumerate(report.accumulation.candidates[:12], start=1):
             lines.append(_accumulation_row(rank, item))
         lines.append("")
@@ -396,8 +451,12 @@ def render_markdown(report: RadarReport) -> str:
             f" 回测口径：信号日后下一交易日开盘进入，固定持有 {report.strong_stocks.hold_days} 个交易日后按收盘退出。"
         )
         lines.append("")
-        lines.append("| 排名 | 主线 | 标的 | 当前状态 | 综合分 | 5日 | 20日 | 成交热度 | 基本面 | 财务分 | 信号数 | 胜率 | 平均收益 | 最差收益 | 平均最大回撤 |")
-        lines.append("| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        lines.append(
+            "| 排名 | 主线 | 标的 | 当前状态 | 综合分 | 5日 | 20日 | 成交热度 | 基本面 | 财务分 | 信号数 | 胜率 | 平均收益 | 最差收益 | 平均最大回撤 |"
+        )
+        lines.append(
+            "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |"
+        )
         for rank, item in enumerate(report.strong_stocks.candidates[:12], start=1):
             lines.append(_strong_stock_row(rank, item))
         lines.append("")

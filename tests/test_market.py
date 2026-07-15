@@ -54,3 +54,29 @@ def test_build_theme_snapshots_ranks_theme() -> None:
     assert themes[0].name == "AI算力"
     assert themes[0].score > 60
     assert themes[0].valuation_style == "growth"
+
+
+def test_theme_scoring_symbols_keep_broad_candidates_out_of_breadth() -> None:
+    snapshots = {
+        "600000.SH": compute_symbol_snapshot("600000.SH", _series("600000.SH", 10, 0.2)),
+        "000001.SZ": compute_symbol_snapshot("000001.SZ", _series("000001.SZ", 20, 0.1)),
+        "300000.SZ": compute_symbol_snapshot("300000.SZ", _series("300000.SZ", 30, -0.3)),
+    }
+    clean = {symbol: snapshot for symbol, snapshot in snapshots.items() if snapshot is not None}
+
+    themes = build_theme_snapshots(
+        {
+            "themes": [
+                {
+                    "name": "创新药",
+                    "symbols": ["600000.SH", "000001.SZ", "300000.SZ"],
+                    "scoring_symbols": ["600000.SH", "000001.SZ"],
+                    "vehicles": [],
+                }
+            ]
+        },
+        clean,
+    )
+
+    assert themes[0].members == 2
+    assert themes[0].breadth_20d == 1
