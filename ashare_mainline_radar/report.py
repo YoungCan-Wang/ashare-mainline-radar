@@ -54,7 +54,8 @@ def _theme_row(rank: int, theme: ThemeSnapshot) -> str:
     return (
         f"| {rank} | {theme.name} | {theme.status} | {theme.score:.1f} | {theme.members} | "
         f"{pct(theme.avg_ret_5d)} | {pct(theme.avg_ret_20d)} | {_ratio(theme.amount_heat)} | "
-        f"{pct(theme.breadth_20d)} | {theme.catalyst_count} | {theme.policy_catalyst_count} | {theme.policy_score:.1f} | {vehicles} |"
+        f"{pct(theme.breadth_20d)} | {theme.price_phase} | {_fmt(theme.crowding_score, 1)} | "
+        f"{theme.catalyst_count} | {theme.policy_catalyst_count} | {theme.policy_score:.1f} | {vehicles} |"
     )
 
 
@@ -187,10 +188,14 @@ def render_markdown(report: RadarReport) -> str:
         lines.append(f"- {reason}")
     lines.append(f"- 允许动作：{'；'.join(report.trading_gate.allowed_actions)}")
     lines.append("")
+    lines.append(f"指数结构：**{report.market_structure.status}**，确认分 {report.market_structure.score:.1f}")
+    for item in report.market_structure.evidence:
+        lines.append(f"- {item}")
+    lines.append("")
     lines.append("## 主线排序")
     lines.append("")
-    lines.append("| 排名 | 主线 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 新闻/研报催化 | 政策条数 | 政策分 | 参与载体 |")
-    lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+    lines.append("| 排名 | 主线 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 价格阶段 | 拥挤代理 | 新闻/研报催化 | 政策条数 | 政策分 | 参与载体 |")
+    lines.append("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |")
     for rank, theme in enumerate(report.themes[:12], start=1):
         lines.append(_theme_row(rank, theme))
     lines.append("")
@@ -307,6 +312,23 @@ def render_markdown(report: RadarReport) -> str:
     for note in report.golden_pits.notes:
         lines.append(f"- {note}")
     lines.append("")
+
+    if report.expectation_gaps.signals:
+        lines.append("## 业绩预期差与价格反应")
+        lines.append("")
+        lines.append("好业绩是否已经提前交易，要看公告后价格和成交反馈；放量下跌会进入利好兑现风险。")
+        lines.append("")
+        lines.append("| 标的 | 公告日 | 状态 | 公告后3日 | 成交放大 | 基本面 |")
+        lines.append("| --- | --- | --- | ---: | ---: | --- |")
+        for item in report.expectation_gaps.signals[:12]:
+            lines.append(
+                f"| {item.name} `{item.symbol}` | {item.announce_date} | {item.status} | "
+                f"{pct(item.reaction_3d)} | {_ratio(item.amount_ratio)} | {item.fundamental_status} |"
+            )
+        lines.append("")
+        for note in report.expectation_gaps.notes:
+            lines.append(f"- {note}")
+        lines.append("")
 
     lines.append("## 基本面兑现与估值参考")
     lines.append("")

@@ -1,17 +1,28 @@
 import json
 
-from ashare_mainline_radar.feishu import FeishuStatus, build_feishu_card, build_feishu_text, write_feishu_status
+from ashare_mainline_radar.feishu import (
+    FeishuStatus,
+    _hold_ready,
+    _target_text,
+    _waiting_note,
+    build_feishu_card,
+    build_feishu_text,
+    write_feishu_status,
+)
 from ashare_mainline_radar.models import (
     AccumulationReport,
     BacktestSummary,
+    ExpectationGapReport,
     FundamentalReport,
     GoldenPitReport,
+    MarketStructure,
     NextBuyPlan,
     NextBuyReport,
     PolicySignalReport,
     RadarReport,
     StrongStockCandidate,
     StrongStockReport,
+    TargetPriceEstimate,
     TargetPriceReport,
     TradingGate,
 )
@@ -28,6 +39,21 @@ def _green_gate() -> TradingGate:
     )
 
 
+def _market_structure() -> MarketStructure:
+    return MarketStructure(
+        status="右侧确认",
+        score=80,
+        index_count=3,
+        above_ma5_ratio=1,
+        above_ma20_ratio=1,
+        bullish_alignment_ratio=1,
+        volume_confirmation_ratio=1,
+        higher_high_low_ratio=1,
+        confirmed_breakdown_ratio=0,
+        evidence=["结构确认"],
+    )
+
+
 def test_build_feishu_text_minimal_report() -> None:
     report = RadarReport(
         generated_at="2026-06-29T00:00:00+00:00",
@@ -38,6 +64,7 @@ def test_build_feishu_text_minimal_report() -> None:
         data_source="test",
         themes=[],
         market_pulses=[],
+        market_structure=_market_structure(),
         trading_gate=_green_gate(),
         strong_stocks=StrongStockReport(selected_themes=[], hold_days=5, candidates=[]),
         next_buy=NextBuyReport(primary=None),
@@ -46,6 +73,7 @@ def test_build_feishu_text_minimal_report() -> None:
         policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
         target_prices=TargetPriceReport(estimates=[]),
         fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+        expectation_gaps=ExpectationGapReport(signals=[]),
         leader_tape=[],
         market_watchlist=[],
         intel_items=[],
@@ -73,6 +101,148 @@ def test_write_feishu_status(tmp_path) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["status"] == "failed"
     assert data["code"] == 19007
+
+
+def test_target_text_explains_valuation_style_cap() -> None:
+    target = TargetPriceEstimate(
+        symbol="000933.SZ",
+        name="神火股份",
+        theme="有色金属与铜",
+        candidate_type="低位资金介入",
+        basis="压力位修复目标",
+        horizon="4-12周观察目标",
+        last_close=25.35,
+        target_low=29.15,
+        target_high=31.56,
+        upside_low=0.15,
+        upside_high=0.245,
+        stop_price=23.8,
+        downside_to_stop=-0.061,
+        reward_risk_low=2.46,
+        reward_risk_high=4.02,
+        confidence="中",
+        evidence=["估值风格代理：周期，目标上沿约束 25%"],
+    )
+
+    text = _target_text(target)
+
+    assert "估值：周期｜上沿约25%" in text
+
+
+def test_sell_the_news_risk_is_not_a_hold_candidate() -> None:
+    candidate = StrongStockCandidate(
+        symbol="600000.SH",
+        name="测试公司",
+        theme="AI算力",
+        last_close=20,
+        score=90,
+        status="趋势延续",
+        ret_5d=0.05,
+        ret_20d=0.18,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.03,
+        fundamental_status="基本面兑现",
+        expectation_status="利好兑现风险",
+        backtest=BacktestSummary(
+            symbol="600000.SH",
+            name="测试公司",
+            theme="AI算力",
+            hold_days=15,
+            signals=8,
+            win_rate=0.75,
+            avg_return=0.08,
+            median_return=0.06,
+            best_return=0.20,
+            worst_return=-0.05,
+            avg_max_drawdown=-0.04,
+        ),
+    )
+
+    assert _hold_ready(candidate, "半山腰兑现") is False
+
+
+def test_crowded_high_without_earnings_support_is_not_a_hold_candidate() -> None:
+    candidate = StrongStockCandidate(
+        symbol="600000.SH",
+        name="测试公司",
+        theme="AI算力",
+        last_close=20,
+        score=90,
+        status="趋势延续",
+        ret_5d=0.05,
+        ret_20d=0.18,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.03,
+        fundamental_status="基本面兑现",
+        backtest=BacktestSummary(
+            symbol="600000.SH",
+            name="测试公司",
+            theme="AI算力",
+            hold_days=15,
+            signals=8,
+            win_rate=0.75,
+            avg_return=0.08,
+            median_return=0.06,
+            best_return=0.20,
+            worst_return=-0.05,
+            avg_max_drawdown=-0.04,
+        ),
+    )
+
+    assert _hold_ready(candidate, "山顶高拥挤") is False
+    assert _hold_ready(candidate, "山顶高拥挤·业绩支撑") is True
+
+
+def test_uncovered_company_is_not_a_hold_candidate() -> None:
+    candidate = StrongStockCandidate(
+        symbol="600000.SH",
+        name="测试公司",
+        theme="AI算力",
+        last_close=20,
+        score=90,
+        status="趋势延续",
+        ret_5d=0.05,
+        ret_20d=0.18,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.03,
+        fundamental_status="未覆盖",
+        backtest=BacktestSummary(
+            symbol="600000.SH",
+            name="测试公司",
+            theme="AI算力",
+            hold_days=15,
+            signals=8,
+            win_rate=0.75,
+            avg_return=0.08,
+            median_return=0.06,
+            best_return=0.20,
+            worst_return=-0.05,
+            avg_max_drawdown=-0.04,
+        ),
+    )
+
+    assert _hold_ready(candidate, "半山腰待验证") is False
+    candidate.name = "人工智能ETF"
+    assert _hold_ready(candidate, "半山腰待验证") is True
+
+
+def test_red_gate_waiting_note_does_not_suggest_trial_position() -> None:
+    plan = NextBuyPlan(
+        symbol="600000.SH",
+        name="测试公司",
+        theme="AI算力",
+        decision="优先候选，分批确认",
+        priority_score=85,
+        last_close=20,
+        entry_plan="可用小仓试探。",
+        invalidation="跌破退出。",
+        position_note="首笔试错。",
+    )
+
+    note = _waiting_note(plan, "red")
+
+    assert "仅观察" in note
+    assert "小仓试探" not in note
 
 
 def test_card_allows_etf_attempt_without_company_fundamentals() -> None:
@@ -121,6 +291,7 @@ def test_card_allows_etf_attempt_without_company_fundamentals() -> None:
         data_source="test",
         themes=[],
         market_pulses=[],
+        market_structure=_market_structure(),
         trading_gate=_green_gate(),
         strong_stocks=StrongStockReport(selected_themes=[candidate.theme], hold_days=15, candidates=[candidate]),
         next_buy=NextBuyReport(primary=plan),
@@ -129,6 +300,7 @@ def test_card_allows_etf_attempt_without_company_fundamentals() -> None:
         policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
         target_prices=TargetPriceReport(estimates=[]),
         fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+        expectation_gaps=ExpectationGapReport(signals=[]),
         leader_tape=[],
         market_watchlist=[],
         intel_items=[],
@@ -156,6 +328,7 @@ def test_red_gate_suppresses_attempt_section() -> None:
         data_source="test",
         themes=[],
         market_pulses=[],
+        market_structure=_market_structure(),
         trading_gate=TradingGate("red", "暂停新仓", 24, 0, ["三大指数大跌"], ["观察黄金坑"]),
         strong_stocks=StrongStockReport(selected_themes=[], hold_days=15, candidates=[]),
         next_buy=NextBuyReport(primary=None),
@@ -164,6 +337,7 @@ def test_red_gate_suppresses_attempt_section() -> None:
         policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
         target_prices=TargetPriceReport(estimates=[]),
         fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+        expectation_gaps=ExpectationGapReport(signals=[]),
         leader_tape=[],
         market_watchlist=[],
         intel_items=[],

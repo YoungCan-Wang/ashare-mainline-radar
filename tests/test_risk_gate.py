@@ -36,3 +36,41 @@ def test_broad_market_crash_closes_new_position_gate() -> None:
     assert gate.level == "red"
     assert gate.state == "暂停新仓"
     assert gate.max_initial_position_fraction == 0
+
+
+def test_positive_stock_breadth_downgrades_index_drop_to_caution() -> None:
+    config = {"market_context_groups": [{"name": "A股宽基环境", "symbols": ["000001.SH", "399001.SZ", "399006.SZ"]}]}
+    snapshots = {
+        "000001.SH": _snapshot("000001.SH", -0.025, -0.03, -0.02),
+        "399001.SZ": _snapshot("399001.SZ", -0.028, -0.05, -0.03),
+        "399006.SZ": _snapshot("399006.SZ", -0.024, -0.06, -0.04),
+    }
+    for index in range(10):
+        symbol = f"6000{index:02d}.SH"
+        snapshots[symbol] = _snapshot(symbol, 0.01 if index < 7 else -0.005, 0.01, 0.02)
+    pulses = build_market_pulses(config, snapshots)
+
+    gate = build_trading_gate(config, snapshots, pulses)
+
+    assert gate.level == "orange"
+    assert gate.advance_ratio == 0.7
+    assert "上涨占比 70.0%" in gate.reasons[-1]
+
+
+def test_systemic_stock_selloff_closes_gate_even_without_index_crash() -> None:
+    config = {"market_context_groups": [{"name": "A股宽基环境", "symbols": ["000001.SH", "399001.SZ", "399006.SZ"]}]}
+    snapshots = {
+        "000001.SH": _snapshot("000001.SH", -0.008, 0.01, 0.02),
+        "399001.SZ": _snapshot("399001.SZ", -0.009, 0.01, 0.02),
+        "399006.SZ": _snapshot("399006.SZ", -0.007, 0.01, 0.02),
+    }
+    for index in range(10):
+        symbol = f"6000{index:02d}.SH"
+        snapshots[symbol] = _snapshot(symbol, 0.005 if index == 0 else -0.03, -0.04, -0.02)
+    pulses = build_market_pulses(config, snapshots)
+
+    gate = build_trading_gate(config, snapshots, pulses)
+
+    assert gate.level == "red"
+    assert gate.advance_ratio == 0.1
+    assert gate.decline_2pct_ratio == 0.9

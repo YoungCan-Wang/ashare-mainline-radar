@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from statistics import median
 
 from .models import (
     AccumulationCandidate,
@@ -14,9 +13,7 @@ from .models import (
     TargetPriceEstimate,
     TargetPriceReport,
     ThemeSnapshot,
-    safe_change,
 )
-
 
 TARGET_RE = re.compile(
     r"(?:目标价|目标价格|合理价值|合理价格|合理估值|目标区间|估值区间)"
@@ -25,6 +22,14 @@ TARGET_RE = re.compile(
     r"(?:\s*(?:-|~|至|到)\s*(\d+(?:\.\d+)?))?"
     r"\s*(?:元|人民币)?"
 )
+
+VALUATION_TARGET_PROFILES: dict[str, tuple[str, float, float]] = {
+    "growth": ("成长", 0.22, 0.50),
+    "balanced": ("均衡", 0.18, 0.35),
+    "cyclical": ("周期", 0.15, 0.25),
+    "financial": ("金融", 0.15, 0.25),
+    "income": ("红利", 0.12, 0.22),
+}
 
 
 def _avg(values: list[float]) -> float | None:
@@ -131,6 +136,23 @@ def _theme_status(theme_name: str, themes: list[ThemeSnapshot]) -> str:
     return "未知"
 
 
+def _valuation_profile(theme_name: str, themes: list[ThemeSnapshot]) -> tuple[str, float, float]:
+    style = next((theme.valuation_style for theme in themes if theme.name == theme_name), "balanced")
+    return VALUATION_TARGET_PROFILES.get(style, VALUATION_TARGET_PROFILES["balanced"])
+
+
+def _apply_valuation_caps(
+    target_low: float,
+    target_high: float,
+    last_close: float,
+    low_upside_cap: float,
+    high_upside_cap: float,
+) -> tuple[float, float]:
+    capped_low = min(target_low, last_close * (1 + low_upside_cap))
+    capped_high = min(target_high, last_close * (1 + high_upside_cap))
+    return capped_low, max(capped_low, capped_high)
+
+
 def _confidence_for_strong(candidate: StrongStockCandidate, theme_status: str) -> str:
     backtest = candidate.backtest
     if (
@@ -163,13 +185,21 @@ def _strong_target(
     projected_high = _clip(projected_low + atr_pct * 2.2 + max(0.0, ret_20d) * 0.12, projected_low + 0.03, 0.38)
     target_low = max(last_close * (1 + projected_low), ctx["high_20"] * 1.01)
     target_high = max(target_low * 1.04, last_close * (1 + projected_high), ctx["high_60"] * 1.02)
-    target_high = min(target_high, last_close * 1.5)
+    valuation_label, low_upside_cap, high_upside_cap = _valuation_profile(candidate.theme, themes)
+    target_low, target_high = _apply_valuation_caps(
+        target_low,
+        target_high,
+        last_close,
+        low_upside_cap,
+        high_upside_cap,
+    )
     stop_price = max(last_close * 0.92, ctx["low_20"] * 0.99)
     downside_to_stop = _upside(stop_price, last_close)
     refs = _research_targets_for(candidate.symbol, candidate.name, intel_items)
     theme_status = _theme_status(candidate.theme, themes)
     evidence = [
         f"{candidate.theme}：{theme_status}",
+        f"估值风格代理：{valuation_label}，目标上沿约束 {high_upside_cap * 100:.0f}%",
         f"20日高点 {ctx['high_20']:.2f}，60日高点 {ctx['high_60']:.2f}",
         f"14日均波动约 {atr_pct * 100:.2f}%",
     ]
@@ -210,6 +240,7 @@ def _accumulation_target(
     candidate: AccumulationCandidate,
     series: KlineSeries,
     intel_items: list[IntelItem],
+    themes: list[ThemeSnapshot],
 ) -> TargetPriceEstimate:
     ctx = _series_context(series)
     last_close = candidate.last_close
@@ -223,11 +254,19 @@ def _accumulation_target(
         target_high = last_close * 1.18
     target_low = max(target_low, last_close * 1.06, ctx["ma20"] * 1.03)
     target_high = max(target_high, target_low * 1.06)
-    target_high = min(target_high, last_close * 1.42)
+    valuation_label, low_upside_cap, high_upside_cap = _valuation_profile(candidate.primary_theme, themes)
+    target_low, target_high = _apply_valuation_caps(
+        target_low,
+        target_high,
+        last_close,
+        low_upside_cap,
+        high_upside_cap,
+    )
     stop_price = min(ctx["low_10"], ctx["ma20"] * 0.97)
     downside_to_stop = _upside(stop_price, last_close)
     refs = _research_targets_for(candidate.symbol, candidate.name, intel_items)
     evidence = [
+        f"估值风格代理：{valuation_label}，目标上沿约束 {high_upside_cap * 100:.0f}%",
         f"60日区间位置 {candidate.range_position_60d * 100:.1f}%" if candidate.range_position_60d is not None else "60日区间位置 n/a",
         f"距60日高点 {candidate.drawdown_60d * 100:.2f}%" if candidate.drawdown_60d is not None else "距60日高点 n/a",
         f"5日/20日成交额 {candidate.amount_ratio_5_20:.2f}x" if candidate.amount_ratio_5_20 is not None else "5日/20日成交额 n/a",
@@ -277,13 +316,14 @@ def build_target_price_report(
         series = klines.get(candidate.symbol)
         if not series or candidate.symbol in seen:
             continue
-        estimates.append(_accumulation_target(candidate, series, intel_items))
+        estimates.append(_accumulation_target(candidate, series, intel_items, themes))
         seen.add(candidate.symbol)
 
     estimates.sort(key=lambda item: (item.confidence != "中高", item.confidence != "中", -item.upside_low))
     notes = [
         "目标价是交易/研究目标区间，不等同于券商基于盈利预测和估值模型给出的正式目标价。",
         "若本地研报文本包含目标价或合理价值区间，系统会提取为研报参考；没有研报目标时只给技术目标。",
+        "目标空间按主题的成长、均衡、周期、金融或红利风格设置上限；这是板块级估值代理，不替代个股盈利预测和估值模型。",
         "目标价必须和触发条件、失效价、仓位上限一起使用，不能单独作为买入理由。",
     ]
     return TargetPriceReport(estimates=estimates[:max_estimates], notes=notes)

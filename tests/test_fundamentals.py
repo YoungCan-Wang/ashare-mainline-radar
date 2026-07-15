@@ -1,9 +1,14 @@
-from ashare_mainline_radar.fundamentals import apply_fundamental_overlay, build_fundamental_report
+from ashare_mainline_radar.fundamentals import (
+    apply_fundamental_overlay,
+    apply_theme_fundamental_overlay,
+    build_fundamental_report,
+)
 from ashare_mainline_radar.models import (
     AccumulationReport,
     BacktestSummary,
     StrongStockCandidate,
     StrongStockReport,
+    ThemeSnapshot,
 )
 
 
@@ -119,3 +124,45 @@ def test_negative_operating_cash_flow_requires_quality_confirmation() -> None:
     item = report.snapshots[0]
     assert item.score <= 72
     assert item.status == "兑现待质量确认"
+
+
+def test_halfway_theme_needs_broad_fundamental_delivery_before_confirmation() -> None:
+    raw = {
+        symbol: [
+            {
+                "period_end": "2026-03-31",
+                "revenue_yoy": 30,
+                "net_income_yoy": 50,
+                "roe_diluted": 12,
+                "ocfps": 0.8,
+                "bps": 5,
+            }
+        ]
+        for symbol in ("A.SZ", "B.SZ")
+    }
+    report = build_fundamental_report(raw, {"A.SZ": 20, "B.SZ": 20}, ["A.SZ", "B.SZ"])
+    theme = ThemeSnapshot(
+        name="机器人",
+        score=80,
+        status="主线成立",
+        members=3,
+        breadth_5d=0.6,
+        breadth_20d=0.7,
+        avg_ret_5d=0.03,
+        avg_ret_20d=0.1,
+        amount_heat=1.1,
+        catalyst_count=0,
+        leaders=[],
+        price_phase="半山腰待验证",
+    )
+
+    apply_theme_fundamental_overlay(
+        [theme],
+        report,
+        {"A.SZ": ["机器人"], "B.SZ": ["机器人"], "C.SZ": ["机器人"]},
+        {"A.SZ", "B.SZ", "C.SZ"},
+    )
+
+    assert theme.price_phase == "半山腰兑现"
+    assert theme.fundamental_coverage == 2 / 3
+    assert theme.fundamental_confirmed_ratio == 1

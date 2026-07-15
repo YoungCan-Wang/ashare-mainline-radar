@@ -5,6 +5,7 @@ from .models import (
     FundamentalReport,
     FundamentalSnapshot,
     StrongStockReport,
+    ThemeSnapshot,
 )
 
 
@@ -184,3 +185,42 @@ def apply_fundamental_overlay(
         candidate.reasons.extend(item.evidence[:4])
     accumulation.candidates.sort(key=lambda item: item.score, reverse=True)
     accumulation.candidates[:] = accumulation.candidates[:accumulation_limit]
+
+
+def apply_theme_fundamental_overlay(
+    themes: list[ThemeSnapshot],
+    fundamentals: FundamentalReport,
+    symbol_to_themes: dict[str, list[str]],
+    eligible_symbols: set[str],
+) -> None:
+    by_theme: dict[str, list[FundamentalSnapshot]] = {}
+    configured_count: dict[str, int] = {}
+    for symbol, theme_names in symbol_to_themes.items():
+        if symbol not in eligible_symbols:
+            continue
+        for theme_name in theme_names:
+            configured_count[theme_name] = configured_count.get(theme_name, 0) + 1
+    for item in fundamentals.snapshots:
+        for theme_name in symbol_to_themes.get(item.symbol, []):
+            by_theme.setdefault(theme_name, []).append(item)
+
+    for theme in themes:
+        items = by_theme.get(theme.name, [])
+        total = configured_count.get(theme.name, 0)
+        if not items or total <= 0:
+            if theme.price_phase == "半山腰待验证":
+                theme.evidence.append("主题基本面覆盖不足，兑现状态未确认")
+            continue
+        theme.fundamental_score = round(sum(item.score for item in items) / len(items), 2)
+        theme.fundamental_coverage = len(items) / total
+        confirmed = [item for item in items if item.status == "基本面兑现"]
+        theme.fundamental_confirmed_ratio = len(confirmed) / len(items)
+        theme.evidence.append(
+            f"主题财务覆盖 {len(items)}/{total}，兑现成员 {len(confirmed)}/{len(items)}，"
+            f"平均财务分 {theme.fundamental_score:.1f}"
+        )
+        if theme.price_phase == "半山腰待验证" and theme.fundamental_score >= 62 and theme.fundamental_confirmed_ratio >= 0.40:
+            theme.price_phase = "半山腰兑现"
+        elif theme.price_phase == "山顶高拥挤":
+            suffix = "业绩支撑" if theme.fundamental_score >= 67 and theme.fundamental_confirmed_ratio >= 0.50 else "兑现不足"
+            theme.price_phase = f"山顶高拥挤·{suffix}"

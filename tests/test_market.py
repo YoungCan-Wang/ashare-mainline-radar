@@ -41,6 +41,7 @@ def test_build_theme_snapshots_ranks_theme() -> None:
             "themes": [
                 {
                     "name": "AI算力",
+                    "valuation_style": "growth",
                     "symbols": ["600000.SH", "000001.SZ"],
                     "vehicles": [],
                 }
@@ -52,3 +53,4 @@ def test_build_theme_snapshots_ranks_theme() -> None:
     assert len(themes) == 1
     assert themes[0].name == "AI算力"
     assert themes[0].score > 60
+    assert themes[0].valuation_style == "growth"
