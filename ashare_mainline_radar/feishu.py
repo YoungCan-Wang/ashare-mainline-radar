@@ -49,7 +49,10 @@ def build_feishu_text(report: RadarReport) -> str:
         pulse = report.market_pulses[0]
         lines.append("")
         lines.append(f"环境：{pulse.name}｜{pulse.status}｜强度 {pulse.score:.1f}")
-    lines.append(f"交易闸门：{report.trading_gate.state}｜{'; '.join(report.trading_gate.reasons)}")
+    lines.append(
+        f"交易闸门：{report.trading_gate.state}｜指数结构 {report.market_structure.status}｜"
+        f"{'; '.join(report.trading_gate.reasons)}"
+    )
     if report.fundamentals and report.fundamentals.snapshots:
         lines.append("")
         lines.append("基本面兑现 TOP3：")
@@ -72,9 +75,11 @@ def build_feishu_text(report: RadarReport) -> str:
         lines.append("")
         lines.append("目标价与赔率：")
         for idx, item in enumerate(target_estimates[:3], start=1):
+            valuation_note = _target_valuation_note(item)
             lines.append(
                 f"{idx}. {item.name} {item.symbol}｜{item.candidate_type}｜目标 {item.target_low:.2f}-{item.target_high:.2f}｜"
                 f"上行 {pct(item.upside_low)}-{pct(item.upside_high)}｜信心 {item.confidence}"
+                f"{f'｜{valuation_note}' if valuation_note else ''}"
             )
     accumulation_candidates = report.accumulation.candidates if report.accumulation else []
     if accumulation_candidates:
@@ -120,7 +125,7 @@ def _dedupe_plans(report: RadarReport) -> list[NextBuyPlan]:
 
 
 def _attempt_ready(candidate: StrongStockCandidate | None, plan: NextBuyPlan) -> bool:
-    if candidate is None or candidate.fundamental_status == "基本面拖累":
+    if candidate is None or candidate.fundamental_status == "基本面拖累" or candidate.expectation_status == "利好兑现风险":
         return False
     is_fund = "ETF" in candidate.name.upper() or "基金" in candidate.name
     if candidate.fundamental_status == "未覆盖" and not is_fund:
@@ -138,10 +143,47 @@ def _attempt_ready(candidate: StrongStockCandidate | None, plan: NextBuyPlan) ->
     )
 
 
+def _hold_ready(candidate: StrongStockCandidate, theme_phase: str | None) -> bool:
+    backtest = candidate.backtest
+    is_fund = "ETF" in candidate.name.upper() or "基金" in candidate.name
+    crowded_without_support = bool(
+        theme_phase and theme_phase.startswith("山顶高拥挤") and theme_phase != "山顶高拥挤·业绩支撑"
+    )
+    return bool(
+        candidate.status in {"主升确认", "趋势延续"}
+        and candidate.fundamental_status != "基本面拖累"
+        and (candidate.fundamental_status != "未覆盖" or is_fund)
+        and candidate.expectation_status != "利好兑现风险"
+        and not crowded_without_support
+        and backtest
+        and backtest.signals >= 3
+        and backtest.win_rate is not None
+        and backtest.win_rate >= 0.5
+        and backtest.avg_return is not None
+        and backtest.avg_return > 0
+    )
+
+
+def _waiting_note(plan: NextBuyPlan, gate_level: str) -> str:
+    if gate_level == "red":
+        return "交易闸门关闭：仅观察；待指数结构脱离破位确认后，再重新评估原触发条件。"
+    return plan.entry_plan
+
+
 def _target_text(target: TargetPriceEstimate | None) -> str:
     if target is None:
         return "目标区待确认"
-    return f"目标 {target.target_low:.2f}-{target.target_high:.2f}｜赔率 {target.reward_risk_low or 0:.1f}-{target.reward_risk_high or 0:.1f}"
+    valuation_note = _target_valuation_note(target)
+    text = f"目标 {target.target_low:.2f}-{target.target_high:.2f}｜赔率 {target.reward_risk_low or 0:.1f}-{target.reward_risk_high or 0:.1f}"
+    return f"{text}\n{valuation_note}" if valuation_note else text
+
+
+def _target_valuation_note(target: TargetPriceEstimate) -> str | None:
+    prefix = "估值风格代理："
+    for evidence in target.evidence:
+        if evidence.startswith(prefix):
+            return evidence.replace(prefix, "估值：", 1).replace("，目标上沿约束 ", "｜上沿约", 1)
+    return None
 
 
 def _trade_block(
@@ -160,6 +202,8 @@ def _trade_block(
         f"{report_hold_days(candidate)}日回测：胜率 {win}｜均值 {avg}｜{fundamental}",
         _target_text(target),
     ]
+    if candidate and candidate.expectation_status != "未覆盖":
+        lines.append(f"业绩价格反馈：{candidate.expectation_status}")
     if include_entry:
         lines.append(f"**触发：** {plan.entry_plan}")
     lines.append(f"**退出：** {plan.invalidation}")
@@ -177,19 +221,13 @@ def _div(content: str) -> dict[str, Any]:
 def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     candidates = {item.symbol: item for item in report.strong_stocks.candidates}
     targets = {item.symbol: item for item in report.target_prices.estimates}
+    phase_by_theme = {item.name: item.price_phase for item in report.themes}
     plans = _dedupe_plans(report)
     hold = [
         plan
         for plan in plans
         if (candidate := candidates.get(plan.symbol))
-        and candidate.status in {"主升确认", "趋势延续"}
-        and candidate.fundamental_status != "基本面拖累"
-        and candidate.backtest
-        and candidate.backtest.signals >= 3
-        and candidate.backtest.win_rate is not None
-        and candidate.backtest.win_rate >= 0.5
-        and candidate.backtest.avg_return is not None
-        and candidate.backtest.avg_return > 0
+        and _hold_ready(candidate, phase_by_theme.get(candidate.theme))
     ][:3]
     attempt = [plan for plan in plans if _attempt_ready(candidates.get(plan.symbol), plan)][:2]
     if report.trading_gate.level == "red":
@@ -197,7 +235,10 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     occupied = {item.symbol for item in [*attempt, *hold]}
     waiting = [plan for plan in plans if plan.symbol not in occupied][:3]
 
-    top_themes = "　".join(f"**{theme.name}** {theme.score:.0f}" for theme in report.themes[:3]) or "暂无确认主线"
+    top_themes = (
+        "　".join(f"**{theme.name}** {theme.score:.0f}·{theme.price_phase}" for theme in report.themes[:3])
+        or "暂无确认主线"
+    )
     market = report.market_pulses[0] if report.market_pulses else None
     market_text = f"{market.name}｜{market.status}｜{market.score:.0f}" if market else "环境未确认"
     hold_days = report.strong_stocks.hold_days
@@ -211,6 +252,7 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
         {"tag": "hr"},
         _div(
             f"<font color='{gate_color}'>**今日交易状态：{report.trading_gate.state}**</font>\n"
+            f"指数结构：**{report.market_structure.status}**｜确认分 {report.market_structure.score:.0f}\n"
             f"{gate_reasons}\n允许：{'；'.join(report.trading_gate.allowed_actions)}"
         ),
         {"tag": "hr"},
@@ -234,7 +276,12 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     elements.extend([{"tag": "hr"}, _div("<font color='orange'>**三、等待回踩或确认**</font>")])
     if waiting:
         for plan in waiting:
-            elements.append(_div(f"**{plan.name} `{plan.symbol}`**｜{plan.theme}\n{plan.entry_plan}"))
+            elements.append(
+                _div(
+                    f"**{plan.name} `{plan.symbol}`**｜{plan.theme}\n"
+                    f"{_waiting_note(plan, report.trading_gate.level)}"
+                )
+            )
     else:
         elements.append(_div("暂无等待候选。"))
 
@@ -263,7 +310,7 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
             {"tag": "hr"},
             _div(
                 "**统一纪律**\n"
-                "首笔只用计划仓位的1/3；确认后再加。持有10-20个交易日不是死拿，"
+                "首笔只用计划仓位的1/3；只有已有浮盈且趋势确认后才递减加仓，亏损中不补仓。持有10-20个交易日不是死拿，"
                 "跌破失效位、主线退出前三或基本面降级时提前退出。\n"
                 "<font color='grey'>仅用于研究和交易准备，不构成投资建议。</font>"
             ),

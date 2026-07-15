@@ -5,11 +5,13 @@ from typing import Any
 
 from .accumulation import build_accumulation_report
 from .config import configured_symbols, theme_keywords, theme_policy_keywords, theme_symbol_map
-from .fundamentals import apply_fundamental_overlay, build_fundamental_report
+from .expectations import apply_expectation_overlay, build_expectation_gap_report
+from .fundamentals import apply_fundamental_overlay, apply_theme_fundamental_overlay, build_fundamental_report
 from .golden_pit import build_golden_pit_report
 from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
 from .market_context import build_market_pulses
+from .market_structure import build_market_structure
 from .models import DataSourceStatus, RadarReport, SymbolSnapshot, cn_market_date_from_ms, utc_now_iso
 from .next_buy import build_next_buy_report
 from .policy import (
@@ -43,6 +45,13 @@ def _deterministic_cap(symbols: list[str], max_symbols: int, required: list[str]
     step = len(candidates) / remaining_slots
     sampled = [candidates[int(i * step)] for i in range(remaining_slots)]
     return _dedupe([*chosen, *sampled])
+
+
+def _company_symbol(symbol: str, instrument: dict[str, Any] | None) -> bool:
+    if not (symbol.endswith(".SH") or symbol.endswith(".SZ")):
+        return False
+    name = str((instrument or {}).get("name") or "").upper()
+    return not any(token in name for token in ("ETF", "LOF", "REIT", "指数", "基金", "转债"))
 
 
 class MainlineRadar:
@@ -134,7 +143,8 @@ class MainlineRadar:
         policy_signals = build_policy_signal_report(intel_items, themes, policy_keywords)
         leader_tape = build_leader_tape(snapshots, limit=leader_limit)
         market_pulses = build_market_pulses(self.theme_config, snapshots)
-        trading_gate = build_trading_gate(self.theme_config, snapshots, market_pulses)
+        market_structure = build_market_structure(self.theme_config, klines)
+        trading_gate = build_trading_gate(self.theme_config, snapshots, market_pulses, market_structure)
         strong_stocks = build_strong_stock_report(
             theme_config=self.theme_config,
             snapshots=snapshots,
@@ -159,6 +169,11 @@ class MainlineRadar:
             [item.symbol for item in strong_stocks.candidates]
             + [item.symbol for item in accumulation.candidates]
             + [item.symbol for item in preliminary_golden_pits.candidates]
+            + [
+                symbol
+                for symbol in symbol_to_themes
+                if symbol in snapshots and _company_symbol(symbol, instruments.get(symbol))
+            ]
         )
         raw_metrics: dict[str, list[dict[str, object]]] = {}
         financial_status = "skipped"
@@ -192,6 +207,14 @@ class MainlineRadar:
             strong_limit=strong_stock_limit,
             accumulation_limit=accumulation_limit,
         )
+        apply_theme_fundamental_overlay(
+            themes,
+            fundamentals,
+            symbol_to_themes,
+            {symbol for symbol in symbol_to_themes if _company_symbol(symbol, instruments.get(symbol))},
+        )
+        expectation_gaps = build_expectation_gap_report(fundamentals, klines, snapshots)
+        apply_expectation_overlay(strong_stocks, expectation_gaps)
         golden_pits = build_golden_pit_report(
             snapshots=snapshots,
             klines=klines,
@@ -227,6 +250,7 @@ class MainlineRadar:
             data_source=self.client.source_label,
             themes=themes,
             market_pulses=market_pulses,
+            market_structure=market_structure,
             trading_gate=trading_gate,
             strong_stocks=strong_stocks,
             next_buy=next_buy,
@@ -235,6 +259,7 @@ class MainlineRadar:
             policy_signals=policy_signals,
             target_prices=target_prices,
             fundamentals=fundamentals,
+            expectation_gaps=expectation_gaps,
             leader_tape=leader_tape,
             market_watchlist=market_watchlist,
             intel_items=intel_items,

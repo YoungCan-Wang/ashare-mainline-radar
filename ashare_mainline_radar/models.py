@@ -79,6 +79,8 @@ class SymbolSnapshot:
     drawdown_20d: float | None
     score: float
     status: str
+    ret_60d: float | None = None
+    range_position_60d: float | None = None
 
 
 @dataclass
@@ -123,6 +125,23 @@ class TradingGate:
     max_initial_position_fraction: float
     reasons: list[str] = field(default_factory=list)
     allowed_actions: list[str] = field(default_factory=list)
+    advance_ratio: float | None = None
+    decline_2pct_ratio: float | None = None
+    median_stock_return: float | None = None
+
+
+@dataclass
+class MarketStructure:
+    status: str
+    score: float
+    index_count: int
+    above_ma5_ratio: float | None
+    above_ma20_ratio: float | None
+    bullish_alignment_ratio: float | None
+    volume_confirmation_ratio: float | None
+    higher_high_low_ratio: float | None
+    confirmed_breakdown_ratio: float | None
+    evidence: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -155,6 +174,7 @@ class StrongStockCandidate:
     high_proximity_20d: float | None
     fundamental_score: float | None = None
     fundamental_status: str = "未覆盖"
+    expectation_status: str = "未覆盖"
     reasons: list[str] = field(default_factory=list)
     backtest: BacktestSummary | None = None
 
@@ -241,6 +261,10 @@ class GoldenPitCandidate:
     ma20_distance: float | None
     fundamental_score: float | None
     fundamental_status: str
+    bottom_confirmation_score: int
+    ma5_flattening: bool
+    macd_contracting: bool
+    no_new_low: bool
     confirmation: str
     invalidation: str
     action: str
@@ -336,6 +360,25 @@ class FundamentalReport:
 
 
 @dataclass
+class ExpectationGapSignal:
+    symbol: str
+    name: str
+    announce_date: str
+    status: str
+    score: float
+    reaction_3d: float | None
+    amount_ratio: float | None
+    fundamental_status: str
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ExpectationGapReport:
+    signals: list[ExpectationGapSignal]
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ThemeSnapshot:
     name: str
     score: float
@@ -352,6 +395,14 @@ class ThemeSnapshot:
     policy_score: float = 0.0
     vehicles: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
+    price_phase: str = "阶段未确认"
+    crowding_score: float | None = None
+    avg_ret_60d: float | None = None
+    avg_range_position_60d: float | None = None
+    fundamental_score: float | None = None
+    fundamental_coverage: float | None = None
+    fundamental_confirmed_ratio: float | None = None
+    valuation_style: str = "balanced"
 
 
 @dataclass
@@ -364,6 +415,7 @@ class RadarReport:
     data_source: str
     themes: list[ThemeSnapshot]
     market_pulses: list[MarketPulse]
+    market_structure: MarketStructure
     trading_gate: TradingGate
     strong_stocks: StrongStockReport
     next_buy: NextBuyReport
@@ -372,6 +424,7 @@ class RadarReport:
     policy_signals: PolicySignalReport
     target_prices: TargetPriceReport
     fundamentals: FundamentalReport
+    expectation_gaps: ExpectationGapReport
     leader_tape: list[SymbolSnapshot]
     market_watchlist: list[SymbolSnapshot]
     intel_items: list[IntelItem]

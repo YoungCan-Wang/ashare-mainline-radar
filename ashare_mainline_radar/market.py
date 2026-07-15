@@ -55,6 +55,13 @@ def compute_symbol_snapshot(
     high_20d = max(high[-20:])
     high_proximity_20d = safe_change(last_close, high_20d)
     drawdown_20d = high_proximity_20d
+    ret_60d = safe_change(close[-1], close[-61]) if len(close) >= 61 else None
+    range_position_60d = None
+    if len(close) >= 60 and len(series.low) >= 60:
+        high_60d = max(high[-60:])
+        low_60d = min(series.low[-60:])
+        if high_60d > low_60d:
+            range_position_60d = (last_close - low_60d) / (high_60d - low_60d)
 
     score = 50.0
     score += 18.0 * _score_change(ret_20d, 0.20)
@@ -85,7 +92,33 @@ def compute_symbol_snapshot(
         drawdown_20d=drawdown_20d,
         score=score,
         status=classify_symbol(ret_5d, ret_20d, amount_ratio, high_proximity_20d),
+        ret_60d=ret_60d,
+        range_position_60d=range_position_60d,
     )
+
+
+def _price_phase(
+    status: str,
+    avg_ret_60d: float | None,
+    avg_range_position_60d: float | None,
+    breadth_20d: float | None,
+    amount_heat: float | None,
+) -> tuple[str, float | None]:
+    if avg_range_position_60d is None:
+        return "阶段未确认", None
+    crowding = 55.0 * avg_range_position_60d
+    crowding += 25.0 * (breadth_20d or 0.0)
+    crowding += 20.0 * _clip(((amount_heat or 1.0) - 0.8) / 0.7, 0.0, 1.0)
+    crowding = round(_clip(crowding, 0.0, 100.0), 2)
+    high_run = (avg_ret_60d or 0.0) >= 0.40 and avg_range_position_60d >= 0.65
+    high_position = avg_range_position_60d >= 0.78 and (avg_ret_60d or 0.0) >= 0.18
+    if (high_run or high_position) and crowding >= 68:
+        return "山顶高拥挤", crowding
+    if avg_range_position_60d <= 0.35 or (avg_ret_60d is not None and avg_ret_60d <= -0.15):
+        return "山谷待反转", crowding
+    if status in {"主线成立", "主线候选"} and 0.35 < avg_range_position_60d < 0.78:
+        return "半山腰待验证", crowding
+    return "结构轮动", crowding
 
 
 def classify_theme(score: float, breadth_20d: float | None, amount_heat: float | None) -> str:
@@ -121,6 +154,10 @@ def build_theme_snapshots(
         breadth_20d = len(positive_20d) / len(members)
         avg_ret_5d = _avg([member.ret_5d for member in members if member.ret_5d is not None])
         avg_ret_20d = _avg([member.ret_20d for member in members if member.ret_20d is not None])
+        avg_ret_60d = _avg([member.ret_60d for member in members if member.ret_60d is not None])
+        avg_range_position_60d = _avg(
+            [member.range_position_60d for member in members if member.range_position_60d is not None]
+        )
         amount_heat = _avg([member.amount_ratio for member in members if member.amount_ratio is not None])
         leaders = sorted(members, key=lambda item: item.score, reverse=True)[:5]
         catalyst_count = catalysts_by_theme.get(name, 0)
@@ -150,11 +187,24 @@ def build_theme_snapshots(
         if policy_count:
             evidence.append(f"政策催化 {policy_count} 条，政策分 {policy_score:.1f}")
 
+        theme_status = classify_theme(score, breadth_20d, amount_heat)
+        price_phase, crowding_score = _price_phase(
+            theme_status,
+            avg_ret_60d,
+            avg_range_position_60d,
+            breadth_20d,
+            amount_heat,
+        )
+        if avg_range_position_60d is not None:
+            evidence.append(f"60日平均位置 {avg_range_position_60d * 100:.1f}%")
+        if crowding_score is not None:
+            evidence.append(f"价格成交拥挤代理 {crowding_score:.1f}")
+
         result.append(
             ThemeSnapshot(
                 name=name,
                 score=score,
-                status=classify_theme(score, breadth_20d, amount_heat),
+                status=theme_status,
                 members=len(members),
                 breadth_5d=breadth_5d,
                 breadth_20d=breadth_20d,
@@ -167,6 +217,11 @@ def build_theme_snapshots(
                 policy_score=policy_score,
                 vehicles=list(theme.get("vehicles", [])),
                 evidence=evidence,
+                price_phase=price_phase,
+                crowding_score=crowding_score,
+                avg_ret_60d=avg_ret_60d,
+                avg_range_position_60d=avg_range_position_60d,
+                valuation_style=str(theme.get("valuation_style", "balanced")),
             )
         )
     return sorted(result, key=lambda item: item.score, reverse=True)

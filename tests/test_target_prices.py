@@ -124,3 +124,63 @@ def test_build_target_price_report_for_accumulation_candidate() -> None:
     assert report.estimates
     assert report.estimates[0].candidate_type == "低位资金介入"
     assert report.estimates[0].target_low > report.estimates[0].last_close
+
+
+def test_non_growth_style_constrains_target_upside() -> None:
+    series = _series("600000.SH")
+    candidate = StrongStockCandidate(
+        symbol="600000.SH",
+        name="测试股票",
+        theme="测试主题",
+        last_close=series.close[-1],
+        score=92.0,
+        status="主升确认",
+        ret_5d=0.12,
+        ret_20d=0.3,
+        amount_ratio=1.4,
+        high_proximity_20d=-0.01,
+        backtest=BacktestSummary(
+            symbol="600000.SH",
+            name="测试股票",
+            theme="测试主题",
+            hold_days=15,
+            signals=8,
+            win_rate=0.625,
+            avg_return=0.15,
+            median_return=0.14,
+            best_return=0.35,
+            worst_return=-0.08,
+            avg_max_drawdown=-0.05,
+        ),
+    )
+
+    def estimate(style: str):
+        theme = ThemeSnapshot(
+            name="测试主题",
+            score=88.0,
+            status="主线成立",
+            members=5,
+            breadth_5d=0.8,
+            breadth_20d=0.8,
+            avg_ret_5d=0.05,
+            avg_ret_20d=0.12,
+            amount_heat=1.1,
+            catalyst_count=0,
+            leaders=[],
+            valuation_style=style,
+        )
+        report = build_target_price_report(
+            StrongStockReport(selected_themes=["测试主题"], hold_days=15, candidates=[candidate]),
+            build_accumulation_report({}, {}, []),
+            {"600000.SH": series},
+            [],
+            [theme],
+        )
+        return report.estimates[0]
+
+    growth = estimate("growth")
+    income = estimate("income")
+
+    assert income.upside_high <= 0.221
+    assert income.upside_high < growth.upside_high
+    assert any("估值风格代理：红利" in item for item in income.evidence)

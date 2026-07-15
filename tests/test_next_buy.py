@@ -50,6 +50,10 @@ def test_build_next_buy_report_selects_primary() -> None:
     assert report.by_theme
     assert report.by_theme[0].theme == "机器人"
     assert report.by_theme[0].plans[0].symbol == "002747.SZ"
+    assert "按5个交易日波段处理" in report.primary.position_note
+    assert "已有浮盈" in report.primary.position_note
+    assert "亏损中不补仓" not in report.primary.position_note
+    assert "跌破失效位不补仓" in report.primary.position_note
 
 
 def test_red_gate_suppresses_new_buy_but_keeps_waiting_candidates() -> None:
@@ -84,3 +88,25 @@ def test_red_gate_suppresses_new_buy_but_keeps_waiting_candidates() -> None:
 
     assert report.primary is None
     assert report.by_theme[0].plans[0].symbol == "002747.SZ"
+
+
+def test_expectation_risk_stays_in_waiting_instead_of_primary() -> None:
+    candidate = StrongStockCandidate(
+        symbol="002747.SZ",
+        name="埃斯顿",
+        theme="机器人",
+        last_close=20.0,
+        score=95.0,
+        status="趋势延续",
+        ret_5d=0.05,
+        ret_20d=0.20,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.03,
+        expectation_status="利好兑现风险",
+    )
+    theme = ThemeSnapshot("机器人", 90, "主线成立", 8, 0.7, 0.8, 0.04, 0.15, 1.2, 0, [])
+
+    report = build_next_buy_report([candidate], [theme], [])
+
+    assert report.primary is None
+    assert report.by_theme[0].plans[0].decision == "利好兑现风险，等待筹码稳定"
