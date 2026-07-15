@@ -13,6 +13,7 @@ from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, c
 from .market_context import build_market_pulses
 from .market_structure import build_market_structure
 from .models import DataSourceStatus, RadarReport, SymbolSnapshot, cn_market_date_from_ms, utc_now_iso
+from .monthly_base import build_monthly_base_report
 from .next_buy import build_next_buy_report
 from .policy import (
     apply_policy_keyword_matches,
@@ -96,6 +97,16 @@ class MainlineRadar:
 
         instruments = self.client.get_instruments(symbols)
         klines = self.client.get_klines_batch(symbols, period=period, count=lookback_days, adjust=adjust)
+        company_symbols = [symbol for symbol in symbols if _company_symbol(symbol, instruments.get(symbol))]
+        monthly_klines = {}
+        monthly_status = "empty"
+        monthly_message = f"1M, lookback=96, requested={len(company_symbols)}"
+        try:
+            monthly_klines = self.client.get_klines_batch(company_symbols, period="1M", count=96, adjust=adjust)
+            monthly_status = "ok" if monthly_klines else "empty"
+        except TickFlowError as exc:
+            monthly_status = "unavailable"
+            monthly_message = str(exc)[:240]
         source_statuses = [
             DataSourceStatus(
                 name="TickFlow instruments",
@@ -110,6 +121,13 @@ class MainlineRadar:
                 status="ok" if klines else "empty",
                 items=len(klines),
                 message=f"{period}, lookback={lookback_days}, requested={len(symbols)}",
+            ),
+            DataSourceStatus(
+                name="TickFlow monthly klines",
+                kind="market_data",
+                status=monthly_status,
+                items=len(monthly_klines),
+                message=monthly_message,
             ),
         ]
         last_timestamps = [series.last_timestamp for series in klines.values() if series.last_timestamp is not None]
@@ -145,6 +163,13 @@ class MainlineRadar:
         market_pulses = build_market_pulses(self.theme_config, snapshots)
         market_structure = build_market_structure(self.theme_config, klines)
         trading_gate = build_trading_gate(self.theme_config, snapshots, market_pulses, market_structure)
+        monthly_bases = build_monthly_base_report(
+            monthly_klines=monthly_klines,
+            instruments=instruments,
+            symbol_to_themes=symbol_to_themes,
+            themes=themes,
+            gate=trading_gate,
+        )
         strong_stocks = build_strong_stock_report(
             theme_config=self.theme_config,
             snapshots=snapshots,
@@ -265,6 +290,7 @@ class MainlineRadar:
             intel_items=intel_items,
             source_statuses=source_statuses,
             warnings=warnings,
+            monthly_bases=monthly_bases,
         )
 
 

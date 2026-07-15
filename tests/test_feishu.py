@@ -16,6 +16,8 @@ from ashare_mainline_radar.models import (
     FundamentalReport,
     GoldenPitReport,
     MarketStructure,
+    MonthlyBaseCandidate,
+    MonthlyBaseReport,
     NextBuyPlan,
     NextBuyReport,
     PolicySignalReport,
@@ -94,6 +96,38 @@ def test_build_feishu_text_minimal_report() -> None:
     assert "可尝试建仓" in contents
     assert "已有仓位可继续持有" in contents
     assert "10-20个交易日" in contents
+
+    report.monthly_bases = MonthlyBaseReport(
+        candidates=[
+            MonthlyBaseCandidate(
+                symbol="600000.SH",
+                name="测试公司",
+                themes=["测试主题"],
+                stage="箱顶蓄势",
+                score=90,
+                box_months=18,
+                box_low=20,
+                box_high=30,
+                box_width=0.5,
+                last_close=29,
+                box_position=0.9,
+                monthly_slope=0.001,
+                amount_contraction=0.8,
+                prior_peak_multiple=1.1,
+                action="等待突破确认。",
+                confirmation="放量站稳箱顶。",
+                invalidation="跌破箱底。",
+            )
+        ]
+    )
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "")
+        for element in card["body"]["elements"]
+        if element.get("tag") == "markdown"
+    )
+    assert "月线长期箱体" in contents
+    assert "20.00-30.00" in contents
 
 
 def test_write_feishu_status(tmp_path) -> None:

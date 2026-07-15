@@ -96,6 +96,15 @@ def build_feishu_text(report: RadarReport) -> str:
         lines.append("主线黄金坑：")
         for idx, item in enumerate(report.golden_pits.candidates[:5], start=1):
             lines.append(f"{idx}. {item.name} {item.symbol}｜{item.theme}｜{item.stage}｜{item.action}｜评分 {item.score:.1f}")
+    if report.monthly_bases.candidates:
+        lines.append("")
+        lines.append("月线长期箱体（等待确认）：")
+        for idx, item in enumerate(report.monthly_bases.candidates[:5], start=1):
+            themes = "、".join(item.themes) if item.themes else "未映射"
+            lines.append(
+                f"{idx}. {item.name} {item.symbol}｜{themes}｜{item.stage}｜评分 {item.score:.1f}｜"
+                f"箱体 {item.box_low:.2f}-{item.box_high:.2f}｜{item.action}"
+            )
     candidates = report.strong_stocks.candidates if report.strong_stocks else []
     if candidates:
         lines.append("")
@@ -295,9 +304,21 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
             )
         elements.extend([{"tag": "hr"}, _div("\n\n".join(lines))])
 
+    monthly_bases = report.monthly_bases.candidates[:3]
+    if monthly_bases:
+        lines = ["<font color='blue'>**五、月线长期箱体（等待确认）**</font>"]
+        for item in monthly_bases:
+            themes = "、".join(item.themes) if item.themes else "未映射"
+            lines.append(
+                f"**{item.name} `{item.symbol}`**｜{themes}｜{item.stage}｜评分 {item.score:.1f}\n"
+                f"箱体：{item.box_low:.2f}-{item.box_high:.2f}（{item.box_months}个月）｜当前位置 {item.box_position * 100:.0f}%\n"
+                f"动作：{item.action}\n确认：{item.confirmation}\n失效：{item.invalidation}"
+            )
+        elements.extend([{"tag": "hr"}, _div("\n\n".join(lines))])
+
     low_position = report.accumulation.candidates[:3]
     if low_position:
-        lines = ["<font color='grey'>**五、低位资金观察（不是立即建仓）**</font>"]
+        lines = ["<font color='grey'>**六、低位资金观察（不是立即建仓）**</font>"]
         for item in low_position:
             lines.append(
                 f"{item.name} `{item.symbol}`｜{item.primary_theme}｜{item.status}｜"
