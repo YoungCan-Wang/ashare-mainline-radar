@@ -60,10 +60,10 @@ GitHub Actions 定时任务默认使用 `max_symbols=0`，即扫描 TickFlow `CN
 
 日报会用港股通可交易的恒生生物科技核心篮子和明确的A/H配对判断 `A港共振`、`港股领先`、`A股领先` 或 `A港共同走弱`。该状态在滚动样本外检验通过前只作观察，不直接提高买入分数。
 
-组合级回测使用当日收盘信号、下一交易日开盘成交、0.30%往返成本、1/3单笔资金、8%硬失效位和市场红色闸门退出，并同时检查10/15/20日持有期：
+组合级回测使用当日收盘信号、下一交易日开盘成交、0.30%往返成本、基准单仓25%和8%硬失效位；红色市场闸门禁止新仓，但不机械清空仍有效的主线仓位。主线连续两日确认后才入场，连续两日失去主线身份才退出，并同时检查1/2/3仓容量、20%/25%/33%单仓风险预算和10/15/20日持有期：
 
 ```bash
-python3 scripts/run_strategy_backtest.py --count 900 --output reports/backtest/strategy_backtest.json
+python3 scripts/run_strategy_backtest.py --count 1800 --breadth-symbols 600 --output reports/backtest/strategy_backtest.json
 ```
 
 按历史截面回放时使用 `--as-of`。该模式会同时裁切日线、月线、新闻和财务公告，日期缺失的数据不会被当作当时已知：

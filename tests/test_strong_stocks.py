@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 from ashare_mainline_radar.market import build_theme_snapshots, compute_symbol_snapshot
 from ashare_mainline_radar.models import KlineSeries, StrongStockCandidate
 from ashare_mainline_radar.strong_stocks import (
+    _snapshot_passes_current_strength,
     backtest_symbol,
     build_strong_stock_report,
     fair_select_candidates,
@@ -51,6 +54,20 @@ def test_build_strong_stock_report_picks_candidate() -> None:
     assert report.selected_themes == ["AI算力"]
     assert report.candidates
     assert report.candidates[0].backtest is not None
+
+
+def test_current_candidate_must_pass_backtested_entry_quality() -> None:
+    snapshot = compute_symbol_snapshot(
+        "600000.SH",
+        _uptrend("600000.SH"),
+        instrument={"name": "测试股票"},
+        themes=["AI算力"],
+    )
+    assert snapshot is not None
+    assert _snapshot_passes_current_strength(snapshot)
+    assert not _snapshot_passes_current_strength(replace(snapshot, ret_5d=0.019))
+    assert not _snapshot_passes_current_strength(replace(snapshot, amount_ratio=0.99))
+    assert not _snapshot_passes_current_strength(replace(snapshot, high_proximity_20d=-0.051))
 
 
 def test_candidate_symbols_feed_selection_even_when_not_in_legacy_symbols() -> None:

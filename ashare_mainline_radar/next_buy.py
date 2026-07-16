@@ -143,9 +143,7 @@ def _invalidation(candidate: StrongStockCandidate) -> str:
     close = candidate.last_close
     hard_stop = close * 0.92
     soft_stop = close * 0.95
-    return (
-        f"跌破 {_fmt_price(soft_stop)} 先降级观察；有效跌破 {_fmt_price(hard_stop)} 或主线退出前三，视为交易假设失效。"
-    )
+    return f"跌破 {_fmt_price(soft_stop)} 先降级观察；有效跌破 {_fmt_price(hard_stop)} 或主线连续两日退出前三，视为交易假设失效。"
 
 
 def _position_note(candidate: StrongStockCandidate, lifecycle: ThemeLifecycleSignal | None) -> str:
@@ -161,6 +159,7 @@ def _position_note(candidate: StrongStockCandidate, lifecycle: ThemeLifecycleSig
             f"按{hold_days}个交易日波段处理；首笔只用计划仓位1/3。"
             "仅在已有浮盈、主线延续且回踩确认后递减加仓，跌破失效位不补仓。"
         )
+    note = "组合基准最多同时两仓、单仓不超过总资金25%；" + note
     if lifecycle and lifecycle.independence_status == "逆势独立主线":
         note += "当前属于弱市独立主线，只按试错仓处理，不因板块强势放宽总仓位。"
     return note

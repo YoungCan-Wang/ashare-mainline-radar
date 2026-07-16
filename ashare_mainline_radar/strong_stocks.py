@@ -13,6 +13,7 @@ from .models import (
     ThemeSnapshot,
     cn_market_date_from_ms,
 )
+from .strategy_rules import BASE_ENTRY_PROFILE
 
 
 def _avg(values: list[float]) -> float | None:
@@ -60,10 +61,10 @@ def _signal_metrics(series: KlineSeries, idx: int) -> dict[str, float] | None:
 
 def _is_signal(metrics: dict[str, float]) -> bool:
     return (
-        metrics["ret_20d"] >= 0.06
-        and metrics["ret_5d"] >= 0.02
-        and metrics["amount_ratio"] >= 1.02
-        and metrics["high_proximity"] >= -0.08
+        metrics["ret_20d"] >= 0.03
+        and metrics["ret_5d"] >= BASE_ENTRY_PROFILE["min_ret_5d"]
+        and metrics["amount_ratio"] >= BASE_ENTRY_PROFILE["min_amount_ratio"]
+        and metrics["high_proximity"] >= BASE_ENTRY_PROFILE["min_high_proximity"]
         and metrics["score"] >= 62.0
     )
 
@@ -130,14 +131,16 @@ def backtest_symbol(
 
 
 def _snapshot_passes_current_strength(snapshot: SymbolSnapshot) -> bool:
-    if snapshot.status in {"主升确认", "突破观察"}:
-        return True
     return (
-        snapshot.status == "趋势延续"
+        snapshot.status in {"主升确认", "突破观察", "趋势延续"}
+        and snapshot.ret_5d is not None
+        and BASE_ENTRY_PROFILE["min_ret_5d"] <= snapshot.ret_5d < 0.15
         and snapshot.ret_20d is not None
-        and snapshot.ret_20d > 0.04
+        and snapshot.ret_20d > 0.03
         and snapshot.amount_ratio is not None
-        and snapshot.amount_ratio >= 0.95
+        and snapshot.amount_ratio >= BASE_ENTRY_PROFILE["min_amount_ratio"]
+        and snapshot.high_proximity_20d is not None
+        and snapshot.high_proximity_20d > BASE_ENTRY_PROFILE["min_high_proximity"]
     )
 
 

@@ -10,7 +10,11 @@ on:
       count:
         description: "Daily bars per symbol"
         required: false
-        default: "900"
+        default: "1800"
+      breadth_symbols:
+        description: "Deterministic A-share sample used for historical market breadth"
+        required: false
+        default: "600"
 
 jobs:
   backtest:
@@ -29,7 +33,11 @@ jobs:
       - name: Run tests
         run: python -m pytest
       - name: Run point-in-time strategy backtest
-        run: python scripts/run_strategy_backtest.py --count "${{ inputs.count || '900' }}" --output reports/backtest/strategy_backtest.json
+        run: >-
+          python scripts/run_strategy_backtest.py
+          --count "${{ inputs.count || '1800' }}"
+          --breadth-symbols "${{ inputs.breadth_symbols || '600' }}"
+          --output reports/backtest/strategy_backtest.json
       - name: Upload backtest
         uses: actions/upload-artifact@v4
         with:
