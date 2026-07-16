@@ -6,6 +6,8 @@ from .models import (
     NextBuyReport,
     StrongStockCandidate,
     ThemeBuyGroup,
+    ThemeLifecycleReport,
+    ThemeLifecycleSignal,
     ThemeSnapshot,
     TradingGate,
 )
@@ -29,11 +31,16 @@ def _market_note(market_pulses: list[MarketPulse]) -> str:
     return f"{top.name}：{top.status}，强度 {top.score:.1f}"
 
 
+def _is_fund(candidate: StrongStockCandidate) -> bool:
+    return "ETF" in candidate.name.upper() or "基金" in candidate.name
+
+
 def _priority_score(
     candidate: StrongStockCandidate,
     theme_status: str,
     market_pulses: list[MarketPulse],
     theme_phase: str = "阶段未确认",
+    lifecycle: ThemeLifecycleSignal | None = None,
 ) -> float:
     score = candidate.score
     backtest = candidate.backtest
@@ -59,18 +66,53 @@ def _priority_score(
         score -= 3.0 if candidate.fundamental_status == "基本面兑现" else 7.0
     elif theme_phase == "山谷待反转":
         score -= 5.0
+    if lifecycle:
+        if lifecycle.stage == "主线确认":
+            score += 2.0
+        elif lifecycle.stage == "主线回踩":
+            score -= 6.0
+        elif lifecycle.stage == "退潮预警":
+            score -= 12.0
+        if lifecycle.independence_status == "逆势独立主线":
+            score += 3.0
     return round(max(0.0, min(100.0, score)), 2)
 
 
-def _decision(candidate: StrongStockCandidate, theme_phase: str) -> str:
+def _decision(
+    candidate: StrongStockCandidate,
+    theme_phase: str,
+    lifecycle: ThemeLifecycleSignal | None,
+) -> str:
     if candidate.expectation_status == "利好兑现风险":
         return "利好兑现风险，等待筹码稳定"
     if candidate.fundamental_status == "基本面拖累":
         return "观察候选，等待基本面修复"
+    if (
+        candidate.fundamental_status == "未覆盖"
+        and not _is_fund(candidate)
+        and lifecycle
+        and lifecycle.stage == "主升加速"
+        and candidate.ret_5d is not None
+        and candidate.ret_5d >= 0.15
+    ):
+        return "主升加速，禁止追高；基本面未覆盖"
+    if candidate.fundamental_status == "未覆盖" and not _is_fund(candidate):
+        return "基本面未覆盖，等待财务确认"
     if theme_phase == "山顶高拥挤·兑现不足":
         return "高位拥挤且兑现不足，等待降温"
     if theme_phase == "山谷待反转":
         return "低位待反转确认"
+    if lifecycle:
+        if lifecycle.stage == "扩散启动":
+            return "扩散启动，等待主线确认"
+        if lifecycle.stage == "主线回踩":
+            return "主线回踩，等待止跌确认"
+        if lifecycle.stage == "退潮预警":
+            return "退潮预警，停止新仓"
+        if lifecycle.stage == "主升加速":
+            if candidate.ret_5d is not None and candidate.ret_5d >= 0.15:
+                return "主升加速，禁止追高"
+            return "主升加速，等待回踩"
     if candidate.ret_5d is not None and candidate.ret_5d >= 0.15:
         return "优先候选，等待回踩"
     if candidate.status == "突破观察":
@@ -78,11 +120,15 @@ def _decision(candidate: StrongStockCandidate, theme_phase: str) -> str:
     return "优先候选，分批确认"
 
 
-def _entry_plan(candidate: StrongStockCandidate) -> str:
+def _entry_plan(candidate: StrongStockCandidate, lifecycle: ThemeLifecycleSignal | None) -> str:
     close = candidate.last_close
     pullback_low = close * 0.955
     pullback_high = close * 0.985
     breakout = close * 1.012
+    if lifecycle and lifecycle.stage == "主线回踩":
+        return f"先等止跌；重新站上 {_fmt_price(pullback_high)} 且板块广度回升后再评估，下跌过程中不补仓。"
+    if lifecycle and lifecycle.stage == "扩散启动":
+        return "只进入观察池；等待20日广度、核心股和ETF同步完成主线确认。"
     if candidate.ret_5d is not None and candidate.ret_5d >= 0.15:
         return (
             f"不追高；优先等回踩到 {_fmt_price(pullback_low)}-{_fmt_price(pullback_high)} 区间后企稳，"
@@ -97,24 +143,35 @@ def _invalidation(candidate: StrongStockCandidate) -> str:
     close = candidate.last_close
     hard_stop = close * 0.92
     soft_stop = close * 0.95
-    return f"跌破 {_fmt_price(soft_stop)} 先降级观察；有效跌破 {_fmt_price(hard_stop)} 或主线退出前三，视为交易假设失效。"
-
-
-def _position_note(candidate: StrongStockCandidate) -> str:
-    backtest = candidate.backtest
-    hold_days = backtest.hold_days if backtest else 15
-    if backtest and backtest.worst_return is not None and backtest.worst_return < -0.12:
-        return (
-            f"按{hold_days}个交易日波段处理；历史最差信号回撤较大，首笔不超过计划仓位1/3。"
-            "仅在已有浮盈、主线延续且回踩确认后递减加仓，亏损中不补仓。"
-        )
     return (
-        f"按{hold_days}个交易日波段处理；首笔只用计划仓位1/3。"
-        "仅在已有浮盈、主线延续且回踩确认后递减加仓，跌破失效位不补仓。"
+        f"跌破 {_fmt_price(soft_stop)} 先降级观察；有效跌破 {_fmt_price(hard_stop)} 或主线退出前三，视为交易假设失效。"
     )
 
 
-def _evidence(candidate: StrongStockCandidate, theme_status: str, market_pulses: list[MarketPulse]) -> list[str]:
+def _position_note(candidate: StrongStockCandidate, lifecycle: ThemeLifecycleSignal | None) -> str:
+    backtest = candidate.backtest
+    hold_days = backtest.hold_days if backtest else 15
+    if backtest and backtest.worst_return is not None and backtest.worst_return < -0.12:
+        note = (
+            f"按{hold_days}个交易日波段处理；历史最差信号回撤较大，首笔不超过计划仓位1/3。"
+            "仅在已有浮盈、主线延续且回踩确认后递减加仓，亏损中不补仓。"
+        )
+    else:
+        note = (
+            f"按{hold_days}个交易日波段处理；首笔只用计划仓位1/3。"
+            "仅在已有浮盈、主线延续且回踩确认后递减加仓，跌破失效位不补仓。"
+        )
+    if lifecycle and lifecycle.independence_status == "逆势独立主线":
+        note += "当前属于弱市独立主线，只按试错仓处理，不因板块强势放宽总仓位。"
+    return note
+
+
+def _evidence(
+    candidate: StrongStockCandidate,
+    theme_status: str,
+    market_pulses: list[MarketPulse],
+    lifecycle: ThemeLifecycleSignal | None,
+) -> list[str]:
     evidence = [f"{candidate.theme}：{theme_status}", f"个股状态：{candidate.status}，强度 {candidate.score:.1f}"]
     if candidate.ret_5d is not None:
         evidence.append(f"5日涨幅 {candidate.ret_5d * 100:.2f}%")
@@ -128,6 +185,10 @@ def _evidence(candidate: StrongStockCandidate, theme_status: str, market_pulses:
         win = "n/a" if candidate.backtest.win_rate is None else f"{candidate.backtest.win_rate * 100:.1f}%"
         avg = "n/a" if candidate.backtest.avg_return is None else f"{candidate.backtest.avg_return * 100:.2f}%"
         evidence.append(f"历史信号 {candidate.backtest.signals} 次，胜率 {win}，均值 {avg}")
+    if lifecycle:
+        evidence.append(f"主线生命周期：{lifecycle.stage}")
+        if lifecycle.independence_status == "逆势独立主线":
+            evidence.append(f"逆势独立主线，独立分 {lifecycle.independent_score:.1f}")
     evidence.append(_market_note(market_pulses))
     return evidence
 
@@ -149,7 +210,12 @@ def _risk_notes(candidate: StrongStockCandidate) -> list[str]:
     return notes
 
 
-def _build_plan(candidate: StrongStockCandidate, themes: list[ThemeSnapshot], market_pulses: list[MarketPulse]) -> NextBuyPlan:
+def _build_plan(
+    candidate: StrongStockCandidate,
+    themes: list[ThemeSnapshot],
+    market_pulses: list[MarketPulse],
+    lifecycle: ThemeLifecycleSignal | None,
+) -> NextBuyPlan:
     theme = next((item for item in themes if item.name == candidate.theme), None)
     status = theme.status if theme else _theme_status(candidate.theme, themes)
     phase = theme.price_phase if theme else "阶段未确认"
@@ -157,34 +223,54 @@ def _build_plan(candidate: StrongStockCandidate, themes: list[ThemeSnapshot], ma
         symbol=candidate.symbol,
         name=candidate.name,
         theme=candidate.theme,
-        decision=_decision(candidate, phase),
-        priority_score=_priority_score(candidate, status, market_pulses, phase),
+        decision=_decision(candidate, phase, lifecycle),
+        priority_score=_priority_score(candidate, status, market_pulses, phase, lifecycle),
         last_close=candidate.last_close,
-        entry_plan=_entry_plan(candidate),
+        entry_plan=_entry_plan(candidate, lifecycle),
         invalidation=_invalidation(candidate),
-        position_note=_position_note(candidate),
-        evidence=[*_evidence(candidate, status, market_pulses), f"主题价格阶段：{phase}"],
+        position_note=_position_note(candidate, lifecycle),
+        evidence=[*_evidence(candidate, status, market_pulses, lifecycle), f"主题价格阶段：{phase}"],
         risk_notes=_risk_notes(candidate),
+        lifecycle_stage=lifecycle.stage if lifecycle else "阶段未确认",
+        independence_status=lifecycle.independence_status if lifecycle else "随市主线",
     )
 
 
-def _theme_groups(plans: list[NextBuyPlan], themes: list[ThemeSnapshot], per_theme_limit: int = 3) -> list[ThemeBuyGroup]:
+def _theme_groups(
+    plans: list[NextBuyPlan],
+    themes: list[ThemeSnapshot],
+    lifecycle_by_theme: dict[str, ThemeLifecycleSignal],
+    per_theme_limit: int = 3,
+) -> list[ThemeBuyGroup]:
     grouped: dict[str, list[NextBuyPlan]] = {}
     for plan in plans:
         grouped.setdefault(plan.theme, []).append(plan)
 
     status_by_theme = {theme.name: theme.status for theme in themes}
-    ordered_theme_names = [theme.name for theme in themes if theme.name in grouped]
-    ordered_theme_names.extend(sorted(theme for theme in grouped if theme not in status_by_theme))
+    active_statuses = {"主线成立", "主线候选", "轮动观察"}
+    ordered_theme_names = [theme.name for theme in themes[:4] if theme.status in active_statuses]
+    ordered_theme_names.extend(
+        theme.name for theme in themes if theme.name in grouped and theme.name not in ordered_theme_names
+    )
+    ordered_theme_names.extend(
+        sorted(theme for theme in grouped if theme not in status_by_theme and theme not in ordered_theme_names)
+    )
 
-    return [
-        ThemeBuyGroup(
-            theme=theme_name,
-            theme_status=status_by_theme.get(theme_name, "未知"),
-            plans=grouped[theme_name][:per_theme_limit],
+    result: list[ThemeBuyGroup] = []
+    for theme_name in ordered_theme_names:
+        lifecycle = lifecycle_by_theme.get(theme_name)
+        theme_plans = grouped.get(theme_name, [])[:per_theme_limit]
+        result.append(
+            ThemeBuyGroup(
+                theme=theme_name,
+                theme_status=status_by_theme.get(theme_name, "未知"),
+                plans=theme_plans,
+                lifecycle_stage=lifecycle.stage if lifecycle else "阶段未确认",
+                independence_status=lifecycle.independence_status if lifecycle else "随市主线",
+                note=None if theme_plans else "当前没有个股通过强度、位置和回测门槛。",
+            )
         )
-        for theme_name in ordered_theme_names
-    ]
+    return result
 
 
 def build_next_buy_report(
@@ -193,19 +279,34 @@ def build_next_buy_report(
     market_pulses: list[MarketPulse],
     trading_gate: TradingGate | None = None,
     limit: int = 3,
+    theme_lifecycle: ThemeLifecycleReport | None = None,
 ) -> NextBuyReport:
-    plans = [_build_plan(candidate, themes, market_pulses) for candidate in candidates]
+    lifecycle_by_theme = {signal.theme: signal for signal in (theme_lifecycle.signals if theme_lifecycle else [])}
+    plans = [
+        _build_plan(candidate, themes, market_pulses, lifecycle_by_theme.get(candidate.theme))
+        for candidate in candidates
+    ]
     plans = [plan for plan in plans if plan.priority_score >= 60]
     plans.sort(key=lambda item: item.priority_score, reverse=True)
-    actionable_decisions = {"优先候选，等待回踩", "突破确认候选", "优先候选，分批确认"}
+    actionable_decisions = {
+        "优先候选，等待回踩",
+        "突破确认候选",
+        "优先候选，分批确认",
+        "主升加速，等待回踩",
+    }
     actionable_plans = [plan for plan in plans if plan.decision in actionable_decisions]
     notes = [
         "系统输出的是下一笔优先候选和条件化交易计划，不是无条件市价买入指令。",
         "若主线强度、市场环境或个股触发条件变弱，候选应自动降级。",
     ]
-    by_theme = _theme_groups(plans, themes)
+    by_theme = _theme_groups(plans, themes, lifecycle_by_theme)
     if not plans:
-        return NextBuyReport(primary=None, alternatives=[], by_theme=[], notes=[*notes, "当前没有达到阈值的下一笔买入候选。"])
+        return NextBuyReport(
+            primary=None,
+            alternatives=[],
+            by_theme=by_theme,
+            notes=[*notes, "当前没有达到阈值的下一笔买入候选。"],
+        )
     if trading_gate and trading_gate.level == "red":
         return NextBuyReport(
             primary=None,
@@ -218,7 +319,7 @@ def build_next_buy_report(
             primary=None,
             alternatives=[],
             by_theme=by_theme,
-            notes=[*notes, "候选存在，但均触发了基本面、预期差或价格阶段否决，只进入等待区。"],
+            notes=[*notes, "候选存在，但均触发了基本面、预期差、生命周期或价格阶段约束，只进入等待区。"],
         )
     return NextBuyReport(
         primary=actionable_plans[0],

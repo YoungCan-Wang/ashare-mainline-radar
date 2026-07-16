@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +14,15 @@ from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
 from .market_context import build_market_pulses
 from .market_structure import build_market_structure
-from .models import DataSourceStatus, RadarReport, SymbolSnapshot, cn_market_date_from_ms, utc_now_iso
+from .models import (
+    DataSourceStatus,
+    IntelItem,
+    KlineSeries,
+    RadarReport,
+    SymbolSnapshot,
+    cn_market_date_from_ms,
+    utc_now_iso,
+)
 from .monthly_base import build_monthly_base_report
 from .next_buy import build_next_buy_report
 from .policy import (
@@ -25,7 +35,7 @@ from .policy import (
 from .risk_gate import build_trading_gate
 from .strong_stocks import build_strong_stock_report
 from .target_prices import build_target_price_report
-from .theme_lifecycle import build_theme_lifecycle_report
+from .theme_lifecycle import apply_theme_independence, build_theme_lifecycle_report
 from .tickflow import TickFlowClient, TickFlowError
 
 
@@ -54,6 +64,69 @@ def _company_symbol(symbol: str, instrument: dict[str, Any] | None) -> bool:
         return False
     name = str((instrument or {}).get("name") or "").upper()
     return not any(token in name for token in ("ETF", "LOF", "REIT", "指数", "基金", "转债"))
+
+
+def _parse_as_of(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("as_of must use YYYY-MM-DD format") from exc
+
+
+def _clip_klines_as_of(
+    series: KlineSeries,
+    as_of: date | None,
+    *,
+    completed_months_only: bool = False,
+) -> KlineSeries:
+    if as_of is None:
+        return series
+
+    def visible(timestamp: int) -> bool:
+        market_date = cn_market_date_from_ms(timestamp)
+        if market_date is None:
+            return False
+        candle_date = date.fromisoformat(market_date)
+        if completed_months_only:
+            return (candle_date.year, candle_date.month) < (as_of.year, as_of.month)
+        return candle_date <= as_of
+
+    visible_indices = [index for index, timestamp in enumerate(series.timestamp) if visible(timestamp)]
+
+    def selected(values: list[Any]) -> list[Any]:
+        return [values[index] for index in visible_indices if index < len(values)]
+
+    return KlineSeries(
+        symbol=series.symbol,
+        timestamp=selected(series.timestamp),
+        open=selected(series.open),
+        high=selected(series.high),
+        low=selected(series.low),
+        close=selected(series.close),
+        volume=selected(series.volume),
+        amount=selected(series.amount),
+    )
+
+
+def _published_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    try:
+        return datetime.fromisoformat(normalized.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return parsedate_to_datetime(normalized).date()
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+
+def _filter_intel_as_of(items: list[IntelItem], as_of: date | None) -> list[IntelItem]:
+    if as_of is None:
+        return items
+    return [item for item in items if (published := _published_date(item.published_at)) and published <= as_of]
 
 
 class MainlineRadar:
@@ -90,7 +163,9 @@ class MainlineRadar:
         backtest_hold_days: int = 15,
         strong_stock_limit: int = 12,
         accumulation_limit: int = 12,
+        as_of: str | None = None,
     ) -> RadarReport:
+        as_of_date = _parse_as_of(as_of)
         universe_id, symbols = self._symbols_for_mode(mode, max_symbols)
         symbol_to_themes = theme_symbol_map(self.theme_config)
         keywords = theme_keywords(self.theme_config)
@@ -98,12 +173,19 @@ class MainlineRadar:
 
         instruments = self.client.get_instruments(symbols)
         klines = self.client.get_klines_batch(symbols, period=period, count=lookback_days, adjust=adjust)
+        klines = {symbol: _clip_klines_as_of(series, as_of_date) for symbol, series in klines.items()}
+        klines = {symbol: series for symbol, series in klines.items() if series.usable}
         company_symbols = [symbol for symbol in symbols if _company_symbol(symbol, instruments.get(symbol))]
         monthly_klines = {}
         monthly_status = "empty"
         monthly_message = f"1M, lookback=96, requested={len(company_symbols)}"
         try:
             monthly_klines = self.client.get_klines_batch(company_symbols, period="1M", count=96, adjust=adjust)
+            monthly_klines = {
+                symbol: _clip_klines_as_of(series, as_of_date, completed_months_only=True)
+                for symbol, series in monthly_klines.items()
+            }
+            monthly_klines = {symbol: series for symbol, series in monthly_klines.items() if series.usable}
             monthly_status = "ok" if monthly_klines else "empty"
         except TickFlowError as exc:
             monthly_status = "unavailable"
@@ -148,6 +230,18 @@ class MainlineRadar:
                 snapshots[symbol] = snapshot
 
         intel_items, intel_statuses = collect_intelligence_with_status(self.intel_config, keywords)
+        unfiltered_intel_count = len(intel_items)
+        intel_items = _filter_intel_as_of(intel_items, as_of_date)
+        if as_of_date is not None:
+            source_statuses.append(
+                DataSourceStatus(
+                    name="Point-in-time intelligence filter",
+                    kind="intelligence",
+                    status="ok",
+                    items=len(intel_items),
+                    message=f"as_of={as_of_date.isoformat()}, fetched={unfiltered_intel_count}, missing dates excluded",
+                )
+            )
         intel_items = apply_policy_keyword_matches(intel_items, policy_keywords)
         source_statuses.extend(intel_statuses)
         non_policy_intel_items = [item for item in intel_items if not is_policy_item(item)]
@@ -170,6 +264,7 @@ class MainlineRadar:
         market_pulses = build_market_pulses(self.theme_config, snapshots)
         market_structure = build_market_structure(self.theme_config, klines)
         trading_gate = build_trading_gate(self.theme_config, snapshots, market_pulses, market_structure)
+        apply_theme_independence(theme_lifecycle, themes, trading_gate)
         monthly_bases = build_monthly_base_report(
             monthly_klines=monthly_klines,
             instruments=instruments,
@@ -222,6 +317,7 @@ class MainlineRadar:
             raw_metrics=raw_metrics,
             prices={symbol: snapshot.last_close for symbol, snapshot in snapshots.items()},
             requested_symbols=fundamental_symbols,
+            as_of=as_of_date.isoformat() if as_of_date else None,
         )
         source_statuses.append(
             DataSourceStatus(
@@ -254,7 +350,13 @@ class MainlineRadar:
             gate=trading_gate,
             fundamentals=fundamentals,
         )
-        next_buy = build_next_buy_report(strong_stocks.candidates, themes, market_pulses, trading_gate)
+        next_buy = build_next_buy_report(
+            strong_stocks.candidates,
+            themes,
+            market_pulses,
+            trading_gate,
+            theme_lifecycle=theme_lifecycle,
+        )
         target_prices = build_target_price_report(
             strong_stocks=strong_stocks,
             accumulation=accumulation,
@@ -273,6 +375,10 @@ class MainlineRadar:
             warnings.append("当前使用 TickFlow 完整 API；实时/分钟线能力仍取决于账号权限和本报告配置。")
         else:
             warnings.append("TickFlow 免费模式使用历史日 K，不提供盘中实时更新。")
+        if as_of_date is not None:
+            warnings.append(
+                f"历史截面模式：行情、新闻和财务数据均按 {as_of_date.isoformat()} 截断；日期缺失的数据不参与判断。"
+            )
         return RadarReport(
             generated_at=utc_now_iso(),
             data_as_of=data_as_of,

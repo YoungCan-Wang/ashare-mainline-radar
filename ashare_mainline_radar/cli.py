@@ -31,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--strong-stock-limit", type=int, default=12)
     parser.add_argument("--accumulation-limit", type=int, default=12)
+    parser.add_argument("--as-of", help="Point-in-time cutoff in YYYY-MM-DD; excludes later market, news, and financial data.")
     parser.add_argument("--send-feishu", action="store_true", help="Send a compact report to FEISHU_WEBHOOK_URL.")
     parser.add_argument("--feishu-webhook-url", default=os.getenv("FEISHU_WEBHOOK_URL"))
     parser.add_argument("--fail-on-feishu-error", action="store_true")
@@ -56,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         backtest_hold_days=args.backtest_hold_days,
         strong_stock_limit=args.strong_stock_limit,
         accumulation_limit=args.accumulation_limit,
+        as_of=args.as_of,
     )
     markdown_path, json_path = write_report(report, args.output_dir)
     feishu_card = build_feishu_card(report)

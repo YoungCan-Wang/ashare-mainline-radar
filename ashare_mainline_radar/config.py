@@ -25,7 +25,12 @@ def theme_symbol_map(theme_config: dict[str, Any]) -> dict[str, list[str]]:
     mapping: dict[str, list[str]] = {}
     for theme in theme_config.get("themes", []):
         name = str(theme["name"])
-        symbols = set(theme.get("symbols", [])) | set(theme.get("vehicles", [])) | set(theme.get("scoring_symbols", []))
+        symbols = (
+            set(theme.get("symbols", []))
+            | set(theme.get("vehicles", []))
+            | set(theme.get("scoring_symbols", []))
+            | set(theme.get("candidate_symbols", []))
+        )
         for symbol in symbols:
             mapping.setdefault(symbol, []).append(name)
     return mapping
@@ -63,6 +68,8 @@ def configured_symbols(theme_config: dict[str, Any]) -> list[str]:
             add(str(symbol))
         for symbol in theme.get("scoring_symbols", []):
             add(str(symbol))
+        for symbol in theme.get("candidate_symbols", []):
+            add(str(symbol))
     for item in theme_config.get("market_watchlist", []):
         add(str(item["symbol"]))
     return symbols
@@ -76,4 +83,12 @@ def theme_scoring_symbols(theme: dict[str, Any]) -> list[str]:
         dict.fromkeys(
             [str(symbol) for symbol in theme.get("symbols", [])] + [str(symbol) for symbol in theme.get("vehicles", [])]
         )
+    )
+
+
+def theme_candidate_symbols(theme: dict[str, Any]) -> list[str]:
+    configured = theme.get("candidate_symbols")
+    symbols = configured if configured else theme.get("symbols", [])
+    return list(
+        dict.fromkeys([str(symbol) for symbol in symbols] + [str(symbol) for symbol in theme.get("vehicles", [])])
     )

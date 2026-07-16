@@ -1,5 +1,9 @@
-from ashare_mainline_radar.models import ThemeSnapshot
-from ashare_mainline_radar.theme_lifecycle import LifecyclePoint, trace_theme_lifecycle
+from ashare_mainline_radar.models import ThemeLifecycleReport, ThemeSnapshot, TradingGate
+from ashare_mainline_radar.theme_lifecycle import (
+    LifecyclePoint,
+    apply_theme_independence,
+    trace_theme_lifecycle,
+)
 
 
 def _theme(status: str = "主线成立") -> ThemeSnapshot:
@@ -89,3 +93,34 @@ def test_failed_false_start_resets_before_next_round() -> None:
     assert signal is not None
     assert signal.started_at == "2026-06-23"
     assert signal.confirmed_at == "2026-06-30"
+
+
+def test_weak_market_can_keep_a_genuinely_independent_mainline() -> None:
+    theme = _theme()
+    theme.breadth_5d = 0.8
+    theme.breadth_20d = 0.7
+    theme.avg_ret_5d = 0.12
+    theme.amount_heat = 1.4
+    signal = trace_theme_lifecycle(
+        "创新药",
+        [
+            _point("2026-06-23", "轮动观察", 0.75, 0.3, 0.02, 0.00, 1.05),
+            _point("2026-06-29", "主线成立", 0.8, 0.7, 0.12, 0.15, 1.4),
+        ],
+        theme,
+    )
+    assert signal is not None
+    report = ThemeLifecycleReport(signals=[signal], history_days=45)
+    gate = TradingGate(
+        level="orange",
+        state="只准试错仓",
+        score=55,
+        max_initial_position_fraction=0.1,
+        median_stock_return_5d=0.01,
+    )
+
+    apply_theme_independence(report, [theme], gate)
+
+    assert signal.independence_status == "逆势独立主线"
+    assert signal.relative_strength_5d == 0.11
+    assert signal.independent_score >= 68

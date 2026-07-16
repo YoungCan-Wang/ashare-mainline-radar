@@ -166,3 +166,33 @@ def test_halfway_theme_needs_broad_fundamental_delivery_before_confirmation() ->
     assert theme.price_phase == "半山腰兑现"
     assert theme.fundamental_coverage == 2 / 3
     assert theme.fundamental_confirmed_ratio == 1
+
+
+def test_point_in_time_fundamentals_ignore_later_announcements() -> None:
+    raw = {
+        "TEST.SZ": [
+            {
+                "period_end": "2025-12-31",
+                "announce_date": "2026-04-01",
+                "revenue_yoy": 10,
+                "net_income_yoy": 12,
+            },
+            {
+                "period_end": "2026-03-31",
+                "announce_date": "2026-07-01",
+                "revenue_yoy": 80,
+                "net_income_yoy": 120,
+            },
+            {
+                "period_end": "2026-06-30",
+                "revenue_yoy": 200,
+                "net_income_yoy": 300,
+            },
+        ]
+    }
+
+    report = build_fundamental_report(raw, {"TEST.SZ": 20}, ["TEST.SZ"], as_of="2026-06-29")
+
+    assert report.covered_symbols == 1
+    assert report.snapshots[0].period_end == "2025-12-31"
+    assert any("2026-06-29" in note for note in report.notes)

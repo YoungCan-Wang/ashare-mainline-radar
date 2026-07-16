@@ -281,6 +281,38 @@ def test_red_gate_waiting_note_does_not_suggest_trial_position() -> None:
     assert "小仓试探" not in note
 
 
+def test_uncovered_company_waiting_note_requires_fundamental_data() -> None:
+    plan = NextBuyPlan(
+        symbol="600000.SH",
+        name="测试公司",
+        theme="AI算力",
+        decision="优先候选，分批确认",
+        priority_score=85,
+        last_close=20,
+        entry_plan="等待回踩确认。",
+        invalidation="跌破退出。",
+        position_note="首笔试错。",
+    )
+    candidate = StrongStockCandidate(
+        symbol=plan.symbol,
+        name=plan.name,
+        theme=plan.theme,
+        last_close=20,
+        score=85,
+        status="趋势延续",
+        ret_5d=0.05,
+        ret_20d=0.18,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.03,
+        fundamental_status="未覆盖",
+    )
+
+    note = _waiting_note(plan, "green", candidate)
+
+    assert "基本面未覆盖" in note
+    assert "不进入尝试建仓" in note
+
+
 def test_card_allows_etf_attempt_without_company_fundamentals() -> None:
     candidate = StrongStockCandidate(
         symbol="588200.SH",

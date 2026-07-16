@@ -128,6 +128,7 @@ class TradingGate:
     advance_ratio: float | None = None
     decline_2pct_ratio: float | None = None
     median_stock_return: float | None = None
+    median_stock_return_5d: float | None = None
 
 
 @dataclass
@@ -199,6 +200,8 @@ class NextBuyPlan:
     position_note: str
     evidence: list[str] = field(default_factory=list)
     risk_notes: list[str] = field(default_factory=list)
+    lifecycle_stage: str = "阶段未确认"
+    independence_status: str = "随市主线"
 
 
 @dataclass
@@ -206,6 +209,9 @@ class ThemeBuyGroup:
     theme: str
     theme_status: str
     plans: list[NextBuyPlan]
+    lifecycle_stage: str = "阶段未确认"
+    independence_status: str = "随市主线"
+    note: str | None = None
 
 
 @dataclass
@@ -451,6 +457,10 @@ class ThemeLifecycleSignal:
     amount_heat: float | None
     action: str
     evidence: list[str] = field(default_factory=list)
+    relative_strength_5d: float | None = None
+    independent_score: float = 0.0
+    independence_status: str = "随市主线"
+    independence_evidence: list[str] = field(default_factory=list)
 
     @property
     def is_new_transition(self) -> bool:

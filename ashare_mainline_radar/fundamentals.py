@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from .models import (
     AccumulationReport,
     FundamentalReport,
@@ -7,6 +9,7 @@ from .models import (
     StrongStockReport,
     ThemeSnapshot,
 )
+from .strong_stocks import fair_select_candidates
 
 
 def _number(value: object) -> float | None:
@@ -41,8 +44,31 @@ def _annualized_roe(roe: float | None, period_end: object) -> float | None:
     return roe * (12.0 / month) if month in {3, 6, 9, 12} else roe
 
 
-def _snapshot(symbol: str, records: list[dict[str, object]], last_close: float | None) -> FundamentalSnapshot | None:
+def _announcement_date(value: object) -> date | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    try:
+        if len(normalized) == 8 and normalized.isdigit():
+            return date(int(normalized[:4]), int(normalized[4:6]), int(normalized[6:8]))
+        return date.fromisoformat(normalized[:10])
+    except ValueError:
+        return None
+
+
+def _snapshot(
+    symbol: str,
+    records: list[dict[str, object]],
+    last_close: float | None,
+    as_of: date | None = None,
+) -> FundamentalSnapshot | None:
     usable = [record for record in records if record.get("period_end")]
+    if as_of is not None:
+        usable = [
+            record
+            for record in usable
+            if (announced := _announcement_date(record.get("announce_date"))) is not None and announced <= as_of
+        ]
     if not usable:
         return None
     usable.sort(key=lambda record: (str(record.get("period_end")), str(record.get("announce_date") or "")))
@@ -136,11 +162,13 @@ def build_fundamental_report(
     raw_metrics: dict[str, list[dict[str, object]]],
     prices: dict[str, float],
     requested_symbols: list[str],
+    as_of: str | None = None,
 ) -> FundamentalReport:
+    as_of_date = date.fromisoformat(as_of) if as_of else None
     snapshots = [
         item
         for symbol in requested_symbols
-        if (item := _snapshot(symbol, raw_metrics.get(symbol, []), prices.get(symbol))) is not None
+        if (item := _snapshot(symbol, raw_metrics.get(symbol, []), prices.get(symbol), as_of_date)) is not None
     ]
     snapshots.sort(key=lambda item: item.score, reverse=True)
     notes = [
@@ -148,6 +176,8 @@ def build_fundamental_report(
         "PB仅作横向研究参考；不同行业不可直接用同一阈值比较。",
         "TickFlow核心财务指标不包含卖方一致预期修正，当前不把价格上涨冒充盈利预测上修。",
     ]
+    if as_of_date is not None:
+        notes.append(f"历史截面仅使用 {as_of_date.isoformat()} 当日及之前已公告且公告日期完整的财务记录。")
     return FundamentalReport(
         snapshots=snapshots,
         covered_symbols=len(snapshots),
@@ -172,8 +202,12 @@ def apply_fundamental_overlay(
         candidate.fundamental_status = item.status
         candidate.score = round(_clip(candidate.score + (item.score - 55.0) * 0.16, 0.0, 100.0), 2)
         candidate.reasons.extend(item.evidence[:4])
-    strong_stocks.candidates.sort(key=lambda item: item.score, reverse=True)
-    strong_stocks.candidates[:] = strong_stocks.candidates[:strong_limit]
+    strong_stocks.candidates[:] = fair_select_candidates(
+        strong_stocks.candidates,
+        strong_stocks.selected_themes,
+        strong_limit,
+        per_theme_floor=2,
+    )
 
     for candidate in accumulation.candidates:
         item = by_symbol.get(candidate.symbol)
@@ -219,8 +253,16 @@ def apply_theme_fundamental_overlay(
             f"主题财务覆盖 {len(items)}/{total}，兑现成员 {len(confirmed)}/{len(items)}，"
             f"平均财务分 {theme.fundamental_score:.1f}"
         )
-        if theme.price_phase == "半山腰待验证" and theme.fundamental_score >= 62 and theme.fundamental_confirmed_ratio >= 0.40:
+        if (
+            theme.price_phase == "半山腰待验证"
+            and theme.fundamental_score >= 62
+            and theme.fundamental_confirmed_ratio >= 0.40
+        ):
             theme.price_phase = "半山腰兑现"
         elif theme.price_phase == "山顶高拥挤":
-            suffix = "业绩支撑" if theme.fundamental_score >= 67 and theme.fundamental_confirmed_ratio >= 0.50 else "兑现不足"
+            suffix = (
+                "业绩支撑"
+                if theme.fundamental_score >= 67 and theme.fundamental_confirmed_ratio >= 0.50
+                else "兑现不足"
+            )
             theme.price_phase = f"山顶高拥挤·{suffix}"

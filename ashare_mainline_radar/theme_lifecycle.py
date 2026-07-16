@@ -13,6 +13,7 @@ from .models import (
     ThemeLifecycleReport,
     ThemeLifecycleSignal,
     ThemeSnapshot,
+    TradingGate,
     cn_market_date_from_ms,
     pct,
 )
@@ -284,3 +285,47 @@ def build_theme_lifecycle_report(
         "市场风险闸门只约束是否参与，不会隐藏扩散启动、主线回踩或退潮预警。",
     ]
     return ThemeLifecycleReport(signals=signals, history_days=len(cutoffs), notes=notes)
+
+
+def apply_theme_independence(
+    lifecycle: ThemeLifecycleReport,
+    themes: list[ThemeSnapshot],
+    gate: TradingGate,
+) -> None:
+    theme_by_name = {theme.name: theme for theme in themes}
+    market_ret_5d = gate.median_stock_return_5d
+    active_stages = {"扩散启动", "主线确认", "主线延续", "主升加速"}
+    for signal in lifecycle.signals:
+        theme = theme_by_name.get(signal.theme)
+        if theme is None or market_ret_5d is None or theme.avg_ret_5d is None:
+            continue
+        relative_5d = theme.avg_ret_5d - market_ret_5d
+        breadth_5d = theme.breadth_5d or 0.0
+        breadth_20d = theme.breadth_20d or 0.0
+        amount_heat = theme.amount_heat or 0.0
+        score = 0.0
+        score += 20.0 * min(1.0, breadth_5d / 0.70)
+        score += 15.0 * min(1.0, breadth_20d / 0.60)
+        score += 15.0 * max(0.0, min(1.0, (amount_heat - 0.95) / 0.25))
+        score += 25.0 * max(0.0, min(1.0, (relative_5d - 0.01) / 0.08))
+        score += 15.0 * max(0.0, min(1.0, (theme.score - 60.0) / 25.0))
+        score += min(10.0, theme.policy_score * 0.10)
+        if theme.crowding_score is not None and theme.crowding_score >= 80:
+            score -= 15.0
+        score = round(max(0.0, min(100.0, score)), 2)
+        is_independent = bool(
+            gate.level in {"orange", "red"}
+            and signal.stage in active_stages
+            and breadth_5d >= 0.60
+            and breadth_20d >= 0.50
+            and amount_heat >= 1.03
+            and relative_5d >= 0.03
+            and score >= 68
+        )
+        signal.relative_strength_5d = relative_5d
+        signal.independent_score = score
+        signal.independence_status = "逆势独立主线" if is_independent else "随市主线"
+        signal.independence_evidence = [
+            f"主题5日相对全市场中位数 {relative_5d * 100:+.2f}%",
+            f"独立强度 {score:.1f}",
+        ]

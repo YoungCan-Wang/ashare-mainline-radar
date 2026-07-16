@@ -3,6 +3,7 @@ from __future__ import annotations
 from statistics import mean, median
 from typing import Any
 
+from .config import theme_candidate_symbols
 from .models import (
     BacktestSummary,
     KlineSeries,
@@ -154,8 +155,36 @@ def _candidate_score(snapshot: SymbolSnapshot, theme: ThemeSnapshot, backtest: B
 def _theme_symbols(theme_config: dict[str, Any], theme_name: str) -> list[str]:
     for theme in theme_config.get("themes", []):
         if str(theme.get("name")) == theme_name:
-            return list(dict.fromkeys([*theme.get("symbols", []), *theme.get("vehicles", [])]))
+            return theme_candidate_symbols(theme)
     return []
+
+
+def fair_select_candidates(
+    candidates: list[StrongStockCandidate],
+    theme_order: list[str],
+    limit: int,
+    per_theme_floor: int = 2,
+) -> list[StrongStockCandidate]:
+    ranked = sorted(candidates, key=lambda item: item.score, reverse=True)
+    if limit <= 0 or len(ranked) <= limit:
+        return ranked
+
+    grouped: dict[str, list[StrongStockCandidate]] = {}
+    for candidate in ranked:
+        grouped.setdefault(candidate.theme, []).append(candidate)
+
+    selected: list[StrongStockCandidate] = []
+    selected_keys: set[tuple[str, str]] = set()
+    for theme in theme_order:
+        for candidate in grouped.get(theme, [])[:per_theme_floor]:
+            if len(selected) >= limit:
+                break
+            selected.append(candidate)
+            selected_keys.add((candidate.theme, candidate.symbol))
+
+    remaining = [candidate for candidate in ranked if (candidate.theme, candidate.symbol) not in selected_keys]
+    selected.extend(remaining[: max(0, limit - len(selected))])
+    return sorted(selected, key=lambda item: item.score, reverse=True)
 
 
 def build_strong_stock_report(
@@ -181,7 +210,9 @@ def build_strong_stock_report(
             if key in seen:
                 continue
             seen.add(key)
-            backtest = backtest_symbol(symbol=symbol, name=snapshot.name, theme=theme.name, series=series, hold_days=hold_days)
+            backtest = backtest_symbol(
+                symbol=symbol, name=snapshot.name, theme=theme.name, series=series, hold_days=hold_days
+            )
             score = _candidate_score(snapshot, theme, backtest)
             candidates.append(
                 StrongStockCandidate(
@@ -199,9 +230,9 @@ def build_strong_stock_report(
                     backtest=backtest,
                 )
             )
-    candidates.sort(key=lambda item: item.score, reverse=True)
+    theme_order = [theme.name for theme in selected_themes]
     return StrongStockReport(
-        selected_themes=[theme.name for theme in selected_themes],
+        selected_themes=theme_order,
         hold_days=hold_days,
-        candidates=candidates[:max_candidates],
+        candidates=fair_select_candidates(candidates, theme_order, max_candidates, per_theme_floor=3),
     )

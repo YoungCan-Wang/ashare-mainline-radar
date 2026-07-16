@@ -1,6 +1,10 @@
 from ashare_mainline_radar.market import build_theme_snapshots, compute_symbol_snapshot
-from ashare_mainline_radar.models import KlineSeries
-from ashare_mainline_radar.strong_stocks import backtest_symbol, build_strong_stock_report
+from ashare_mainline_radar.models import KlineSeries, StrongStockCandidate
+from ashare_mainline_radar.strong_stocks import (
+    backtest_symbol,
+    build_strong_stock_report,
+    fair_select_candidates,
+)
 
 
 def _uptrend(symbol: str) -> KlineSeries:
@@ -47,3 +51,68 @@ def test_build_strong_stock_report_picks_candidate() -> None:
     assert report.selected_themes == ["AI算力"]
     assert report.candidates
     assert report.candidates[0].backtest is not None
+
+
+def test_candidate_symbols_feed_selection_even_when_not_in_legacy_symbols() -> None:
+    series = _uptrend("688331.SH")
+    snapshot = compute_symbol_snapshot("688331.SH", series, instrument={"name": "荣昌生物"}, themes=["创新药"])
+    assert snapshot is not None
+    config = {
+        "themes": [
+            {
+                "name": "创新药",
+                "symbols": ["300760.SZ"],
+                "candidate_symbols": ["688331.SH"],
+                "vehicles": [],
+            }
+        ]
+    }
+    themes = build_theme_snapshots(
+        {"themes": [{"name": "创新药", "scoring_symbols": ["688331.SH"]}]},
+        {"688331.SH": snapshot},
+    )
+
+    report = build_strong_stock_report(
+        config,
+        {"688331.SH": snapshot},
+        {"688331.SH": series},
+        themes,
+        hold_days=5,
+    )
+
+    assert [candidate.symbol for candidate in report.candidates] == ["688331.SH"]
+
+
+def _candidate(symbol: str, theme: str, score: float) -> StrongStockCandidate:
+    return StrongStockCandidate(
+        symbol=symbol,
+        name=symbol,
+        theme=theme,
+        last_close=10,
+        score=score,
+        status="主升确认",
+        ret_5d=0.05,
+        ret_20d=0.12,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.02,
+    )
+
+
+def test_fair_selection_reserves_candidates_for_each_active_theme() -> None:
+    candidates = [
+        *[_candidate(f"A{index}", "半导体国产替代", 100 - index) for index in range(8)],
+        _candidate("B1", "创新药", 91),
+        _candidate("B2", "创新药", 90),
+        _candidate("C1", "AI算力", 89),
+        _candidate("C2", "AI算力", 88),
+    ]
+
+    selected = fair_select_candidates(
+        candidates,
+        ["半导体国产替代", "创新药", "AI算力"],
+        limit=6,
+        per_theme_floor=2,
+    )
+
+    assert {candidate.theme for candidate in selected} == {"半导体国产替代", "创新药", "AI算力"}
+    assert sum(candidate.theme == "创新药" for candidate in selected) == 2

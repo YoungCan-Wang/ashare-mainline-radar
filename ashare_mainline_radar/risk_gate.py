@@ -41,9 +41,15 @@ def build_trading_gate(
         for snapshot in snapshots.values()
         if _stock_like(snapshot, index_symbol_set) and snapshot.ret_1d is not None
     ]
+    stock_returns_5d = [
+        snapshot.ret_5d
+        for snapshot in snapshots.values()
+        if _stock_like(snapshot, index_symbol_set) and snapshot.ret_5d is not None
+    ]
     advance_ratio = sum(value > 0 for value in stock_returns) / len(stock_returns) if stock_returns else None
     decline_2pct_ratio = sum(value <= -0.02 for value in stock_returns) / len(stock_returns) if stock_returns else None
     median_stock_return = median(stock_returns) if stock_returns else None
+    median_stock_return_5d = median(stock_returns_5d) if stock_returns_5d else None
     reasons: list[str] = []
     if median_1d is not None:
         reasons.append(f"三大指数单日中位涨跌 {median_1d * 100:.2f}%")
@@ -52,9 +58,7 @@ def build_trading_gate(
     if market_structure:
         reasons.append(f"指数结构 {market_structure.status}，确认分 {market_structure.score:.1f}")
     if advance_ratio is not None and decline_2pct_ratio is not None:
-        reasons.append(
-            f"扫描股票上涨占比 {advance_ratio * 100:.1f}%，跌超2%占比 {decline_2pct_ratio * 100:.1f}%"
-        )
+        reasons.append(f"扫描股票上涨占比 {advance_ratio * 100:.1f}%，跌超2%占比 {decline_2pct_ratio * 100:.1f}%")
 
     index_stress = bool(
         crash_count >= 2
@@ -89,6 +93,7 @@ def build_trading_gate(
             advance_ratio=advance_ratio,
             decline_2pct_ratio=decline_2pct_ratio,
             median_stock_return=median_stock_return,
+            median_stock_return_5d=median_stock_return_5d,
         )
 
     cautious = bool(
@@ -113,6 +118,7 @@ def build_trading_gate(
             advance_ratio=advance_ratio,
             decline_2pct_ratio=decline_2pct_ratio,
             median_stock_return=median_stock_return,
+            median_stock_return_5d=median_stock_return_5d,
         )
 
     return TradingGate(
@@ -125,4 +131,5 @@ def build_trading_gate(
         advance_ratio=advance_ratio,
         decline_2pct_ratio=decline_2pct_ratio,
         median_stock_return=median_stock_return,
+        median_stock_return_5d=median_stock_return_5d,
     )

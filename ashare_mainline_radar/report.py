@@ -66,6 +66,7 @@ def _theme_lifecycle_row(rank: int, signal: ThemeLifecycleSignal) -> str:
         f"| {rank} | {signal.theme} | {signal.stage} | {signal.score:.1f} | "
         f"{signal.started_at or '-'} | {signal.confirmed_at or '-'} | {signal.stage_since} | "
         f"{pct(signal.breadth_5d)} | {pct(signal.breadth_20d)} | {_ratio(signal.amount_heat)} | "
+        f"{pct(signal.relative_strength_5d)} | {signal.independence_status} {signal.independent_score:.1f} | "
         f"{signal.action} |"
     )
 
@@ -110,7 +111,10 @@ def _theme_buy_group_row(rank: int, group: ThemeBuyGroup) -> str:
         f"{idx}. {plan.name} `{plan.symbol}` {plan.decision}({plan.priority_score:.1f})"
         for idx, plan in enumerate(group.plans, start=1)
     )
-    return f"| {rank} | {group.theme} | {group.theme_status} | {plans or '-'} |"
+    return (
+        f"| {rank} | {group.theme} | {group.theme_status} | {group.lifecycle_stage} | "
+        f"{group.independence_status} | {plans or group.note or '-'} |"
+    )
 
 
 def _accumulation_row(rank: int, item: AccumulationCandidate) -> str:
@@ -240,9 +244,9 @@ def render_markdown(report: RadarReport) -> str:
     if report.theme_lifecycle.signals:
         lines.append(
             "| 排名 | 主线 | 当前阶段 | 强度 | 本轮启动 | 主线确认 | 阶段始于 | "
-            "5日广度 | 20日广度 | 成交热度 | 当前动作 |"
+            "5日广度 | 20日广度 | 成交热度 | 相对全市场5日 | 独立状态 | 当前动作 |"
         )
-        lines.append("| ---: | --- | --- | ---: | --- | --- | --- | ---: | ---: | ---: | --- |")
+        lines.append("| ---: | --- | --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |")
         for rank, signal in enumerate(report.theme_lifecycle.signals[:12], start=1):
             lines.append(_theme_lifecycle_row(rank, signal))
     else:
@@ -323,8 +327,8 @@ def render_markdown(report: RadarReport) -> str:
         if report.next_buy.by_theme:
             lines.append("分主线候选：系统不是只看第一主线；命中条件的活跃主线会保留自己的顺势首选和备选。")
             lines.append("")
-            lines.append("| 排名 | 主线 | 状态 | 顺势候选 |")
-            lines.append("| ---: | --- | --- | --- |")
+            lines.append("| 排名 | 主线 | 状态 | 生命周期 | 独立状态 | 顺势候选 |")
+            lines.append("| ---: | --- | --- | --- | --- | --- |")
             for rank, group in enumerate(report.next_buy.by_theme[:6], start=1):
                 lines.append(_theme_buy_group_row(rank, group))
             lines.append("")
@@ -342,8 +346,8 @@ def render_markdown(report: RadarReport) -> str:
         lines.append("")
         lines.append(f"当前交易闸门为 **{report.trading_gate.state}**，不生成下一笔买入候选；以下仅保留等待确认名单。")
         lines.append("")
-        lines.append("| 排名 | 主线 | 状态 | 顺势候选 |")
-        lines.append("| ---: | --- | --- | --- |")
+        lines.append("| 排名 | 主线 | 状态 | 生命周期 | 独立状态 | 顺势候选 |")
+        lines.append("| ---: | --- | --- | --- | --- | --- |")
         for rank, group in enumerate(report.next_buy.by_theme[:6], start=1):
             lines.append(_theme_buy_group_row(rank, group))
         lines.append("")
@@ -374,7 +378,9 @@ def render_markdown(report: RadarReport) -> str:
     lines.append("寻找18-30个月反复验证上下沿、趋势趋平且成交沉淀的平台；它是等待确认的观察池，不等于立即建仓。")
     lines.append("")
     if report.monthly_bases.candidates:
-        lines.append("| 排名 | 标的 | 主题 | 阶段 | 评分 | 箱体月数 | 箱体区间 | 箱体宽度 | 当前位置 | 成交沉淀 | 前高倍数 | 当前动作 | 确认条件 | 失效条件 |")
+        lines.append(
+            "| 排名 | 标的 | 主题 | 阶段 | 评分 | 箱体月数 | 箱体区间 | 箱体宽度 | 当前位置 | 成交沉淀 | 前高倍数 | 当前动作 | 确认条件 | 失效条件 |"
+        )
         lines.append("| ---: | --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- | --- | --- |")
         for rank, item in enumerate(report.monthly_bases.candidates, start=1):
             lines.append(_monthly_base_row(rank, item))

@@ -45,7 +45,8 @@ def build_feishu_text(report: RadarReport) -> str:
         for signal in report.theme_lifecycle.signals[:4]:
             lines.append(
                 f"- {signal.theme}｜{signal.stage}｜本轮启动 {signal.started_at or '待确认'}｜"
-                f"主线确认 {signal.confirmed_at or '待确认'}｜阶段始于 {signal.stage_since}"
+                f"主线确认 {signal.confirmed_at or '待确认'}｜阶段始于 {signal.stage_since}｜"
+                f"{signal.independence_status} {signal.independent_score:.1f}"
             )
             lines.append(f"  动作：{signal.action}")
     if report.policy_signals and report.policy_signals.signals:
@@ -79,8 +80,11 @@ def build_feishu_text(report: RadarReport) -> str:
         if report.next_buy.by_theme:
             lines.append("分主线顺势候选：")
             for group in report.next_buy.by_theme[:4]:
-                names = "；".join(f"{item.name} {item.symbol}" for item in group.plans[:2])
-                lines.append(f"- {group.theme}｜{group.theme_status}｜{names}")
+                names = "；".join(f"{item.name} {item.symbol}" for item in group.plans[:2]) or group.note or "暂无候选"
+                lines.append(
+                    f"- {group.theme}｜{group.theme_status}｜{group.lifecycle_stage}｜"
+                    f"{group.independence_status}｜{names}"
+                )
     target_estimates = report.target_prices.estimates if report.target_prices else []
     if target_estimates:
         lines.append("")
@@ -147,8 +151,15 @@ def _dedupe_plans(report: RadarReport) -> list[NextBuyPlan]:
 
 
 def _attempt_ready(candidate: StrongStockCandidate | None, plan: NextBuyPlan) -> bool:
+    actionable = {
+        "优先候选，等待回踩",
+        "突破确认候选",
+        "优先候选，分批确认",
+        "主升加速，等待回踩",
+    }
     if (
         candidate is None
+        or plan.decision not in actionable
         or candidate.fundamental_status == "基本面拖累"
         or candidate.expectation_status == "利好兑现风险"
     ):
@@ -190,9 +201,19 @@ def _hold_ready(candidate: StrongStockCandidate, theme_phase: str | None) -> boo
     )
 
 
-def _waiting_note(plan: NextBuyPlan, gate_level: str) -> str:
+def _waiting_note(
+    plan: NextBuyPlan,
+    gate_level: str,
+    candidate: StrongStockCandidate | None = None,
+) -> str:
     if gate_level == "red":
         return "交易闸门关闭：仅观察；待指数结构脱离破位确认后，再重新评估原触发条件。"
+    if (
+        candidate
+        and candidate.fundamental_status == "未覆盖"
+        and not ("ETF" in candidate.name.upper() or "基金" in candidate.name)
+    ):
+        return f"{plan.entry_plan}\n基本面未覆盖：保留在等待区，补齐已公告财务数据前不进入尝试建仓。"
     return plan.entry_plan
 
 
@@ -224,7 +245,7 @@ def _trade_block(
     is_fund = bool(candidate and ("ETF" in candidate.name.upper() or "基金" in candidate.name))
     fundamental = "ETF分散载体" if is_fund else candidate.fundamental_status if candidate else "基本面未覆盖"
     lines = [
-        f"**{plan.name} `{plan.symbol}`**｜{plan.theme}｜优先级 {plan.priority_score:.1f}",
+        f"**{plan.name} `{plan.symbol}`**｜{plan.theme}｜{plan.lifecycle_stage}｜优先级 {plan.priority_score:.1f}",
         f"{report_hold_days(candidate)}日回测：胜率 {win}｜均值 {avg}｜{fundamental}",
         _target_text(target),
     ]
@@ -282,12 +303,18 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
         lifecycle_lines = ["<font color='blue'>**主线生命周期预警**</font>"]
         for signal in lifecycle_signals:
             transition = "｜**新变化**" if signal.is_new_transition else ""
+            independence = (
+                f"｜<font color='orange'>**{signal.independence_status} {signal.independent_score:.0f}**</font>"
+                if signal.independence_status == "逆势独立主线"
+                else ""
+            )
             lifecycle_lines.append(
-                f"**{signal.theme}｜{signal.stage}**{transition}\n"
+                f"**{signal.theme}｜{signal.stage}**{transition}{independence}\n"
                 f"启动 {signal.started_at or '待确认'}｜确认 {signal.confirmed_at or '待确认'}｜"
                 f"阶段始于 {signal.stage_since}\n"
                 f"5日广度 {pct(signal.breadth_5d)}｜20日广度 {pct(signal.breadth_20d)}｜"
-                f"成交 {signal.amount_heat or 0:.2f}x\n动作：{signal.action}"
+                f"成交 {signal.amount_heat or 0:.2f}x｜相对全市场5日 {pct(signal.relative_strength_5d)}\n"
+                f"动作：{signal.action}"
             )
         if report.trading_gate.level == "red":
             lifecycle_lines.append("<font color='red'>交易闸门关闭：保留主线预警，但今日不据此新增仓位。</font>")
@@ -332,7 +359,10 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     if waiting:
         for plan in waiting:
             elements.append(
-                _div(f"**{plan.name} `{plan.symbol}`**｜{plan.theme}\n{_waiting_note(plan, report.trading_gate.level)}")
+                _div(
+                    f"**{plan.name} `{plan.symbol}`**｜{plan.theme}｜{plan.lifecycle_stage}\n"
+                    f"{_waiting_note(plan, report.trading_gate.level, candidates.get(plan.symbol))}"
+                )
             )
     else:
         elements.append(_div("暂无等待候选。"))

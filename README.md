@@ -54,6 +54,12 @@ python3 scripts/run_daily.py --mode curated --lookback-days 180
 python3 scripts/run_daily.py --mode universe --max-symbols 0 --lookback-days 180
 ```
 
+按历史截面回放时使用 `--as-of`。该模式会同时裁切日线、月线、新闻和财务公告，日期缺失的数据不会被当作当时已知：
+
+```bash
+python3 scripts/run_daily.py --mode universe --max-symbols 0 --lookback-days 180 --as-of 2026-06-29
+```
+
 为了避免免费接口请求太多，调试时可以限制样本：
 
 ```bash
