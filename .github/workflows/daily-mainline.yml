@@ -14,7 +14,7 @@ on:
       max_symbols:
         description: "0 means uncapped. Use a positive number for lighter scheduled runs."
         required: false
-        default: "1200"
+        default: "0"
   schedule:
     # 16:45 Beijing time on weekdays, after A-share close.
     - cron: "45 8 * * 1-5"
@@ -29,7 +29,7 @@ jobs:
       TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
       MAINLINE_RADAR_MODE: ${{ inputs.mode || 'universe' }}
-      MAINLINE_MAX_SYMBOLS: ${{ inputs.max_symbols || '1200' }}
+      MAINLINE_MAX_SYMBOLS: ${{ inputs.max_symbols || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

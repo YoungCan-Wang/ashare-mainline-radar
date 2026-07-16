@@ -54,6 +54,8 @@ python3 scripts/run_daily.py --mode curated --lookback-days 180
 python3 scripts/run_daily.py --mode universe --max-symbols 0 --lookback-days 180
 ```
 
+GitHub Actions 定时任务默认使用 `max_symbols=0`，即扫描 TickFlow `CN_Equity_A` 返回的完整股票池；只有手动传入正数时才限制扫描数量。
+
 按历史截面回放时使用 `--as-of`。该模式会同时裁切日线、月线、新闻和财务公告，日期缺失的数据不会被当作当时已知：
 
 ```bash
