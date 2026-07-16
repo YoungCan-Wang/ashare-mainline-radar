@@ -406,6 +406,37 @@ class ThemeSnapshot:
 
 
 @dataclass
+class ThemeLifecycleSignal:
+    theme: str
+    stage: str
+    score: float
+    current_status: str
+    started_at: str | None
+    confirmed_at: str | None
+    stage_since: str
+    previous_stage: str | None
+    transition_age: int
+    breadth_5d: float | None
+    breadth_20d: float | None
+    avg_ret_5d: float | None
+    avg_ret_20d: float | None
+    amount_heat: float | None
+    action: str
+    evidence: list[str] = field(default_factory=list)
+
+    @property
+    def is_new_transition(self) -> bool:
+        return self.transition_age <= 2
+
+
+@dataclass
+class ThemeLifecycleReport:
+    signals: list[ThemeLifecycleSignal]
+    history_days: int
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class RadarReport:
     generated_at: str
     data_as_of: str | None
@@ -430,6 +461,9 @@ class RadarReport:
     intel_items: list[IntelItem]
     source_statuses: list[DataSourceStatus]
     warnings: list[str]
+    theme_lifecycle: ThemeLifecycleReport = field(
+        default_factory=lambda: ThemeLifecycleReport(signals=[], history_days=0)
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

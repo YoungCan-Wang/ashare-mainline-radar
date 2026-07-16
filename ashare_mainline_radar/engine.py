@@ -24,6 +24,7 @@ from .policy import (
 from .risk_gate import build_trading_gate
 from .strong_stocks import build_strong_stock_report
 from .target_prices import build_target_price_report
+from .theme_lifecycle import build_theme_lifecycle_report
 from .tickflow import TickFlowClient, TickFlowError
 
 
@@ -139,6 +140,12 @@ class MainlineRadar:
             catalyst_count_by_theme,
             policy_counts_by_theme=policy_counts_by_theme(intel_items, policy_keywords),
             policy_scores_by_theme=policy_scores_by_theme(intel_items, policy_keywords),
+        )
+        theme_lifecycle = build_theme_lifecycle_report(
+            theme_config=self.theme_config,
+            klines=klines,
+            instruments=instruments,
+            current_themes=themes,
         )
         policy_signals = build_policy_signal_report(intel_items, themes, policy_keywords)
         leader_tape = build_leader_tape(snapshots, limit=leader_limit)
@@ -265,6 +272,7 @@ class MainlineRadar:
             intel_items=intel_items,
             source_statuses=source_statuses,
             warnings=warnings,
+            theme_lifecycle=theme_lifecycle,
         )
 
 

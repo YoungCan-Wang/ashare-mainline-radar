@@ -24,6 +24,8 @@ from ashare_mainline_radar.models import (
     StrongStockReport,
     TargetPriceEstimate,
     TargetPriceReport,
+    ThemeLifecycleReport,
+    ThemeLifecycleSignal,
     TradingGate,
 )
 
@@ -87,9 +89,7 @@ def test_build_feishu_text_minimal_report() -> None:
     assert card["schema"] == "2.0"
     assert card["header"]["template"] == "red"
     contents = "\n".join(
-        element.get("content", "")
-        for element in card["body"]["elements"]
-        if element.get("tag") == "markdown"
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
     )
     assert "可尝试建仓" in contents
     assert "已有仓位可继续持有" in contents
@@ -97,7 +97,9 @@ def test_build_feishu_text_minimal_report() -> None:
 
 
 def test_write_feishu_status(tmp_path) -> None:
-    path = write_feishu_status(tmp_path / "status.json", FeishuStatus(status="failed", code=19007, message="Bot Not Enabled"))
+    path = write_feishu_status(
+        tmp_path / "status.json", FeishuStatus(status="failed", code=19007, message="Bot Not Enabled")
+    )
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["status"] == "failed"
     assert data["code"] == 19007
@@ -309,9 +311,7 @@ def test_card_allows_etf_attempt_without_company_fundamentals() -> None:
     )
     card = build_feishu_card(report)
     contents = "\n".join(
-        element.get("content", "")
-        for element in card["body"]["elements"]
-        if element.get("tag") == "markdown"
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
     )
     assert "科创芯片ETF嘉实" in contents
     assert "ETF分散载体" in contents
@@ -347,11 +347,68 @@ def test_red_gate_suppresses_attempt_section() -> None:
 
     card = build_feishu_card(report)
     contents = "\n".join(
-        element.get("content", "")
-        for element in card["body"]["elements"]
-        if element.get("tag") == "markdown"
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
     )
 
     assert "今日交易状态：暂停新仓" in contents
     assert "市场风险闸门已关闭" in contents
     assert "已有仓位：仅留强去弱" in contents
+
+
+def test_card_keeps_lifecycle_alert_when_gate_is_red() -> None:
+    report = RadarReport(
+        generated_at="2026-07-13T00:00:00+00:00",
+        data_as_of="2026-07-13",
+        mode="universe",
+        universe="CN_Equity_A",
+        scanned_symbols=1200,
+        data_source="test",
+        themes=[],
+        market_pulses=[],
+        market_structure=_market_structure(),
+        trading_gate=TradingGate("red", "暂停新仓", 24, 0, ["三大指数大跌"], ["观察主线"]),
+        strong_stocks=StrongStockReport(selected_themes=[], hold_days=15, candidates=[]),
+        next_buy=NextBuyReport(primary=None),
+        accumulation=AccumulationReport(candidates=[]),
+        golden_pits=GoldenPitReport(candidates=[]),
+        policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
+        target_prices=TargetPriceReport(estimates=[]),
+        fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+        expectation_gaps=ExpectationGapReport(signals=[]),
+        leader_tape=[],
+        market_watchlist=[],
+        intel_items=[],
+        source_statuses=[],
+        warnings=[],
+        theme_lifecycle=ThemeLifecycleReport(
+            history_days=45,
+            signals=[
+                ThemeLifecycleSignal(
+                    theme="创新药",
+                    stage="主线回踩",
+                    score=91,
+                    current_status="轮动观察",
+                    started_at="2026-06-23",
+                    confirmed_at="2026-06-30",
+                    stage_since="2026-07-13",
+                    previous_stage="主线延续",
+                    transition_age=0,
+                    breadth_5d=0.1,
+                    breadth_20d=0.8,
+                    avg_ret_5d=-0.03,
+                    avg_ret_20d=0.12,
+                    amount_heat=0.96,
+                    action="等待止跌确认。",
+                )
+            ],
+        ),
+    )
+
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+
+    assert "创新药｜主线回踩" in contents
+    assert "启动 2026-06-23" in contents
+    assert "交易闸门关闭：保留主线预警" in contents

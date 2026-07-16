@@ -4,6 +4,7 @@ from collections import defaultdict
 from statistics import mean
 from typing import Any
 
+from .config import theme_scoring_symbols
 from .models import KlineSeries, SymbolSnapshot, ThemeSnapshot, safe_change
 
 
@@ -22,7 +23,9 @@ def _score_change(value: float | None, scale: float, neutral: float = 0.0) -> fl
     return _clip((value - neutral) / scale, -1.0, 1.5)
 
 
-def classify_symbol(ret_5d: float | None, ret_20d: float | None, amount_ratio: float | None, high_proximity: float | None) -> str:
+def classify_symbol(
+    ret_5d: float | None, ret_20d: float | None, amount_ratio: float | None, high_proximity: float | None
+) -> str:
     if ret_20d is not None and ret_20d > 0.12 and amount_ratio is not None and amount_ratio > 1.25:
         return "主升确认"
     if ret_5d is not None and ret_5d > 0.04 and high_proximity is not None and high_proximity > -0.04:
@@ -144,7 +147,7 @@ def build_theme_snapshots(
     result: list[ThemeSnapshot] = []
     for theme in theme_config.get("themes", []):
         name = str(theme["name"])
-        symbols = list(dict.fromkeys([*theme.get("symbols", []), *theme.get("vehicles", [])]))
+        symbols = theme_scoring_symbols(theme)
         members = [snapshots[symbol] for symbol in symbols if symbol in snapshots]
         if not members:
             continue
