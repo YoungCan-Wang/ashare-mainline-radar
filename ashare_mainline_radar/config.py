@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_THEME_CONFIG = PROJECT_ROOT / "configs" / "theme_baskets.json"
 DEFAULT_INTEL_CONFIG = PROJECT_ROOT / "configs" / "intel_sources.json"
@@ -26,7 +25,7 @@ def theme_symbol_map(theme_config: dict[str, Any]) -> dict[str, list[str]]:
     mapping: dict[str, list[str]] = {}
     for theme in theme_config.get("themes", []):
         name = str(theme["name"])
-        symbols = set(theme.get("symbols", [])) | set(theme.get("vehicles", []))
+        symbols = set(theme.get("symbols", [])) | set(theme.get("vehicles", [])) | set(theme.get("scoring_symbols", []))
         for symbol in symbols:
             mapping.setdefault(symbol, []).append(name)
     return mapping
@@ -62,6 +61,19 @@ def configured_symbols(theme_config: dict[str, Any]) -> list[str]:
             add(str(symbol))
         for symbol in theme.get("vehicles", []):
             add(str(symbol))
+        for symbol in theme.get("scoring_symbols", []):
+            add(str(symbol))
     for item in theme_config.get("market_watchlist", []):
         add(str(item["symbol"]))
     return symbols
+
+
+def theme_scoring_symbols(theme: dict[str, Any]) -> list[str]:
+    scoring_symbols = theme.get("scoring_symbols")
+    if scoring_symbols:
+        return list(dict.fromkeys(str(symbol) for symbol in scoring_symbols))
+    return list(
+        dict.fromkeys(
+            [str(symbol) for symbol in theme.get("symbols", [])] + [str(symbol) for symbol in theme.get("vehicles", [])]
+        )
+    )

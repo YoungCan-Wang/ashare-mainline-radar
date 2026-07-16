@@ -39,6 +39,15 @@ def build_feishu_text(report: RadarReport) -> str:
                 f"{idx}. {theme.name}｜{theme.status}｜强度 {theme.score:.1f}｜20日广度 {pct(theme.breadth_20d)}"
                 f"｜政策 {theme.policy_catalyst_count} 条"
             )
+    if report.theme_lifecycle.signals:
+        lines.append("")
+        lines.append("主线生命周期预警：")
+        for signal in report.theme_lifecycle.signals[:4]:
+            lines.append(
+                f"- {signal.theme}｜{signal.stage}｜本轮启动 {signal.started_at or '待确认'}｜"
+                f"主线确认 {signal.confirmed_at or '待确认'}｜阶段始于 {signal.stage_since}"
+            )
+            lines.append(f"  动作：{signal.action}")
     if report.policy_signals and report.policy_signals.signals:
         lines.append("")
         lines.append("政策催化 TOP3：")
@@ -57,7 +66,9 @@ def build_feishu_text(report: RadarReport) -> str:
         lines.append("")
         lines.append("基本面兑现 TOP3：")
         for idx, item in enumerate(report.fundamentals.snapshots[:3], start=1):
-            lines.append(f"{idx}. {item.symbol}｜{item.status}｜财务分 {item.score:.1f}｜营收同比 {item.revenue_yoy or 0:.1f}%｜净利同比 {item.net_income_yoy or 0:.1f}%")
+            lines.append(
+                f"{idx}. {item.symbol}｜{item.status}｜财务分 {item.score:.1f}｜营收同比 {item.revenue_yoy or 0:.1f}%｜净利同比 {item.net_income_yoy or 0:.1f}%"
+            )
     if report.next_buy and report.next_buy.primary:
         plan = report.next_buy.primary
         lines.append("")
@@ -95,7 +106,9 @@ def build_feishu_text(report: RadarReport) -> str:
         lines.append("")
         lines.append("主线黄金坑：")
         for idx, item in enumerate(report.golden_pits.candidates[:5], start=1):
-            lines.append(f"{idx}. {item.name} {item.symbol}｜{item.theme}｜{item.stage}｜{item.action}｜评分 {item.score:.1f}")
+            lines.append(
+                f"{idx}. {item.name} {item.symbol}｜{item.theme}｜{item.stage}｜{item.action}｜评分 {item.score:.1f}"
+            )
     if report.monthly_bases.candidates:
         lines.append("")
         lines.append("月线长期箱体（等待确认）：")
@@ -134,7 +147,11 @@ def _dedupe_plans(report: RadarReport) -> list[NextBuyPlan]:
 
 
 def _attempt_ready(candidate: StrongStockCandidate | None, plan: NextBuyPlan) -> bool:
-    if candidate is None or candidate.fundamental_status == "基本面拖累" or candidate.expectation_status == "利好兑现风险":
+    if (
+        candidate is None
+        or candidate.fundamental_status == "基本面拖累"
+        or candidate.expectation_status == "利好兑现风险"
+    ):
         return False
     is_fund = "ETF" in candidate.name.upper() or "基金" in candidate.name
     if candidate.fundamental_status == "未覆盖" and not is_fund:
@@ -235,8 +252,7 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     hold = [
         plan
         for plan in plans
-        if (candidate := candidates.get(plan.symbol))
-        and _hold_ready(candidate, phase_by_theme.get(candidate.theme))
+        if (candidate := candidates.get(plan.symbol)) and _hold_ready(candidate, phase_by_theme.get(candidate.theme))
     ][:3]
     attempt = [plan for plan in plans if _attempt_ready(candidates.get(plan.symbol), plan)][:2]
     if report.trading_gate.level == "red":
@@ -251,31 +267,61 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     market = report.market_pulses[0] if report.market_pulses else None
     market_text = f"{market.name}｜{market.status}｜{market.score:.0f}" if market else "环境未确认"
     hold_days = report.strong_stocks.hold_days
-    gate_color = "red" if report.trading_gate.level == "red" else "orange" if report.trading_gate.level == "orange" else "green"
+    gate_color = (
+        "red" if report.trading_gate.level == "red" else "orange" if report.trading_gate.level == "orange" else "green"
+    )
     gate_reasons = "；".join(report.trading_gate.reasons) or "环境数据不足"
     elements: list[dict[str, Any]] = [
         _div(
             f"**行情 {report.data_as_of or 'n/a'}**　扫描 {report.scanned_symbols} 只\n"
             f"主线：{top_themes}\n环境：{market_text}　策略周期：**{hold_days}个交易日**"
         ),
-        {"tag": "hr"},
-        _div(
-            f"<font color='{gate_color}'>**今日交易状态：{report.trading_gate.state}**</font>\n"
-            f"指数结构：**{report.market_structure.status}**｜确认分 {report.market_structure.score:.0f}\n"
-            f"{gate_reasons}\n允许：{'；'.join(report.trading_gate.allowed_actions)}"
-        ),
-        {"tag": "hr"},
-        _div("<font color='red'>**一、可尝试建仓（触发后）**</font>\n只在触发条件出现后分批，不等于开盘直接买。"),
     ]
+    lifecycle_signals = report.theme_lifecycle.signals[:4]
+    if lifecycle_signals:
+        lifecycle_lines = ["<font color='blue'>**主线生命周期预警**</font>"]
+        for signal in lifecycle_signals:
+            transition = "｜**新变化**" if signal.is_new_transition else ""
+            lifecycle_lines.append(
+                f"**{signal.theme}｜{signal.stage}**{transition}\n"
+                f"启动 {signal.started_at or '待确认'}｜确认 {signal.confirmed_at or '待确认'}｜"
+                f"阶段始于 {signal.stage_since}\n"
+                f"5日广度 {pct(signal.breadth_5d)}｜20日广度 {pct(signal.breadth_20d)}｜"
+                f"成交 {signal.amount_heat or 0:.2f}x\n动作：{signal.action}"
+            )
+        if report.trading_gate.level == "red":
+            lifecycle_lines.append("<font color='red'>交易闸门关闭：保留主线预警，但今日不据此新增仓位。</font>")
+        elements.extend([{"tag": "hr"}, _div("\n\n".join(lifecycle_lines))])
+    elements.extend(
+        [
+            {"tag": "hr"},
+            _div(
+                f"<font color='{gate_color}'>**今日交易状态：{report.trading_gate.state}**</font>\n"
+                f"指数结构：**{report.market_structure.status}**｜确认分 {report.market_structure.score:.0f}\n"
+                f"{gate_reasons}\n允许：{'；'.join(report.trading_gate.allowed_actions)}"
+            ),
+            {"tag": "hr"},
+            _div("<font color='red'>**一、可尝试建仓（触发后）**</font>\n只在触发条件出现后分批，不等于开盘直接买。"),
+        ]
+    )
     if attempt:
         for plan in attempt:
             elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), True)))
     else:
-        message = "**市场风险闸门已关闭，今日暂停新增仓位。**" if report.trading_gate.level == "red" else "**今日没有同时通过15日回测、基本面和位置约束的新开仓标的。**"
+        message = (
+            "**市场风险闸门已关闭，今日暂停新增仓位。**"
+            if report.trading_gate.level == "red"
+            else "**今日没有同时通过15日回测、基本面和位置约束的新开仓标的。**"
+        )
         elements.append(_div(message))
 
     hold_title = "已有仓位：仅留强去弱" if report.trading_gate.level == "red" else "已有仓位可继续持有"
-    elements.extend([{"tag": "hr"}, _div(f"<font color='green'>**二、{hold_title}**</font>\n仅适用于已经持有；主线和退出条件失效时不再拿。")])
+    elements.extend(
+        [
+            {"tag": "hr"},
+            _div(f"<font color='green'>**二、{hold_title}**</font>\n仅适用于已经持有；主线和退出条件失效时不再拿。"),
+        ]
+    )
     if hold:
         for plan in hold:
             elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), False)))
@@ -286,10 +332,7 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     if waiting:
         for plan in waiting:
             elements.append(
-                _div(
-                    f"**{plan.name} `{plan.symbol}`**｜{plan.theme}\n"
-                    f"{_waiting_note(plan, report.trading_gate.level)}"
-                )
+                _div(f"**{plan.name} `{plan.symbol}`**｜{plan.theme}\n{_waiting_note(plan, report.trading_gate.level)}")
             )
     else:
         elements.append(_div("暂无等待候选。"))
@@ -341,11 +384,7 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "style": {
-                "text_size": {
-                    "normal_v2": {"default": "normal", "pc": "normal", "mobile": "normal"}
-                }
-            },
+            "style": {"text_size": {"normal_v2": {"default": "normal", "pc": "normal", "mobile": "normal"}}},
         },
         "header": {
             "template": "red",
@@ -384,7 +423,9 @@ def _post_feishu_payload(webhook_url: str, payload: dict[str, Any], timeout: flo
     status_code = parsed.get("StatusCode")
     code = parsed.get("code")
     if status_code not in (None, 0):
-        return FeishuStatus(status="failed", code=status_code, message=str(parsed.get("msg") or parsed), response=parsed)
+        return FeishuStatus(
+            status="failed", code=status_code, message=str(parsed.get("msg") or parsed), response=parsed
+        )
     if code not in (None, 0):
         return FeishuStatus(status="failed", code=code, message=str(parsed.get("msg") or parsed), response=parsed)
     return FeishuStatus(status="sent", code=0, message=str(parsed.get("msg") or "ok"), response=parsed)
