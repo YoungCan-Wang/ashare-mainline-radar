@@ -278,6 +278,34 @@ class GoldenPitReport:
 
 
 @dataclass
+class MonthlyBaseCandidate:
+    symbol: str
+    name: str
+    themes: list[str]
+    stage: str
+    score: float
+    box_months: int
+    box_low: float
+    box_high: float
+    box_width: float
+    last_close: float
+    box_position: float
+    monthly_slope: float
+    amount_contraction: float
+    prior_peak_multiple: float
+    action: str
+    confirmation: str
+    invalidation: str
+    reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MonthlyBaseReport:
+    candidates: list[MonthlyBaseCandidate]
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class PolicyThemeSignal:
     theme: str
     theme_status: str
@@ -461,6 +489,7 @@ class RadarReport:
     intel_items: list[IntelItem]
     source_statuses: list[DataSourceStatus]
     warnings: list[str]
+    monthly_bases: MonthlyBaseReport = field(default_factory=lambda: MonthlyBaseReport(candidates=[]))
     theme_lifecycle: ThemeLifecycleReport = field(
         default_factory=lambda: ThemeLifecycleReport(signals=[], history_days=0)
     )

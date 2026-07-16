@@ -9,6 +9,7 @@ from .models import (
     FundamentalSnapshot,
     GoldenPitCandidate,
     MarketPulse,
+    MonthlyBaseCandidate,
     NextBuyPlan,
     RadarReport,
     StrongStockCandidate,
@@ -129,6 +130,16 @@ def _golden_pit_row(rank: int, item: GoldenPitCandidate) -> str:
         f"{pct(item.drawdown_from_20d_high)} | {pct(item.ret_1d)} | {pct(item.relative_1d)} | "
         f"{_ratio(item.amount_ratio_1_5)} | {item.fundamental_status} | {item.action} | "
         f"{item.confirmation} | {item.invalidation} |"
+    )
+
+
+def _monthly_base_row(rank: int, item: MonthlyBaseCandidate) -> str:
+    themes = ", ".join(item.themes) if item.themes else "未映射"
+    return (
+        f"| {rank} | {item.name} `{item.symbol}` | {themes} | {item.stage} | {item.score:.1f} | "
+        f"{item.box_months} | {_fmt(item.box_low)}-{_fmt(item.box_high)} | {pct(item.box_width)} | "
+        f"{pct(item.box_position)} | {_ratio(item.amount_contraction)} | {_fmt(item.prior_peak_multiple)}x | "
+        f"{item.action} | {item.confirmation} | {item.invalidation} |"
     )
 
 
@@ -355,6 +366,25 @@ def render_markdown(report: RadarReport) -> str:
         lines.append("- 当前没有达到约束的黄金坑候选，宁可空缺也不把下跌中继包装成机会。")
     lines.append("")
     for note in report.golden_pits.notes:
+        lines.append(f"- {note}")
+    lines.append("")
+
+    lines.append("## 月线长期箱体观察")
+    lines.append("")
+    lines.append("寻找18-30个月反复验证上下沿、趋势趋平且成交沉淀的平台；它是等待确认的观察池，不等于立即建仓。")
+    lines.append("")
+    if report.monthly_bases.candidates:
+        lines.append("| 排名 | 标的 | 主题 | 阶段 | 评分 | 箱体月数 | 箱体区间 | 箱体宽度 | 当前位置 | 成交沉淀 | 前高倍数 | 当前动作 | 确认条件 | 失效条件 |")
+        lines.append("| ---: | --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- | --- | --- |")
+        for rank, item in enumerate(report.monthly_bases.candidates, start=1):
+            lines.append(_monthly_base_row(rank, item))
+        lines.append("")
+        for item in report.monthly_bases.candidates[:5]:
+            lines.append(f"- **{item.name} `{item.symbol}`**：{'；'.join(item.reasons)}。")
+    else:
+        lines.append("- 当前没有通过月线箱体质量和历史主升排除条件的标的。")
+    lines.append("")
+    for note in report.monthly_bases.notes:
         lines.append(f"- {note}")
     lines.append("")
 
