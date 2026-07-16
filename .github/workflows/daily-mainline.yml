@@ -1,5 +1,9 @@
 name: Daily A-share Mainline Radar
 
+concurrency:
+  group: tickflow-api-${{ github.repository }}
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
