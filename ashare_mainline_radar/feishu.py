@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .models import NextBuyPlan, RadarReport, StrongStockCandidate, TargetPriceEstimate, pct
+from .models import NextBuyPlan, RadarReport, StrongStockCandidate, TargetPriceEstimate, ThemeLifecycleSignal, pct
 
 
 class FeishuNotifyError(RuntimeError):
@@ -23,6 +23,18 @@ class FeishuStatus:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _theme_rank(report: RadarReport) -> dict[str, int]:
+    return {theme.name: rank for rank, theme in enumerate(report.themes, start=1)}
+
+
+def _ordered_lifecycle_signals(report: RadarReport) -> list[ThemeLifecycleSignal]:
+    ranks = _theme_rank(report)
+    return sorted(
+        report.theme_lifecycle.signals,
+        key=lambda signal: (ranks.get(signal.theme, len(ranks) + 1), -signal.score),
+    )
 
 
 def build_feishu_text(report: RadarReport) -> str:
@@ -41,10 +53,12 @@ def build_feishu_text(report: RadarReport) -> str:
             )
     if report.theme_lifecycle.signals:
         lines.append("")
-        lines.append("主线生命周期预警：")
-        for signal in report.theme_lifecycle.signals[:4]:
+        lines.append("主线生命周期变化（按当前主线排名）：")
+        ranks = _theme_rank(report)
+        for signal in _ordered_lifecycle_signals(report)[:4]:
+            rank_text = f"第{ranks[signal.theme]}主线" if signal.theme in ranks else "主线榜外"
             lines.append(
-                f"- {signal.theme}｜{signal.stage}｜本轮启动 {signal.started_at or '待确认'}｜"
+                f"- {rank_text}｜{signal.theme}｜{signal.stage}｜本轮启动 {signal.started_at or '待确认'}｜"
                 f"主线确认 {signal.confirmed_at or '待确认'}｜阶段始于 {signal.stage_since}｜"
                 f"{signal.independence_status} {signal.independent_score:.1f}"
             )
@@ -281,10 +295,17 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     occupied = {item.symbol for item in [*attempt, *hold]}
     waiting = [plan for plan in plans if plan.symbol not in occupied][:3]
 
-    top_themes = (
-        "　".join(f"**{theme.name}** {theme.score:.0f}·{theme.price_phase}" for theme in report.themes[:3])
-        or "暂无确认主线"
-    )
+    lifecycle_by_theme = {signal.theme: signal for signal in report.theme_lifecycle.signals}
+    theme_ranking = ["<font color='blue'>**当前主线排名**</font>"]
+    for rank, theme in enumerate(report.themes[:4], start=1):
+        lifecycle = lifecycle_by_theme.get(theme.name)
+        stage = lifecycle.stage if lifecycle else "生命周期待确认"
+        theme_ranking.append(
+            f"**{rank}. {theme.name}**｜强度 {theme.score:.0f}｜{theme.status}｜{stage}｜{theme.price_phase}"
+        )
+    if len(theme_ranking) == 1:
+        theme_ranking.append("暂无确认主线")
+    theme_ranking_text = "\n".join(theme_ranking)
     market = report.market_pulses[0] if report.market_pulses else None
     market_text = f"{market.name}｜{market.status}｜{market.score:.0f}" if market else "环境未确认"
     hold_days = report.strong_stocks.hold_days
@@ -295,21 +316,23 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         _div(
             f"**行情 {report.data_as_of or 'n/a'}**　扫描 {report.scanned_symbols} 只\n"
-            f"主线：{top_themes}\n环境：{market_text}　策略周期：**{hold_days}个交易日**"
+            f"{theme_ranking_text}\n环境：{market_text}　策略周期：**{hold_days}个交易日**"
         ),
     ]
-    lifecycle_signals = report.theme_lifecycle.signals[:4]
+    ranks = _theme_rank(report)
+    lifecycle_signals = _ordered_lifecycle_signals(report)[:4]
     if lifecycle_signals:
-        lifecycle_lines = ["<font color='blue'>**主线生命周期预警**</font>"]
+        lifecycle_lines = ["<font color='blue'>**主线生命周期变化**</font>（按当前主线排名）"]
         for signal in lifecycle_signals:
             transition = "｜**新变化**" if signal.is_new_transition else ""
+            rank_text = f"第{ranks[signal.theme]}主线" if signal.theme in ranks else "主线榜外"
             independence = (
                 f"｜<font color='orange'>**{signal.independence_status} {signal.independent_score:.0f}**</font>"
                 if signal.independence_status == "逆势独立主线"
                 else ""
             )
             lifecycle_lines.append(
-                f"**{signal.theme}｜{signal.stage}**{transition}{independence}\n"
+                f"**{rank_text}｜{signal.theme}｜{signal.stage}**{transition}{independence}\n"
                 f"启动 {signal.started_at or '待确认'}｜确认 {signal.confirmed_at or '待确认'}｜"
                 f"阶段始于 {signal.stage_since}\n"
                 f"5日广度 {pct(signal.breadth_5d)}｜20日广度 {pct(signal.breadth_20d)}｜"

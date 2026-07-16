@@ -28,6 +28,7 @@ from ashare_mainline_radar.models import (
     TargetPriceReport,
     ThemeLifecycleReport,
     ThemeLifecycleSignal,
+    ThemeSnapshot,
     TradingGate,
 )
 
@@ -478,3 +479,86 @@ def test_card_keeps_lifecycle_alert_when_gate_is_red() -> None:
     assert "创新药｜主线回踩" in contents
     assert "启动 2026-06-23" in contents
     assert "交易闸门关闭：保留主线预警" in contents
+
+
+def test_card_separates_mainline_rank_from_lifecycle_transition_order() -> None:
+    report = RadarReport(
+        generated_at="2026-07-16T00:00:00+00:00",
+        data_as_of="2026-07-15",
+        mode="universe",
+        universe="CN_Equity_A",
+        scanned_symbols=1200,
+        data_source="test",
+        themes=[
+            ThemeSnapshot("创新药", 100, "主线成立", 10, 1, 1, 0.1, 0.3, 0.9, 0, []),
+            ThemeSnapshot("券商金融", 83, "主线成立", 10, 0.8, 0.9, 0.02, 0.04, 0.7, 0, []),
+            ThemeSnapshot("AI算力", 73, "主线候选", 10, 0.3, 0.7, -0.01, 0.1, 1.1, 0, []),
+        ],
+        market_pulses=[],
+        market_structure=_market_structure(),
+        trading_gate=_green_gate(),
+        strong_stocks=StrongStockReport(selected_themes=[], hold_days=15, candidates=[]),
+        next_buy=NextBuyReport(primary=None),
+        accumulation=AccumulationReport(candidates=[]),
+        golden_pits=GoldenPitReport(candidates=[]),
+        policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
+        target_prices=TargetPriceReport(estimates=[]),
+        fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+        expectation_gaps=ExpectationGapReport(signals=[]),
+        leader_tape=[],
+        market_watchlist=[],
+        intel_items=[],
+        source_statuses=[],
+        warnings=[],
+        theme_lifecycle=ThemeLifecycleReport(
+            history_days=45,
+            signals=[
+                ThemeLifecycleSignal(
+                    theme="AI算力",
+                    stage="主线回踩",
+                    score=73,
+                    current_status="主线候选",
+                    started_at="2026-07-09",
+                    confirmed_at="2026-07-09",
+                    stage_since="2026-07-15",
+                    previous_stage="主线延续",
+                    transition_age=0,
+                    breadth_5d=0.3,
+                    breadth_20d=0.7,
+                    avg_ret_5d=-0.01,
+                    avg_ret_20d=0.1,
+                    amount_heat=1.1,
+                    action="等待止跌",
+                ),
+                ThemeLifecycleSignal(
+                    theme="创新药",
+                    stage="主线延续",
+                    score=100,
+                    current_status="主线成立",
+                    started_at="2026-06-23",
+                    confirmed_at="2026-06-29",
+                    stage_since="2026-07-14",
+                    previous_stage="主升加速",
+                    transition_age=1,
+                    breadth_5d=1,
+                    breadth_20d=1,
+                    avg_ret_5d=0.1,
+                    avg_ret_20d=0.3,
+                    amount_heat=0.9,
+                    action="等待回踩",
+                ),
+            ],
+        ),
+    )
+
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+
+    assert "当前主线排名" in contents
+    assert "1. 创新药" in contents
+    assert "2. 券商金融" in contents
+    assert "第1主线｜创新药｜主线延续" in contents
+    assert "第3主线｜AI算力｜主线回踩" in contents
+    assert contents.index("第1主线｜创新药") < contents.index("第3主线｜AI算力")
