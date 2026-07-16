@@ -48,5 +48,5 @@ def test_instruments_use_large_post_batches() -> None:
 def test_default_throttle_stays_below_provider_rate_limit() -> None:
     client = TickFlowClient(api_key="test")
 
-    assert DEFAULT_MIN_INTERVAL >= 60 / 120
+    assert DEFAULT_MIN_INTERVAL >= 60 / 30
     assert client.min_interval == DEFAULT_MIN_INTERVAL

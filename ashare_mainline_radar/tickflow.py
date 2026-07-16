@@ -15,7 +15,7 @@ from .models import KlineSeries
 
 FREE_BASE_URL = "https://free-api.tickflow.org"
 FULL_BASE_URL = "https://api.tickflow.org"
-DEFAULT_MIN_INTERVAL = 0.52
+DEFAULT_MIN_INTERVAL = 2.05
 
 
 class TickFlowError(RuntimeError):
