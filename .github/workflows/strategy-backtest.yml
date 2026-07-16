@@ -1,0 +1,33 @@
+name: A-share Mainline Strategy Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Daily bars per symbol"
+        required: false
+        default: "900"
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+      - name: Run tests
+        run: python -m pytest
+      - name: Run point-in-time strategy backtest
+        run: python scripts/run_strategy_backtest.py --count "${{ inputs.count || '900' }}" --output reports/backtest/strategy_backtest.json
+      - name: Upload backtest
+        uses: actions/upload-artifact@v4
+        with:
+          name: ashare-mainline-strategy-backtest
+          path: reports/backtest

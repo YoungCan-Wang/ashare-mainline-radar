@@ -72,6 +72,8 @@ def configured_symbols(theme_config: dict[str, Any]) -> list[str]:
             add(str(symbol))
     for item in theme_config.get("market_watchlist", []):
         add(str(item["symbol"]))
+    for pair in (theme_config.get("cross_market") or {}).get("ah_pairs", []):
+        add(str(pair.get("a_symbol") or ""))
     return symbols
 
 

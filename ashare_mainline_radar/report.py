@@ -499,7 +499,38 @@ def render_markdown(report: RadarReport) -> str:
         for item in report.strong_stocks.candidates[:5]:
             if item.reasons:
                 lines.append(f"- **{item.name} `{item.symbol}`**：{'；'.join(item.reasons)}。")
+    lines.append("")
+
+    lines.append("## A/H联动确认")
+    lines.append("")
+    lines.append("该模块只作为主线确认或否决证据；样本外验证通过前，不直接提高买入分数或放宽仓位。")
+    lines.append("")
+    if report.cross_market.themes:
+        lines.append("| A股主线 | 联动状态 | 联动分 | A股排名/状态 | 港股样本 | 港股5日广度 | 港股20日广度 | 港股5日 | 港股20日 | 成交量热度 | 动作 |")
+        lines.append("| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+        for signal in report.cross_market.themes:
+            a_state = f"{signal.a_share_rank or '-'} / {signal.a_share_status or '-'}"
+            lines.append(
+                f"| {signal.theme} | {signal.status} | {signal.score:.1f} | {a_state} | {signal.hk_members} | "
+                f"{pct(signal.hk_breadth_5d)} | {pct(signal.hk_breadth_20d)} | {pct(signal.hk_avg_ret_5d)} | "
+                f"{pct(signal.hk_avg_ret_20d)} | {_ratio(signal.hk_amount_heat)} | {signal.action} |"
+            )
+    else:
+        lines.append("- 当前没有可用的港股通主题联动数据。")
+    if report.cross_market.ah_pairs:
         lines.append("")
+        lines.append("| 公司 | A股 | H股 | 5日A | 5日H | H-A差 | 20日A | 20日H | 领先侧 |")
+        lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+        for pair in report.cross_market.ah_pairs:
+            lines.append(
+                f"| {pair.company} | `{pair.a_symbol}` | `{pair.h_symbol}` | {pct(pair.a_ret_5d)} | "
+                f"{pct(pair.h_ret_5d)} | {pct(pair.spread_5d)} | {pct(pair.a_ret_20d)} | "
+                f"{pct(pair.h_ret_20d)} | {pair.leader} |"
+            )
+    lines.append("")
+    for note in report.cross_market.notes:
+        lines.append(f"- {note}")
+    lines.append("")
 
     lines.append("## 主线拆解")
     lines.append("")

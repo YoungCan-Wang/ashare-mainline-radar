@@ -7,6 +7,7 @@ from typing import Any
 
 from .accumulation import build_accumulation_report
 from .config import configured_symbols, theme_keywords, theme_policy_keywords, theme_symbol_map
+from .cross_market import build_cross_market_report, cross_market_symbols
 from .expectations import apply_expectation_overlay, build_expectation_gap_report
 from .fundamentals import apply_fundamental_overlay, apply_theme_fundamental_overlay, build_fundamental_report
 from .golden_pit import build_golden_pit_report
@@ -175,6 +176,25 @@ class MainlineRadar:
         klines = self.client.get_klines_batch(symbols, period=period, count=lookback_days, adjust=adjust)
         klines = {symbol: _clip_klines_as_of(series, as_of_date) for symbol, series in klines.items()}
         klines = {symbol: series for symbol, series in klines.items() if series.usable}
+        hk_symbols = cross_market_symbols(self.theme_config)
+        hk_instruments: dict[str, dict[str, Any]] = {}
+        hk_klines: dict[str, KlineSeries] = {}
+        hk_status = "empty"
+        hk_message = f"1d, lookback={lookback_days}, requested={len(hk_symbols)}"
+        if hk_symbols:
+            try:
+                hk_instruments = self.client.get_instruments(hk_symbols)
+                hk_klines = self.client.get_klines_batch(
+                    hk_symbols, period=period, count=lookback_days, adjust=adjust
+                )
+                hk_klines = {
+                    symbol: _clip_klines_as_of(series, as_of_date) for symbol, series in hk_klines.items()
+                }
+                hk_klines = {symbol: series for symbol, series in hk_klines.items() if series.usable}
+                hk_status = "ok" if hk_klines else "empty"
+            except TickFlowError as exc:
+                hk_status = "unavailable"
+                hk_message = str(exc)[:240]
         company_symbols = [symbol for symbol in symbols if _company_symbol(symbol, instruments.get(symbol))]
         monthly_klines = {}
         monthly_status = "empty"
@@ -211,6 +231,13 @@ class MainlineRadar:
                 status=monthly_status,
                 items=len(monthly_klines),
                 message=monthly_message,
+            ),
+            DataSourceStatus(
+                name="TickFlow HK cross-market klines",
+                kind="cross_market",
+                status=hk_status,
+                items=len(hk_klines),
+                message=hk_message,
             ),
         ]
         last_timestamps = [series.last_timestamp for series in klines.values() if series.last_timestamp is not None]
@@ -252,6 +279,13 @@ class MainlineRadar:
             catalyst_count_by_theme,
             policy_counts_by_theme=policy_counts_by_theme(intel_items, policy_keywords),
             policy_scores_by_theme=policy_scores_by_theme(intel_items, policy_keywords),
+        )
+        cross_market = build_cross_market_report(
+            self.theme_config,
+            hk_klines,
+            hk_instruments,
+            themes,
+            snapshots,
         )
         theme_lifecycle = build_theme_lifecycle_report(
             theme_config=self.theme_config,
@@ -405,6 +439,7 @@ class MainlineRadar:
             warnings=warnings,
             monthly_bases=monthly_bases,
             theme_lifecycle=theme_lifecycle,
+            cross_market=cross_market,
         )
 
 

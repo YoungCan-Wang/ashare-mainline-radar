@@ -475,6 +475,44 @@ class ThemeLifecycleReport:
 
 
 @dataclass
+class CrossMarketThemeSignal:
+    theme: str
+    status: str
+    score: float
+    hk_members: int
+    hk_breadth_5d: float | None
+    hk_breadth_20d: float | None
+    hk_avg_ret_5d: float | None
+    hk_avg_ret_20d: float | None
+    hk_amount_heat: float | None
+    a_share_rank: int | None
+    a_share_status: str | None
+    action: str
+    leaders: list[SymbolSnapshot] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AHMomentumPair:
+    company: str
+    a_symbol: str
+    h_symbol: str
+    a_ret_5d: float | None
+    h_ret_5d: float | None
+    a_ret_20d: float | None
+    h_ret_20d: float | None
+    leader: str
+    spread_5d: float | None
+
+
+@dataclass
+class CrossMarketReport:
+    themes: list[CrossMarketThemeSignal]
+    ah_pairs: list[AHMomentumPair]
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class RadarReport:
     generated_at: str
     data_as_of: str | None
@@ -503,6 +541,7 @@ class RadarReport:
     theme_lifecycle: ThemeLifecycleReport = field(
         default_factory=lambda: ThemeLifecycleReport(signals=[], history_days=0)
     )
+    cross_market: CrossMarketReport = field(default_factory=lambda: CrossMarketReport(themes=[], ah_pairs=[]))
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

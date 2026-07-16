@@ -63,6 +63,15 @@ def build_feishu_text(report: RadarReport) -> str:
                 f"{signal.independence_status} {signal.independent_score:.1f}"
             )
             lines.append(f"  动作：{signal.action}")
+    if report.cross_market.themes:
+        lines.append("")
+        lines.append("A/H联动确认：")
+        for signal in report.cross_market.themes[:3]:
+            rank = f"A股第{signal.a_share_rank}主线" if signal.a_share_rank else "A股榜外"
+            lines.append(
+                f"- {signal.theme}｜{signal.status}｜{rank}｜港股5日广度 {pct(signal.hk_breadth_5d)}｜"
+                f"港股5日 {pct(signal.hk_avg_ret_5d)}"
+            )
     if report.policy_signals and report.policy_signals.signals:
         lines.append("")
         lines.append("政策催化 TOP3：")
@@ -342,6 +351,24 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
         if report.trading_gate.level == "red":
             lifecycle_lines.append("<font color='red'>交易闸门关闭：保留主线预警，但今日不据此新增仓位。</font>")
         elements.extend([{"tag": "hr"}, _div("\n\n".join(lifecycle_lines))])
+    if report.cross_market.themes:
+        cross_lines = ["<font color='blue'>**A/H联动确认**</font>（观察信号，暂不直接加分）"]
+        for signal in report.cross_market.themes[:3]:
+            rank = f"A股第{signal.a_share_rank}主线" if signal.a_share_rank else "A股榜外"
+            leaders = "、".join(f"{item.name} `{item.symbol}`" for item in signal.leaders[:3]) or "暂无"
+            cross_lines.append(
+                f"**{signal.theme}｜{signal.status}**｜{rank}｜联动分 {signal.score:.0f}\n"
+                f"港股5日广度 {pct(signal.hk_breadth_5d)}｜20日广度 {pct(signal.hk_breadth_20d)}｜"
+                f"5日 {pct(signal.hk_avg_ret_5d)}｜成交量热度 "
+                f"{f'{signal.hk_amount_heat:.2f}x' if signal.hk_amount_heat is not None else 'n/a'}\n"
+                f"港股通核心：{leaders}\n动作：{signal.action}"
+            )
+        if report.cross_market.ah_pairs:
+            pair_text = "；".join(
+                f"{pair.company} {pair.leader}({pct(pair.spread_5d)})" for pair in report.cross_market.ah_pairs[:4]
+            )
+            cross_lines.append(f"A/H同公司动量：{pair_text}")
+        elements.extend([{"tag": "hr"}, _div("\n\n".join(cross_lines))])
     elements.extend(
         [
             {"tag": "hr"},

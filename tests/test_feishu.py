@@ -12,6 +12,8 @@ from ashare_mainline_radar.feishu import (
 from ashare_mainline_radar.models import (
     AccumulationReport,
     BacktestSummary,
+    CrossMarketReport,
+    CrossMarketThemeSignal,
     ExpectationGapReport,
     FundamentalReport,
     GoldenPitReport,
@@ -129,6 +131,32 @@ def test_build_feishu_text_minimal_report() -> None:
     )
     assert "月线长期箱体" in contents
     assert "20.00-30.00" in contents
+
+    report.cross_market = CrossMarketReport(
+        themes=[
+            CrossMarketThemeSignal(
+                theme="创新药",
+                status="A港共振",
+                score=90,
+                hk_members=13,
+                hk_breadth_5d=1,
+                hk_breadth_20d=0.8,
+                hk_avg_ret_5d=0.08,
+                hk_avg_ret_20d=0.2,
+                hk_amount_heat=1.1,
+                a_share_rank=1,
+                a_share_status="主线成立",
+                action="保持观察。",
+            )
+        ],
+        ah_pairs=[],
+    )
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    assert "A/H联动确认" in contents
+    assert "创新药｜A港共振" in contents
 
 
 def test_write_feishu_status(tmp_path) -> None:

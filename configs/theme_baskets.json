@@ -37,6 +37,31 @@
       "symbols": ["510880.SH", "515080.SH", "600900.SH", "601398.SH", "601088.SH"]
     }
   ],
+  "cross_market": {
+    "universe": "HK_Equity",
+    "themes": [
+      {
+        "name": "创新药",
+        "source": "Hang Seng Biotech Index core southbound constituents, 2026-03 review",
+        "symbols": [
+          "06160.HK", "02269.HK", "09926.HK", "02359.HK", "02228.HK", "06990.HK",
+          "02268.HK", "09606.HK", "01548.HK", "09688.HK", "09969.HK", "06855.HK", "01952.HK"
+        ]
+      },
+      {
+        "name": "AI算力",
+        "source": "liquid southbound technology mapping basket",
+        "symbols": ["00700.HK", "09988.HK", "03690.HK", "01810.HK", "00981.HK", "01347.HK"]
+      }
+    ],
+    "ah_pairs": [
+      {"company": "百济神州", "a_symbol": "688235.SH", "h_symbol": "06160.HK"},
+      {"company": "药明康德", "a_symbol": "603259.SH", "h_symbol": "02359.HK"},
+      {"company": "君实生物", "a_symbol": "688180.SH", "h_symbol": "01877.HK"},
+      {"company": "荣昌生物", "a_symbol": "688331.SH", "h_symbol": "09995.HK"},
+      {"company": "诺诚健华", "a_symbol": "688428.SH", "h_symbol": "09969.HK"}
+    ]
+  },
   "themes": [
     {
       "name": "AI算力",
