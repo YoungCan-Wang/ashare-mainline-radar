@@ -3,7 +3,7 @@ import json
 import urllib.error
 from unittest.mock import patch
 
-from ashare_mainline_radar.tickflow import TickFlowClient
+from ashare_mainline_radar.tickflow import DEFAULT_MIN_INTERVAL, TickFlowClient
 
 
 class _Response:
@@ -43,3 +43,10 @@ def test_instruments_use_large_post_batches() -> None:
         client.get_instruments([f"{idx:06d}.SZ" for idx in range(1001)])
     assert request.call_count == 2
     assert request.call_args_list[0].args[:2] == ("POST", "/v1/instruments")
+
+
+def test_default_throttle_stays_below_provider_rate_limit() -> None:
+    client = TickFlowClient(api_key="test")
+
+    assert DEFAULT_MIN_INTERVAL >= 60 / 120
+    assert client.min_interval == DEFAULT_MIN_INTERVAL

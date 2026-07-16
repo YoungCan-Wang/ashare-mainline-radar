@@ -13,9 +13,9 @@ from typing import Any, TypeVar
 
 from .models import KlineSeries
 
-
 FREE_BASE_URL = "https://free-api.tickflow.org"
 FULL_BASE_URL = "https://api.tickflow.org"
+DEFAULT_MIN_INTERVAL = 0.52
 
 
 class TickFlowError(RuntimeError):
@@ -42,7 +42,7 @@ class TickFlowClient:
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: float = 20.0,
-        min_interval: float = 0.05,
+        min_interval: float = DEFAULT_MIN_INTERVAL,
         retries: int = 3,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("TICKFLOW_API_KEY")
