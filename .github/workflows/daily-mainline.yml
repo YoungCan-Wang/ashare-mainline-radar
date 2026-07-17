@@ -39,7 +39,8 @@ jobs:
       TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+      RADAR_INGEST_KEY: ${{ secrets.RADAR_INGEST_KEY }}
       RADAR_STORAGE_BACKEND: auto
       MAINLINE_RADAR_MODE: ${{ inputs.mode || 'universe' }}
       MAINLINE_MAX_SYMBOLS: ${{ inputs.max_symbols || '0' }}

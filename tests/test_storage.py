@@ -78,3 +78,36 @@ def test_artifact_backend_writes_portable_bundle_and_status(tmp_path) -> None:
     persisted_status = json.loads((tmp_path / "storage_status.json").read_text(encoding="utf-8"))
     assert bundle["schema_version"] == "radar-storage-v1"
     assert persisted_status["backend"] == "artifact"
+
+
+def test_publishable_key_uses_scoped_ingest_header(tmp_path) -> None:
+    requests = []
+
+    class Response:
+        status = 204
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def opener(request, timeout):
+        requests.append((request, timeout))
+        return Response()
+
+    status = persist_report(
+        _report(),
+        tmp_path,
+        backend="supabase",
+        supabase_url="https://example.supabase.co",
+        supabase_publishable_key="sb_publishable_test",
+        radar_ingest_key="private-ingest-key",
+        opener=opener,
+    )
+
+    assert status.status == "stored"
+    assert len(requests) == 3
+    assert requests[0][0].get_header("Apikey") == "sb_publishable_test"
+    assert requests[0][0].get_header("X-radar-ingest-key") == "private-ingest-key"
+    assert requests[0][0].get_header("Authorization") is None

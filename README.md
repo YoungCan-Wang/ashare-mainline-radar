@@ -222,11 +222,13 @@ data/research_reports/inbox/
 TICKFLOW_API_KEY
 FEISHU_WEBHOOK_URL
 TUSHARE_TOKEN
-SUPABASE_SECRET_KEY
+RADAR_INGEST_KEY
 ```
 
-Supabase 项目 URL 配成仓库 Variable `SUPABASE_URL`，服务端 secret key 配成仓库 Secret
-`SUPABASE_SECRET_KEY`。Secret key 只供 GitHub Actions 和本地服务端任务使用，不能放进网页、报告或提交记录。
+Supabase 项目 URL 和 publishable key 分别配成仓库 Variable `SUPABASE_URL`、
+`SUPABASE_PUBLISHABLE_KEY`，随机入库密钥配成仓库 Secret `RADAR_INGEST_KEY`。
+RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写三张 `radar_*` 表；GitHub Actions
+不需要持有可管理整个 Supabase 项目的 service-role key。入库密钥不能放进网页、报告或提交记录。
 
 持久化采用三张私有表：
 

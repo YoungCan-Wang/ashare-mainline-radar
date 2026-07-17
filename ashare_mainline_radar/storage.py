@@ -249,7 +249,8 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
 
 def _upsert(
     base_url: str,
-    secret_key: str,
+    api_key: str,
+    ingest_key: str | None,
     table: str,
     conflict_columns: str,
     rows: list[dict[str, Any]],
@@ -258,17 +259,21 @@ def _upsert(
     if not rows:
         return
     query = urlencode({"on_conflict": conflict_columns}, safe=",")
+    headers = {
+        "apikey": api_key,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+        "User-Agent": "ashare-mainline-radar",
+    }
+    if api_key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {api_key}"
+    if ingest_key:
+        headers["x-radar-ingest-key"] = ingest_key
     request = Request(
         f"{base_url.rstrip('/')}/rest/v1/{table}?{query}",
         data=json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
         method="POST",
-        headers={
-            "apikey": secret_key,
-            "Authorization": f"Bearer {secret_key}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates,return=minimal",
-            "User-Agent": "ashare-mainline-radar",
-        },
+        headers=headers,
     )
     with opener(request, timeout=30) as response:
         if not 200 <= response.status < 300:
@@ -282,6 +287,8 @@ def persist_report(
     backend: str = "auto",
     supabase_url: str | None = None,
     supabase_secret_key: str | None = None,
+    supabase_publishable_key: str | None = None,
+    radar_ingest_key: str | None = None,
     opener: Callable[..., Any] = urlopen,
 ) -> PersistenceStatus:
     output = Path(output_dir)
@@ -291,14 +298,18 @@ def persist_report(
     bundle_path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
 
     url = supabase_url or os.getenv("SUPABASE_URL")
-    key = (
+    secret_key = (
         supabase_secret_key
         or os.getenv("SUPABASE_SECRET_KEY")
         or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     )
+    publishable_key = supabase_publishable_key or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+    ingest_key = radar_ingest_key or os.getenv("RADAR_INGEST_KEY")
+    api_key = secret_key or publishable_key
+    credentials_ready = bool(secret_key or (publishable_key and ingest_key))
     resolved_backend = backend
     if backend == "auto":
-        resolved_backend = "supabase" if url and key else "artifact"
+        resolved_backend = "supabase" if url and credentials_ready else "artifact"
 
     run_key = str(bundle["run"]["run_key"])
     if resolved_backend == "none":
@@ -314,20 +325,36 @@ def persist_report(
             len(bundle["symbols"]),
             "Supabase credentials are absent; normalized bundle kept in the workflow artifact",
         )
-    elif resolved_backend == "supabase" and (not url or not key):
+    elif resolved_backend == "supabase" and (not url or not api_key or not credentials_ready):
         status = PersistenceStatus(
             "failed",
             "supabase",
             run_key,
             len(bundle["themes"]),
             len(bundle["symbols"]),
-            "SUPABASE_URL and SUPABASE_SECRET_KEY are required",
+            "configure SUPABASE_URL plus either a server secret key or SUPABASE_PUBLISHABLE_KEY with RADAR_INGEST_KEY",
         )
     elif resolved_backend == "supabase":
         try:
-            _upsert(str(url), str(key), "radar_runs", "run_key", [bundle["run"]], opener)
-            _upsert(str(url), str(key), "radar_theme_snapshots", "run_key,theme", bundle["themes"], opener)
-            _upsert(str(url), str(key), "radar_symbol_snapshots", "run_key,symbol", bundle["symbols"], opener)
+            _upsert(str(url), str(api_key), ingest_key, "radar_runs", "run_key", [bundle["run"]], opener)
+            _upsert(
+                str(url),
+                str(api_key),
+                ingest_key,
+                "radar_theme_snapshots",
+                "run_key,theme",
+                bundle["themes"],
+                opener,
+            )
+            _upsert(
+                str(url),
+                str(api_key),
+                ingest_key,
+                "radar_symbol_snapshots",
+                "run_key,symbol",
+                bundle["symbols"],
+                opener,
+            )
             status = PersistenceStatus(
                 "stored",
                 "supabase",
