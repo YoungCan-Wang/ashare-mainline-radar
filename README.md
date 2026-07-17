@@ -47,6 +47,8 @@ python3 scripts/run_daily.py --mode curated --lookback-days 180
 - `reports/latest/mainline_report.md`
 - `reports/latest/mainline_report.json`
 - `reports/latest/feishu_card.json`
+- `reports/latest/storage_bundle.json`：按运行、主线、标的拆分的可迁移结构化快照。
+- `reports/latest/storage_status.json`：本次持久化状态，不包含数据库密钥。
 
 如果要扫描全市场：
 
@@ -207,13 +209,33 @@ data/research_reports/inbox/
 
 `.github/workflows/daily-mainline.yml` 支持手动触发和交易日收盘后定时运行，报告作为 artifact 上传。
 
+任务频率采用两层保护：
+
+- 日报按北京时间的盘前/盘后时段分别幂等；盘前手动测试不会阻止16:45的正式收盘报告，同一时段已有成功运行时会在抓行情前跳过。
+- 重型策略回测只手动触发；同一提交在24小时内已有成功回测时跳过。
+- 两个任务都可以手动设置 `force=true` 绕过频率闸门，用于明确需要的补跑。
+- Artifact 保留90天；长期可查询历史写入 Supabase。
+
 如果要使用完整 TickFlow 服务，在 GitHub 仓库设置 Secret：
 
 ```text
 TICKFLOW_API_KEY
 FEISHU_WEBHOOK_URL
 TUSHARE_TOKEN
+SUPABASE_SECRET_KEY
 ```
+
+Supabase 项目 URL 配成仓库 Variable `SUPABASE_URL`，服务端 secret key 配成仓库 Secret
+`SUPABASE_SECRET_KEY`。Secret key 只供 GitHub Actions 和本地服务端任务使用，不能放进网页、报告或提交记录。
+
+持久化采用三张私有表：
+
+- `radar_runs`：每个行情日、扫描模式和股票池一行，重复运行执行 upsert。
+- `radar_theme_snapshots`：主线排名、生命周期和完整评分证据。
+- `radar_symbol_snapshots`：每个标的每次运行一行；顺势、下一笔、黄金坑、低位介入等身份合并到 `roles`，目标价、基本面、触发和失效条件分别保存为结构化字段。
+
+数据库只保存进入研究清单的标的，不重复保存全市场原始K线。未配置 Supabase 时任务不会丢报告：
+规范化的 `storage_bundle.json` 会随 GitHub Artifact 保留，配置完成后可再导入。
 
 `FEISHU_WEBHOOK_URL` 配置后，工作流会发送红色交互卡片，按“可尝试建仓、已有仓位可继续持有、等待回踩、低位观察”组织结果，并展示入场触发、失效条件、目标区和15日回测。默认情况下，飞书侧临时失败不会阻断报告 artifact 上传；如果希望本地或 CI 严格失败，可以加 `--fail-on-feishu-error`。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
 

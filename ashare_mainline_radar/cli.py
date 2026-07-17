@@ -9,6 +9,7 @@ from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
 from .feishu import FeishuStatus, build_feishu_card, post_feishu_card, write_feishu_status
 from .report import write_report
+from .storage import persist_report
 from .tickflow import TickFlowClient
 
 
@@ -35,6 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--send-feishu", action="store_true", help="Send a compact report to FEISHU_WEBHOOK_URL.")
     parser.add_argument("--feishu-webhook-url", default=os.getenv("FEISHU_WEBHOOK_URL"))
     parser.add_argument("--fail-on-feishu-error", action="store_true")
+    parser.add_argument(
+        "--storage-backend",
+        choices=["auto", "supabase", "artifact", "none"],
+        default=os.getenv("RADAR_STORAGE_BACKEND", "auto"),
+        help="Persist normalized run, theme, and symbol snapshots. Auto uses Supabase when configured.",
+    )
+    parser.add_argument("--fail-on-storage-error", action="store_true")
     parser.add_argument("--tickflow-base-url", default=os.getenv("TICKFLOW_BASE_URL"))
     return parser
 
@@ -66,6 +74,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Wrote {markdown_path}")
     print(f"Wrote {json_path}")
     print(f"Wrote {feishu_card_path}")
+    storage_status = persist_report(report, args.output_dir, backend=args.storage_backend)
+    print(
+        f"Storage: {storage_status.status} via {storage_status.backend}; "
+        f"themes={storage_status.theme_records} symbols={storage_status.symbol_records}"
+    )
     if report.themes:
         top = report.themes[0]
         print(f"Top mainline: {top.name} / {top.status} / score={top.score:.1f}")
@@ -91,4 +104,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Feishu notification failed: code={status.code} message={status.message}")
                 if args.fail_on_feishu_error:
                     return 2
+    if args.fail_on_storage_error and storage_status.status == "failed":
+        return 3
     return 0
