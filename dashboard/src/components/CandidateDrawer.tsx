@@ -1,0 +1,88 @@
+import * as Dialog from "@radix-ui/react-dialog";
+import { X } from "lucide-react";
+
+import { formatMetricPercent, formatNumber, formatPercent, formatPrice, formatRatio } from "../lib/format";
+import { planSummary, ROLE_LABELS } from "../lib/presentation";
+import type { SymbolRow } from "../types";
+import { MetricGrid, type MetricItem } from "./MetricGrid";
+
+interface CandidateDrawerProps {
+  candidate: SymbolRow | null;
+  onClose: () => void;
+}
+
+export function CandidateDrawer({ candidate, onClose }: CandidateDrawerProps) {
+  const target = candidate?.target_payload;
+  const fundamental = candidate?.fundamental_payload;
+  const metrics = candidate?.market_metrics;
+  const plan = candidate?.trade_plan;
+  const strong = candidate?.signal_payload?.strong_stock;
+  const backtest = strong?.backtest;
+
+  const targetMetrics: MetricItem[] = [
+    { label: "现价", value: formatPrice(candidate?.last_close) },
+    { label: "目标下沿", value: formatPrice(target?.target_low) },
+    { label: "目标上沿", value: formatPrice(target?.target_high) },
+    { label: "上行下沿", value: formatPercent(target?.upside_low) },
+    { label: "赔率下沿", value: formatRatio(target?.reward_risk_low) },
+    { label: "信心", value: target?.confidence ?? "未覆盖" },
+  ];
+  const trendMetrics: MetricItem[] = [
+    { label: "5日涨幅", value: formatPercent(metrics?.ret_5d) },
+    { label: "20日涨幅", value: formatPercent(metrics?.ret_20d) },
+    { label: "60日位置", value: formatPercent(metrics?.range_position_60d) },
+    { label: "成交热度", value: formatRatio(metrics?.amount_ratio ?? metrics?.amount_ratio_5_20) },
+    { label: "15日胜率", value: formatPercent(backtest?.win_rate) },
+    { label: "15日均值", value: formatPercent(backtest?.avg_return) },
+  ];
+  const fundamentalMetrics: MetricItem[] = [
+    { label: "状态", value: fundamental?.status ?? strong?.fundamental_status ?? "未覆盖" },
+    { label: "财务分", value: formatNumber(fundamental?.score ?? strong?.fundamental_score) },
+    { label: "营收同比", value: formatMetricPercent(fundamental?.revenue_yoy) },
+    { label: "净利同比", value: formatMetricPercent(fundamental?.net_income_yoy) },
+    { label: "ROE", value: formatMetricPercent(fundamental?.roe) },
+    { label: "PB", value: fundamental?.price_to_book == null ? "--" : `${formatNumber(fundamental.price_to_book, 2)}x` },
+  ];
+
+  return (
+    <Dialog.Root open={candidate !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="drawer-backdrop" />
+        <Dialog.Content className="detail-drawer">
+          <div className="drawer-header">
+            <div>
+              <span className="drawer-kicker">{candidate?.symbol ?? "--"}</span>
+              <Dialog.Title>{candidate?.name ?? candidate?.symbol ?? "标的详情"}</Dialog.Title>
+              <Dialog.Description className="sr-only">标的交易计划、目标赔率、资金趋势和基本面详情</Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
+              <button className="icon-button" type="button" title="关闭" aria-label="关闭详情"><X /></button>
+            </Dialog.Close>
+          </div>
+          <div className="drawer-content">
+            <div className="drawer-score-line">
+              <div><span className="summary-label">优先级</span><div className="drawer-score">{formatNumber(candidate?.priority_score)}</div></div>
+              <div className="role-stack">
+                {candidate?.roles?.map((role) => <span className="role-badge" key={role}>{ROLE_LABELS[role]}</span>)}
+              </div>
+            </div>
+            <div className="action-panel">{candidate?.action_state ?? (candidate ? planSummary(candidate) : "") ?? "继续观察"}</div>
+            <section className="drawer-section">
+              <h3>交易计划</h3>
+              <dl className="detail-list">
+                <div className="detail-row"><dt>所属主线</dt><dd>{candidate?.primary_theme ?? candidate?.themes?.join("、") ?? "未映射"}</dd></div>
+                <div className="detail-row"><dt>参与条件</dt><dd>{plan?.entry_plan ?? plan?.confirmation ?? "等待条件确认"}</dd></div>
+                <div className="detail-row"><dt>失效条件</dt><dd>{plan?.invalidation ?? (target?.stop_price == null ? "未覆盖" : `跌破 ${formatPrice(target.stop_price)}`)}</dd></div>
+                <div className="detail-row"><dt>仓位提示</dt><dd>{plan?.position_note ?? "按市场闸门与计划仓位执行"}</dd></div>
+                <div className="detail-row"><dt>目标周期</dt><dd>{target?.horizon ?? "10-20个交易日"}</dd></div>
+              </dl>
+            </section>
+            <section className="drawer-section"><h3>目标与赔率</h3><MetricGrid items={targetMetrics} /></section>
+            <section className="drawer-section"><h3>趋势与资金</h3><MetricGrid items={trendMetrics} /></section>
+            <section className="drawer-section"><h3>基本面兑现</h3><MetricGrid items={fundamentalMetrics} /></section>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}

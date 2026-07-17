@@ -1,0 +1,100 @@
+import json
+
+from ashare_mainline_radar.dashboard import build_dashboard_payload, fetch_dashboard_history, write_dashboard
+
+
+def _bundle() -> dict:
+    return {
+        "run": {
+            "run_key": "cn:2026-07-17:universe:CN_Equity_A",
+            "market_date": "2026-07-17",
+            "generated_at": "2026-07-17T09:00:00+00:00",
+            "top_theme": "创新药",
+        },
+        "themes": [
+            {
+                "run_key": "cn:2026-07-17:universe:CN_Equity_A",
+                "market_date": "2026-07-17",
+                "theme": "创新药",
+                "rank": 1,
+                "score": 92,
+            }
+        ],
+        "symbols": [
+            {
+                "run_key": "cn:2026-07-17:universe:CN_Equity_A",
+                "market_date": "2026-07-17",
+                "symbol": "300122.SZ",
+                "name": "智飞生物",
+                "priority_score": 90,
+            }
+        ],
+    }
+
+
+def test_dashboard_payload_merges_local_run_over_remote() -> None:
+    history = {
+        "runs": [{"run_key": "cn:2026-07-17:universe:CN_Equity_A", "top_theme": "旧值"}],
+        "themes": [],
+        "symbols": [],
+    }
+
+    payload = build_dashboard_payload(_bundle(), history)
+
+    assert payload["current_run_key"] == "cn:2026-07-17:universe:CN_Equity_A"
+    assert payload["runs"][0]["top_theme"] == "创新药"
+    assert payload["themes"][0]["theme"] == "创新药"
+    assert payload["symbols"][0]["symbol"] == "300122.SZ"
+
+
+def test_fetch_dashboard_history_paginates_and_scopes_requests() -> None:
+    requests = []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def read(self):
+            return json.dumps(self.payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def opener(request, timeout):
+        requests.append((request, timeout))
+        if "radar_runs" in request.full_url:
+            return Response([{"run_key": "r1", "market_date": "2026-07-17"}])
+        return Response([])
+
+    history = fetch_dashboard_history(
+        supabase_url="https://example.supabase.co",
+        supabase_publishable_key="sb_publishable_test",
+        radar_ingest_key="private-key",
+        opener=opener,
+    )
+
+    assert len(requests) == 3
+    assert requests[0][0].get_header("X-radar-ingest-key") == "private-key"
+    assert history["runs"][0]["run_key"] == "r1"
+
+
+def test_write_dashboard_does_not_emit_credentials(tmp_path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "index.html").write_text("index", encoding="utf-8")
+    assets = source / "assets"
+    assets.mkdir()
+    (assets / "app.js").write_text("app", encoding="utf-8")
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(json.dumps(_bundle(), ensure_ascii=False), encoding="utf-8")
+
+    data_path = write_dashboard(bundle, tmp_path / "site", source)
+
+    content = data_path.read_text(encoding="utf-8")
+    assert "RADAR_INGEST_KEY" not in content
+    assert "private-key" not in content
+    assert (tmp_path / "site" / "index.html").exists()
+    assert (tmp_path / "site" / "assets" / "app.js").exists()

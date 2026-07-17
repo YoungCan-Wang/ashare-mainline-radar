@@ -216,6 +216,24 @@ data/research_reports/inbox/
 - 两个任务都可以手动设置 `force=true` 绕过频率闸门，用于明确需要的补跑。
 - Artifact 保留90天；长期可查询历史写入 Supabase。
 
+## 可视化作战台
+
+日报会同步生成一个无数据库密钥的静态作战台，并由 GitHub Pages 发布。页面包含：
+
+- 市场闸门、指数结构、第一主线和作战标的数量。
+- 主线排名、生命周期、5/20日广度、成交热度和最近主线强度轨迹。
+- 建仓候选、持有观察、等待确认、黄金坑、低位资金和月线箱体筛选。
+- 单个标的的参与条件、失效条件、目标价、赔率、15日回测和基本面兑现。
+- 最近60次运行的日期切换；历史在 CI 内从 Supabase 汇总，浏览器只读取脱敏后的静态 `data.json`。
+
+本地生成和预览：
+
+```bash
+cd dashboard && npm ci && npm run build && cd ..
+python3 scripts/build_dashboard.py --bundle reports/latest/storage_bundle.json --output-dir reports/latest/dashboard
+python3 -m http.server 8080 --directory reports/latest/dashboard
+```
+
 如果要使用完整 TickFlow 服务，在 GitHub 仓库设置 Secret：
 
 ```text

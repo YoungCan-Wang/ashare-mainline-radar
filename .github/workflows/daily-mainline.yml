@@ -24,6 +24,11 @@ on:
         required: false
         default: false
         type: boolean
+      notify_feishu:
+        description: "Send the Feishu card after generating the report"
+        required: false
+        default: true
+        type: boolean
   schedule:
     # 16:45 Beijing time on weekdays, after A-share close.
     - cron: "45 8 * * 1-5"
@@ -31,6 +36,8 @@ on:
 jobs:
   radar:
     runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.frequency.outputs.should_run }}
     permissions:
       contents: read
       actions: read
@@ -44,11 +51,17 @@ jobs:
       RADAR_STORAGE_BACKEND: auto
       MAINLINE_RADAR_MODE: ${{ inputs.mode || 'universe' }}
       MAINLINE_MAX_SYMBOLS: ${{ inputs.max_symbols || '0' }}
+      NOTIFY_FEISHU: ${{ github.event_name == 'schedule' || inputs.notify_feishu }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
       - name: Check daily frequency
         id: frequency
         env:
@@ -64,9 +77,23 @@ jobs:
       - name: Run tests
         if: steps.frequency.outputs.should_run == 'true'
         run: python -m pytest
+      - name: Build dashboard application
+        if: steps.frequency.outputs.should_run == 'true'
+        run: |
+          npm ci --prefix dashboard
+          npm run lint --prefix dashboard
+          npm run build --prefix dashboard
       - name: Generate radar report
         if: steps.frequency.outputs.should_run == 'true'
-        run: python scripts/run_daily.py --output-dir reports/latest --send-feishu
+        run: |
+          args=(--output-dir reports/latest)
+          if [[ "$NOTIFY_FEISHU" == "true" ]]; then
+            args+=(--send-feishu)
+          fi
+          python scripts/run_daily.py "${args[@]}"
+      - name: Build dashboard
+        if: steps.frequency.outputs.should_run == 'true'
+        run: python scripts/build_dashboard.py --bundle reports/latest/storage_bundle.json --output-dir reports/latest/dashboard --source-dir dashboard/dist
       - name: Upload report
         if: steps.frequency.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
@@ -74,3 +101,29 @@ jobs:
           name: ashare-mainline-radar
           path: reports/latest
           retention-days: 90
+
+  pages:
+    needs: radar
+    if: needs.radar.outputs.should_run == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download dashboard artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ashare-mainline-radar
+          path: reports/latest
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload dashboard to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: reports/latest/dashboard
+      - name: Deploy dashboard
+        id: deployment
+        uses: actions/deploy-pages@v4
