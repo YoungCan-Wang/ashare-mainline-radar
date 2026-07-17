@@ -30,6 +30,7 @@ dist/
 build/
 node_modules/
 dashboard/dist/
+*.tsbuildinfo
 *.egg-info/
 reports/*
 !reports/.gitkeep
