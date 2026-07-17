@@ -45,10 +45,12 @@ def test_refresh_quotes_only_fetches_current_actionable_pool() -> None:
             return _Response(status=201)
         if "radar_runs" in request.full_url:
             return _Response([{"run_key": "cn:2026-07-17:universe:CN_Equity_A"}])
+        if "radar_symbol_selections" in request.full_url:
+            return _Response([{"symbol": "300122.SZ"}])
         return _Response(
             [
                 {"symbol": "300122.SZ", "roles": ["next_buy"]},
-                {"symbol": "600000.SH", "roles": ["market_watchlist"]},
+                {"symbol": "600000.SH", "roles": ["expectation_gap"]},
             ]
         )
 

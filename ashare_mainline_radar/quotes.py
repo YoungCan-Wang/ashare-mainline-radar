@@ -78,11 +78,23 @@ def refresh_selected_quotes(
         filters={"run_key": f"eq.{run_key}"},
         opener=opener,
     )
+    selections = fetch_rows(
+        url,
+        api_key,
+        ingest_key,
+        "radar_symbol_selections",
+        order="symbol.asc",
+        max_rows=10000,
+        opener=opener,
+    )
+    tracked_symbols = {str(row["symbol"]) for row in selections if row.get("symbol")}
     symbols = sorted(
         {
             str(row["symbol"])
             for row in snapshots
-            if row.get("symbol") and _roles(row).intersection(ACTIONABLE_ROLES)
+            if row.get("symbol")
+            and str(row["symbol"]) in tracked_symbols
+            and _roles(row).intersection(ACTIONABLE_ROLES)
         }
     )
     if not symbols:
