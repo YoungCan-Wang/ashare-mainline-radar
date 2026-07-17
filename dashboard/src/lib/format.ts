@@ -1,7 +1,3 @@
-export function numberValue(value: number | undefined, fallback = 0): number {
-  return value != null && Number.isFinite(value) ? value : fallback;
-}
-
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }

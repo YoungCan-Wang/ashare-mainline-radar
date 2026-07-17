@@ -5,7 +5,6 @@ from collections.abc import Mapping
 
 from .models import IntelItem, PolicySignalReport, PolicyThemeSignal, ThemeSnapshot
 
-
 POLICY_TAGS = {"policy", "official_policy", "state_council", "ministry", "regulator", "macro_policy"}
 
 

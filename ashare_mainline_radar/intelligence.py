@@ -7,12 +7,10 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from .config import PROJECT_ROOT, resolve_project_path
 from .models import DataSourceStatus, IntelItem
-
 
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 META_DESC_RE = re.compile(
@@ -270,12 +268,5 @@ def collect_intelligence_with_status(
     )
     tagged = tag_intel_items(items, keywords_by_theme)
     return tagged[:limit], statuses
-
-
-def collect_intelligence(intel_config: dict[str, Any], keywords_by_theme: dict[str, list[str]], limit: int = 80) -> list[IntelItem]:
-    tagged, _statuses = collect_intelligence_with_status(intel_config, keywords_by_theme, limit=limit)
-    return tagged
-
-
 def intel_match_index(items: list[IntelItem]) -> dict[str, list[str]]:
     return {f"{item.source}:{item.title}": item.matched_themes for item in items if item.matched_themes}

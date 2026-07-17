@@ -10,10 +10,6 @@ from typing import Any
 from .models import NextBuyPlan, RadarReport, StrongStockCandidate, TargetPriceEstimate, ThemeLifecycleSignal, pct
 
 
-class FeishuNotifyError(RuntimeError):
-    pass
-
-
 @dataclass
 class FeishuStatus:
     status: str
@@ -517,12 +513,6 @@ def post_feishu_card(webhook_url: str, card: dict[str, Any], timeout: float = 15
 
 def post_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> FeishuStatus:
     return _post_feishu_payload(webhook_url, {"msg_type": "text", "content": {"text": text}}, timeout)
-
-
-def send_feishu_text(webhook_url: str, text: str, timeout: float = 15.0) -> None:
-    status = post_feishu_text(webhook_url, text, timeout=timeout)
-    if status.status != "sent":
-        raise FeishuNotifyError(f"Feishu webhook returned error: {status.to_dict()}") from None
 
 
 def write_feishu_status(path: str | Path, status: FeishuStatus) -> Path:

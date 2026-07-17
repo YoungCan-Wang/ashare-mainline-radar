@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from typing import Any
 
 from .accumulation import build_accumulation_report
@@ -441,9 +440,3 @@ class MainlineRadar:
             theme_lifecycle=theme_lifecycle,
             cross_market=cross_market,
         )
-
-
-def latest_report_dir(output_dir: str | Path) -> Path:
-    path = Path(output_dir).expanduser()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
