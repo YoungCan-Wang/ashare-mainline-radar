@@ -1,13 +1,18 @@
 import * as Tabs from "@radix-ui/react-tabs";
-import { ArrowDownUp, ChevronRight, Search } from "lucide-react";
+import { ChevronRight, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { formatDateTime, formatPrice, formatSignedPercent, returnTone, shortDate } from "../lib/format";
 import { planSummary, ROLE_LABELS } from "../lib/presentation";
 import type { RadarRole, SymbolRow, ThemeRow } from "../types";
+import { SortableHeader, type SortDirection, type SortKey } from "./SortableHeader";
 
 type RoleFilter = "all" | "waiting" | RadarRole;
-type SortOrder = "priority" | "return_desc" | "return_asc";
+
+interface SortState {
+  key: SortKey | "priority";
+  direction: SortDirection;
+}
 
 const ROLE_DEFINITIONS: ReadonlyArray<{ id: RoleFilter; label: string }> = [
   { id: "all", label: "全部" },
@@ -29,6 +34,17 @@ function roleMatches(row: SymbolRow, role: RoleFilter): boolean {
   return row.roles?.includes(role) ?? false;
 }
 
+function sortableValue(row: SymbolRow, key: SortKey): number | undefined {
+  if (key === "selected_at") {
+    const timestamp = Date.parse(row.first_selected_at ?? row.first_market_date ?? "");
+    return Number.isNaN(timestamp) ? undefined : timestamp;
+  }
+  if (key === "selected_price") return row.first_selected_price;
+  if (key === "latest_price") return row.latest_price ?? row.last_close;
+  if (key === "selection_return") return row.return_since_selection;
+  return row.daily_change_pct;
+}
+
 interface CandidateQueueProps {
   symbols: SymbolRow[];
   themes: ThemeRow[];
@@ -39,7 +55,7 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
   const [role, setRole] = useState<RoleFilter>("all");
   const [theme, setTheme] = useState("all");
   const [search, setSearch] = useState("");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("priority");
+  const [sortState, setSortState] = useState<SortState>({ key: "priority", direction: "desc" });
 
   const roleCounts = useMemo(
     () => new Map(ROLE_DEFINITIONS.map((definition) => [definition.id, symbols.filter((row) => roleMatches(row, definition.id)).length])),
@@ -52,14 +68,18 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
       .filter((row) => theme === "all" || row.primary_theme === theme || row.themes?.includes(theme))
       .filter((row) => !query || `${row.symbol} ${row.name ?? ""}`.toLowerCase().includes(query));
     return filtered.sort((a, b) => {
-      if (sortOrder === "priority") return (b.priority_score ?? 0) - (a.priority_score ?? 0);
-      const aReturn = a.return_since_selection;
-      const bReturn = b.return_since_selection;
-      if (aReturn == null) return 1;
-      if (bReturn == null) return -1;
-      return sortOrder === "return_desc" ? bReturn - aReturn : aReturn - bReturn;
+      if (sortState.key === "priority") return (b.priority_score ?? 0) - (a.priority_score ?? 0);
+      const aValue = sortableValue(a, sortState.key);
+      const bValue = sortableValue(b, sortState.key);
+      if (aValue == null && bValue == null) {
+        return (b.priority_score ?? 0) - (a.priority_score ?? 0) || a.symbol.localeCompare(b.symbol);
+      }
+      if (aValue == null) return 1;
+      if (bValue == null) return -1;
+      const comparison = sortState.direction === "desc" ? bValue - aValue : aValue - bValue;
+      return comparison || (b.priority_score ?? 0) - (a.priority_score ?? 0) || a.symbol.localeCompare(b.symbol);
     });
-  }, [symbols, role, theme, search, sortOrder]);
+  }, [symbols, role, theme, search, sortState]);
   const latestQuoteRefresh = useMemo(
     () => symbols.reduce<string | undefined>((latest, row) => {
       if (!row.quote_refreshed_at) return latest;
@@ -67,6 +87,12 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
     }, undefined),
     [symbols],
   );
+  const handleSort = (key: SortKey) => {
+    setSortState((current) => ({
+      key,
+      direction: current.key === key && current.direction === "desc" ? "asc" : "desc",
+    }));
+  };
 
   return (
     <section className="section-block candidates-block">
@@ -82,15 +108,6 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
             <option value="all">全部主线</option>
             {themes.map((row) => <option key={row.theme} value={row.theme}>{row.theme}</option>)}
           </select>
-          <label className="sort-control">
-            <ArrowDownUp aria-hidden="true" />
-            <span className="sr-only">排序方式</span>
-            <select className="select-control" aria-label="排序方式" value={sortOrder} onChange={(event) => setSortOrder(event.target.value as SortOrder)}>
-              <option value="priority">按优先级</option>
-              <option value="return_desc">涨幅从高到低</option>
-              <option value="return_asc">涨幅从低到高</option>
-            </select>
-          </label>
         </div>
       </div>
       <Tabs.Root value={role} onValueChange={(value) => setRole(value as RoleFilter)}>
@@ -104,7 +121,21 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
       </Tabs.Root>
       <div className="table-scroll">
         <table className="data-table candidate-table">
-          <thead><tr><th>标的</th><th>所属主线</th><th>入选时间</th><th>入选价</th><th>现价</th><th>入选涨跌</th><th>当日涨跌</th><th>当前动作</th><th>目标区间</th><th>信号身份</th><th><span className="sr-only">详情</span></th></tr></thead>
+          <thead>
+            <tr>
+              <th scope="col">标的</th>
+              <th scope="col">所属主线</th>
+              <SortableHeader label="入选时间" sortKey="selected_at" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+              <SortableHeader label="入选价" sortKey="selected_price" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+              <SortableHeader label="现价" sortKey="latest_price" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+              <SortableHeader label="入选涨跌" sortKey="selection_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+              <SortableHeader label="当日涨跌" sortKey="daily_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+              <th scope="col">当前动作</th>
+              <th scope="col">目标区间</th>
+              <th scope="col">信号身份</th>
+              <th scope="col"><span className="sr-only">详情</span></th>
+            </tr>
+          </thead>
           <tbody>
             {filteredSymbols.map((row) => {
               const target = row.target_payload;

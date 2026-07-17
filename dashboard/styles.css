@@ -478,18 +478,6 @@ select {
   gap: 8px;
 }
 
-.sort-control {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-}
-
-.sort-control svg {
-  width: 16px;
-  height: 16px;
-}
-
 .search-control {
   gap: 7px;
   padding: 0 9px;
@@ -549,6 +537,38 @@ select {
 
 .candidate-table {
   min-width: 1280px;
+}
+
+.sortable-header-button {
+  display: inline-flex;
+  min-height: 28px;
+  margin: -6px -8px;
+  padding: 6px 8px;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.sortable-header-button:hover,
+.sortable-header-button[data-active="true"] {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.sortable-header-button:focus-visible {
+  outline: 2px solid rgb(20 123 93 / 35%);
+  outline-offset: 1px;
+}
+
+.sortable-header-button svg {
+  width: 13px;
+  height: 13px;
 }
 
 .selection-time {
