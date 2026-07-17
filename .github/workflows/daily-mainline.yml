@@ -102,28 +102,26 @@ jobs:
           path: reports/latest
           retention-days: 90
 
-  pages:
+  deploy:
     needs: radar
     if: needs.radar.outputs.should_run == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
     steps:
       - name: Download dashboard artifact
         uses: actions/download-artifact@v4
         with:
           name: ashare-mainline-radar
           path: reports/latest
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Upload dashboard to Pages
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/setup-node@v4
         with:
-          path: reports/latest/dashboard
-      - name: Deploy dashboard
-        id: deployment
-        uses: actions/deploy-pages@v4
+          node-version: "22"
+      - name: Deploy dashboard to Vercel
+        run: >-
+          npx --yes vercel@56.3.1 deploy reports/latest/dashboard
+          --prod --yes --token "$VERCEL_TOKEN"
