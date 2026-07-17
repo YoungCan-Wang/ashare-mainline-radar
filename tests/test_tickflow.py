@@ -3,7 +3,9 @@ import json
 import urllib.error
 from unittest.mock import patch
 
-from ashare_mainline_radar.tickflow import DEFAULT_MIN_INTERVAL, TickFlowClient
+import pytest
+
+from ashare_mainline_radar.tickflow import DEFAULT_MIN_INTERVAL, TickFlowClient, TickFlowError
 
 
 class _Response:
@@ -50,3 +52,32 @@ def test_default_throttle_stays_below_provider_rate_limit() -> None:
 
     assert DEFAULT_MIN_INTERVAL >= 60 / 30
     assert client.min_interval == DEFAULT_MIN_INTERVAL
+
+
+def test_realtime_quotes_are_parsed_by_symbol() -> None:
+    client = TickFlowClient(api_key="test", min_interval=0)
+    payload = {
+        "data": [
+            {
+                "symbol": "300122.SZ",
+                "last_price": 36.5,
+                "prev_close": 35.0,
+                "timestamp": 1784255400000,
+                "session": "regular",
+                "ext": {"name": "智飞生物", "change_pct": 0.042857},
+            }
+        ]
+    }
+    with patch.object(client, "_request", return_value=payload) as request:
+        quotes = client.get_quotes(["300122.SZ"])
+
+    assert quotes["300122.SZ"].last_price == 36.5
+    assert quotes["300122.SZ"].change_pct == 0.042857
+    assert request.call_args.kwargs["params"] == {"symbols": "300122.SZ"}
+
+
+def test_realtime_quotes_require_api_key() -> None:
+    client = TickFlowClient(api_key="", base_url="https://free-api.tickflow.org")
+
+    with pytest.raises(TickFlowError, match="required"):
+        client.get_quotes(["300122.SZ"])

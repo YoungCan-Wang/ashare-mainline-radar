@@ -47,7 +47,7 @@ python3 scripts/run_daily.py --mode curated --lookback-days 180
 - `reports/latest/mainline_report.md`
 - `reports/latest/mainline_report.json`
 - `reports/latest/feishu_card.json`
-- `reports/latest/storage_bundle.json`：按运行、主线、标的拆分的可迁移结构化快照。
+- `reports/latest/storage_bundle.json`：按运行、主线、标的拆分的 v2 可迁移快照，并声明首次入选的角色、时间和价格口径。
 - `reports/latest/storage_status.json`：本次持久化状态，不包含数据库密钥。
 
 如果要扫描全市场：
@@ -223,6 +223,7 @@ data/research_reports/inbox/
 - 市场闸门、指数结构、第一主线和作战标的数量。
 - 主线排名、生命周期、5/20日广度、成交热度和最近主线强度轨迹。
 - 建仓候选、持有观察、等待确认、黄金坑、低位资金和月线箱体筛选。
+- 首次入选时间、入选价、TickFlow 现价、入选以来涨跌和当日涨跌；支持按入选以来涨跌升降序排序。
 - 单个标的的参与条件、失效条件、目标价、赔率、15日回测和基本面兑现。
 - 最近60次运行的日期切换；历史在 CI 内从 Supabase 汇总，浏览器只读取脱敏后的静态 `data.json`。
 
@@ -248,14 +249,20 @@ RADAR_INGEST_KEY
 
 Supabase 项目 URL 和 publishable key 分别配成仓库 Variable `SUPABASE_URL`、
 `SUPABASE_PUBLISHABLE_KEY`，随机入库密钥配成仓库 Secret `RADAR_INGEST_KEY`。
-RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写三张 `radar_*` 表；GitHub Actions
+RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写五张 `radar_*` 表；GitHub Actions
 不需要持有可管理整个 Supabase 项目的 service-role key。入库密钥不能放进网页、报告或提交记录。
 
-持久化采用三张私有表：
+持久化采用五张私有表：
 
 - `radar_runs`：每个行情日、扫描模式和股票池一行，重复运行执行 upsert。
 - `radar_theme_snapshots`：主线排名、生命周期和完整评分证据。
 - `radar_symbol_snapshots`：每个标的每次运行一行；顺势、下一笔、黄金坑、低位介入等身份合并到 `roles`，目标价、基本面、触发和失效条件分别保存为结构化字段。
+- `radar_symbol_selections`：只记录可执行研究角色的首次入选时间、首次入选价和最近一次入选，不因重复出现而重置基准。
+- `radar_symbol_quotes`：每个入选标的一条最新 TickFlow 实时报价，和历史研究快照分开更新。
+
+`.github/workflows/quote-refresh.yml` 在交易日北京时间 10:30、11:30、14:00、15:10
+只刷新当前可执行研究池，不重跑全市场。若 TickFlow 返回的行情日期不是当天，任务会跳过写入和部署；
+手动诊断时可显式设置 `allow_stale=true`。
 
 数据库只保存进入研究清单的标的，不重复保存全市场原始K线。未配置 Supabase 时任务不会丢报告：
 规范化的 `storage_bundle.json` 会随 GitHub Artifact 保留，配置完成后可再导入。

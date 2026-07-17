@@ -105,6 +105,15 @@ export interface SymbolRow {
   action_state?: string;
   priority_score?: number;
   last_close?: number;
+  first_selected_at?: string;
+  first_market_date?: string;
+  first_selected_price?: number;
+  latest_price?: number;
+  quote_at?: string;
+  quote_date?: string;
+  quote_refreshed_at?: string;
+  daily_change_pct?: number;
+  return_since_selection?: number;
   trade_plan?: TradePlan;
   target_payload?: TargetPayload;
   fundamental_payload?: FundamentalPayload;
@@ -118,6 +127,7 @@ export interface DashboardData {
   schema_version: string;
   built_at?: string;
   current_run_key?: string;
+  quote_refreshed_at?: string;
   runs: RadarRun[];
   themes: ThemeRow[];
   symbols: SymbolRow[];

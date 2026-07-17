@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
-import { formatMetricPercent, formatNumber, formatPercent, formatPrice, formatRatio } from "../lib/format";
+import { formatDateTime, formatMetricPercent, formatNumber, formatPercent, formatPrice, formatRatio, formatSignedPercent } from "../lib/format";
 import { planSummary, ROLE_LABELS } from "../lib/presentation";
 import type { SymbolRow } from "../types";
 import { MetricGrid, type MetricItem } from "./MetricGrid";
@@ -20,12 +20,12 @@ export function CandidateDrawer({ candidate, onClose }: CandidateDrawerProps) {
   const backtest = strong?.backtest;
 
   const targetMetrics: MetricItem[] = [
-    { label: "现价", value: formatPrice(candidate?.last_close) },
+    { label: "入选价", value: formatPrice(candidate?.first_selected_price) },
+    { label: "现价", value: formatPrice(candidate?.latest_price ?? candidate?.last_close) },
+    { label: "入选以来", value: formatSignedPercent(candidate?.return_since_selection) },
+    { label: "当日涨跌", value: formatSignedPercent(candidate?.daily_change_pct) },
     { label: "目标下沿", value: formatPrice(target?.target_low) },
     { label: "目标上沿", value: formatPrice(target?.target_high) },
-    { label: "上行下沿", value: formatPercent(target?.upside_low) },
-    { label: "赔率下沿", value: formatRatio(target?.reward_risk_low) },
-    { label: "信心", value: target?.confidence ?? "未覆盖" },
   ];
   const trendMetrics: MetricItem[] = [
     { label: "5日涨幅", value: formatPercent(metrics?.ret_5d) },
@@ -71,6 +71,8 @@ export function CandidateDrawer({ candidate, onClose }: CandidateDrawerProps) {
               <h3>交易计划</h3>
               <dl className="detail-list">
                 <div className="detail-row"><dt>所属主线</dt><dd>{candidate?.primary_theme ?? candidate?.themes?.join("、") ?? "未映射"}</dd></div>
+                <div className="detail-row"><dt>首次入选</dt><dd>{formatDateTime(candidate?.first_selected_at)} · {formatPrice(candidate?.first_selected_price)}</dd></div>
+                <div className="detail-row"><dt>行情时间</dt><dd>{formatDateTime(candidate?.quote_at ?? candidate?.quote_refreshed_at)}</dd></div>
                 <div className="detail-row"><dt>参与条件</dt><dd>{plan?.entry_plan ?? plan?.confirmation ?? "等待条件确认"}</dd></div>
                 <div className="detail-row"><dt>失效条件</dt><dd>{plan?.invalidation ?? (target?.stop_price == null ? "未覆盖" : `跌破 ${formatPrice(target.stop_price)}`)}</dd></div>
                 <div className="detail-row"><dt>仓位提示</dt><dd>{plan?.position_note ?? "按市场闸门与计划仓位执行"}</dd></div>

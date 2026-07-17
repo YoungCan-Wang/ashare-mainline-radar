@@ -6,55 +6,12 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
-DASHBOARD_SCHEMA_VERSION = "radar-dashboard-v1"
+from .quotes import ACTIONABLE_ROLES
+from .supabase_rest import fetch_rows
 
-
-def _request_headers(api_key: str, ingest_key: str) -> dict[str, str]:
-    headers = {
-        "apikey": api_key,
-        "x-radar-ingest-key": ingest_key,
-        "Accept": "application/json",
-        "User-Agent": "ashare-mainline-radar",
-    }
-    if api_key.startswith("eyJ"):
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
-
-
-def _fetch_rows(
-    base_url: str,
-    api_key: str,
-    ingest_key: str,
-    table: str,
-    *,
-    order: str,
-    max_rows: int,
-    filters: dict[str, str] | None = None,
-    opener: Callable[..., Any] = urlopen,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    page_size = 1000
-    offset = 0
-    while offset < max_rows:
-        limit = min(page_size, max_rows - offset)
-        query = {"select": "*", "order": order, "offset": str(offset), "limit": str(limit)}
-        query.update(filters or {})
-        request = Request(
-            f"{base_url.rstrip('/')}/rest/v1/{table}?{urlencode(query, safe=',.*()')}",
-            headers=_request_headers(api_key, ingest_key),
-        )
-        with opener(request, timeout=30) as response:
-            page = json.loads(response.read().decode("utf-8"))
-        if not isinstance(page, list):
-            raise RuntimeError(f"Supabase query for {table} did not return a list")
-        rows.extend(item for item in page if isinstance(item, dict))
-        if len(page) < limit:
-            break
-        offset += limit
-    return rows
+DASHBOARD_SCHEMA_VERSION = "radar-dashboard-v2"
 
 
 def fetch_dashboard_history(
@@ -68,9 +25,9 @@ def fetch_dashboard_history(
     api_key = supabase_publishable_key or os.getenv("SUPABASE_PUBLISHABLE_KEY")
     ingest_key = radar_ingest_key or os.getenv("RADAR_INGEST_KEY")
     if not url or not api_key or not ingest_key:
-        return {"runs": [], "themes": [], "symbols": []}
+        return {"runs": [], "themes": [], "symbols": [], "selections": [], "quotes": []}
 
-    runs = _fetch_rows(
+    runs = fetch_rows(
         url,
         api_key,
         ingest_key,
@@ -81,7 +38,7 @@ def fetch_dashboard_history(
     )
     earliest_date = min((str(run.get("market_date")) for run in runs if run.get("market_date")), default=None)
     filters = {"market_date": f"gte.{earliest_date}"} if earliest_date else None
-    themes = _fetch_rows(
+    themes = fetch_rows(
         url,
         api_key,
         ingest_key,
@@ -91,7 +48,7 @@ def fetch_dashboard_history(
         filters=filters,
         opener=opener,
     )
-    symbols = _fetch_rows(
+    symbols = fetch_rows(
         url,
         api_key,
         ingest_key,
@@ -101,7 +58,25 @@ def fetch_dashboard_history(
         filters=filters,
         opener=opener,
     )
-    return {"runs": runs, "themes": themes, "symbols": symbols}
+    selections = fetch_rows(
+        url,
+        api_key,
+        ingest_key,
+        "radar_symbol_selections",
+        order="first_selected_at.asc",
+        max_rows=10000,
+        opener=opener,
+    )
+    quotes = fetch_rows(
+        url,
+        api_key,
+        ingest_key,
+        "radar_symbol_quotes",
+        order="refreshed_at.desc",
+        max_rows=10000,
+        opener=opener,
+    )
+    return {"runs": runs, "themes": themes, "symbols": symbols, "selections": selections, "quotes": quotes}
 
 
 def _merge_rows(
@@ -118,7 +93,7 @@ def _merge_rows(
 def build_dashboard_payload(
     bundle: dict[str, Any], history: dict[str, list[dict[str, Any]]] | None = None
 ) -> dict[str, Any]:
-    history = history or {"runs": [], "themes": [], "symbols": []}
+    history = history or {"runs": [], "themes": [], "symbols": [], "selections": [], "quotes": []}
     current_run = bundle.get("run") if isinstance(bundle.get("run"), dict) else {}
     local_runs = [current_run] if current_run else []
     local_themes = [row for row in bundle.get("themes", []) if isinstance(row, dict)]
@@ -127,6 +102,55 @@ def build_dashboard_payload(
     runs = _merge_rows(history.get("runs", []), local_runs, ("run_key",))
     themes = _merge_rows(history.get("themes", []), local_themes, ("run_key", "theme"))
     symbols = _merge_rows(history.get("symbols", []), local_symbols, ("run_key", "symbol"))
+    selections = {
+        str(row.get("symbol")): row
+        for row in history.get("selections", [])
+        if isinstance(row, dict) and row.get("symbol")
+    }
+    quotes = {
+        str(row.get("symbol")): row
+        for row in history.get("quotes", [])
+        if isinstance(row, dict) and row.get("symbol")
+    }
+    enriched_symbols = []
+    for row in symbols:
+        enriched = dict(row)
+        symbol = str(row.get("symbol") or "")
+        selection = selections.get(symbol)
+        roles = row.get("roles") if isinstance(row.get("roles"), list) else []
+        if selection is None and ACTIONABLE_ROLES.intersection(str(role) for role in roles) and row.get("last_close"):
+            selection = {
+                "first_selected_at": row.get("updated_at"),
+                "first_market_date": row.get("market_date"),
+                "first_selected_price": row.get("last_close"),
+            }
+        quote = quotes.get(symbol)
+        if selection:
+            enriched.update(
+                {
+                    "first_selected_at": selection.get("first_selected_at"),
+                    "first_market_date": selection.get("first_market_date"),
+                    "first_selected_price": selection.get("first_selected_price"),
+                }
+            )
+        if quote:
+            enriched.update(
+                {
+                    "latest_price": quote.get("latest_price"),
+                    "quote_at": quote.get("quote_at"),
+                    "quote_date": quote.get("quote_date"),
+                    "quote_refreshed_at": quote.get("refreshed_at"),
+                    "daily_change_pct": quote.get("daily_change_pct"),
+                }
+            )
+        else:
+            enriched["latest_price"] = row.get("last_close")
+        selected_price = enriched.get("first_selected_price")
+        latest_price = enriched.get("latest_price")
+        if selected_price and latest_price:
+            enriched["return_since_selection"] = float(latest_price) / float(selected_price) - 1
+        enriched_symbols.append(enriched)
+    symbols = enriched_symbols
     runs.sort(key=lambda row: (str(row.get("market_date") or ""), str(row.get("generated_at") or "")), reverse=True)
     run_order = {str(row.get("run_key")): index for index, row in enumerate(runs)}
     themes.sort(key=lambda row: (run_order.get(str(row.get("run_key")), 9999), int(row.get("rank") or 9999)))
@@ -140,7 +164,11 @@ def build_dashboard_payload(
     return {
         "schema_version": DASHBOARD_SCHEMA_VERSION,
         "built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "current_run_key": current_run.get("run_key"),
+        "current_run_key": current_run.get("run_key") or (runs[0].get("run_key") if runs else None),
+        "quote_refreshed_at": max(
+            (str(row.get("refreshed_at")) for row in quotes.values() if row.get("refreshed_at")),
+            default=None,
+        ),
         "runs": runs,
         "themes": themes,
         "symbols": symbols,
@@ -148,13 +176,13 @@ def build_dashboard_payload(
 
 
 def write_dashboard(
-    bundle_path: str | Path,
+    bundle_path: str | Path | None,
     output_dir: str | Path,
     source_dir: str | Path,
     *,
     history: dict[str, list[dict[str, Any]]] | None = None,
 ) -> Path:
-    bundle = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
+    bundle = json.loads(Path(bundle_path).read_text(encoding="utf-8")) if bundle_path else {}
     payload = build_dashboard_payload(bundle, history)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)

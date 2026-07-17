@@ -12,7 +12,7 @@ from ashare_mainline_radar.dashboard import fetch_dashboard_history, write_dashb
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the static A-share radar dashboard.")
-    parser.add_argument("--bundle", type=Path, default=Path("reports/latest/storage_bundle.json"))
+    parser.add_argument("--bundle", type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path("reports/latest/dashboard"))
     parser.add_argument("--source-dir", type=Path, default=Path("dashboard/dist"))
     parser.add_argument("--local-only", action="store_true")

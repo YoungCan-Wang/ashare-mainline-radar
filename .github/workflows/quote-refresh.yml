@@ -1,0 +1,74 @@
+name: Refresh selected symbol quotes
+
+concurrency:
+  group: tickflow-api-${{ github.repository }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      allow_stale:
+        description: "Accept the provider's latest quote when today is not a trading day"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # Beijing time: 10:30, 11:30, 14:00 and 15:10 on weekdays.
+    - cron: "30 2 * * 1-5"
+    - cron: "30 3 * * 1-5"
+    - cron: "0 6 * * 1-5"
+    - cron: "10 7 * * 1-5"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+      RADAR_INGEST_KEY: ${{ secrets.RADAR_INGEST_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Refresh current quotes
+        id: quotes
+        run: >-
+          python scripts/refresh_quotes.py
+          ${{ inputs.allow_stale && '--allow-stale' || '' }}
+      - name: Build dashboard application
+        if: steps.quotes.outputs.should_deploy == 'true'
+        run: |
+          npm ci --prefix dashboard
+          npm run build --prefix dashboard
+      - name: Build refreshed dashboard
+        if: steps.quotes.outputs.should_deploy == 'true'
+        run: >-
+          python scripts/build_dashboard.py
+          --output-dir reports/quotes/dashboard
+          --source-dir dashboard/dist
+      - name: Upload quote refresh
+        uses: actions/upload-artifact@v4
+        with:
+          name: ashare-mainline-quotes
+          path: reports/quotes
+          retention-days: 30
+      - name: Deploy dashboard to Vercel
+        if: steps.quotes.outputs.should_deploy == 'true' && github.ref == 'refs/heads/main'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: >-
+          npx --yes vercel@56.3.1 deploy reports/quotes/dashboard
+          --prod --yes --token "$VERCEL_TOKEN"

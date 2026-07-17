@@ -5,12 +5,12 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 from .models import RadarReport
+from .supabase_rest import upsert_rows
 
-SCHEMA_VERSION = "radar-storage-v1"
+SCHEMA_VERSION = "radar-storage-v2"
 ROLE_ORDER = (
     "next_buy",
     "strong_stock",
@@ -21,6 +21,7 @@ ROLE_ORDER = (
     "leader_tape",
     "market_watchlist",
 )
+ACTIONABLE_ROLES = ROLE_ORDER[:6]
 
 
 @dataclass(frozen=True)
@@ -241,43 +242,16 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
     }
     return {
         "schema_version": SCHEMA_VERSION,
+        "tracking_policy": {
+            "selection_roles": list(ACTIONABLE_ROLES),
+            "first_selected_at_source": "symbol_snapshot.updated_at",
+            "first_selected_price_source": "symbol_snapshot.last_close",
+            "live_quote_source": "radar_symbol_quotes",
+        },
         "run": run,
         "themes": themes,
         "symbols": list(symbols.values()),
     }
-
-
-def _upsert(
-    base_url: str,
-    api_key: str,
-    ingest_key: str | None,
-    table: str,
-    conflict_columns: str,
-    rows: list[dict[str, Any]],
-    opener: Callable[..., Any],
-) -> None:
-    if not rows:
-        return
-    query = urlencode({"on_conflict": conflict_columns}, safe=",")
-    headers = {
-        "apikey": api_key,
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=minimal",
-        "User-Agent": "ashare-mainline-radar",
-    }
-    if api_key.startswith("eyJ"):
-        headers["Authorization"] = f"Bearer {api_key}"
-    if ingest_key:
-        headers["x-radar-ingest-key"] = ingest_key
-    request = Request(
-        f"{base_url.rstrip('/')}/rest/v1/{table}?{query}",
-        data=json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-        method="POST",
-        headers=headers,
-    )
-    with opener(request, timeout=30) as response:
-        if not 200 <= response.status < 300:
-            raise RuntimeError(f"Supabase upsert to {table} returned HTTP {response.status}")
 
 
 def persist_report(
@@ -336,8 +310,8 @@ def persist_report(
         )
     elif resolved_backend == "supabase":
         try:
-            _upsert(str(url), str(api_key), ingest_key, "radar_runs", "run_key", [bundle["run"]], opener)
-            _upsert(
+            upsert_rows(str(url), str(api_key), ingest_key, "radar_runs", "run_key", [bundle["run"]], opener)
+            upsert_rows(
                 str(url),
                 str(api_key),
                 ingest_key,
@@ -346,7 +320,7 @@ def persist_report(
                 bundle["themes"],
                 opener,
             )
-            _upsert(
+            upsert_rows(
                 str(url),
                 str(api_key),
                 ingest_key,

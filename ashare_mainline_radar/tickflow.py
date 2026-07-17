@@ -9,6 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from .models import KlineSeries
@@ -20,6 +21,17 @@ DEFAULT_MIN_INTERVAL = 2.05
 
 class TickFlowError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class QuoteSnapshot:
+    symbol: str
+    last_price: float
+    prev_close: float | None
+    change_pct: float | None
+    timestamp: int
+    session: str | None
+    name: str | None
 
 
 T = TypeVar("T")
@@ -144,6 +156,32 @@ class TickFlowClient:
                 if parsed.usable:
                     series[symbol] = parsed
         return series
+
+    def get_quotes(self, symbols: list[str], chunk_size: int = 100) -> dict[str, QuoteSnapshot]:
+        if not self.api_key:
+            raise TickFlowError("TICKFLOW_API_KEY is required for realtime quotes")
+        quotes: dict[str, QuoteSnapshot] = {}
+        for batch in chunked(symbols, chunk_size):
+            payload = self._request("GET", "/v1/quotes", params={"symbols": ",".join(batch)})
+            for item in payload.get("data") or []:
+                if not isinstance(item, dict):
+                    continue
+                symbol = str(item.get("symbol") or "")
+                last_price = item.get("last_price")
+                timestamp = item.get("timestamp")
+                if not symbol or last_price is None or timestamp is None or float(last_price) <= 0:
+                    continue
+                ext = item.get("ext") if isinstance(item.get("ext"), dict) else {}
+                quotes[symbol] = QuoteSnapshot(
+                    symbol=symbol,
+                    last_price=float(last_price),
+                    prev_close=float(item["prev_close"]) if item.get("prev_close") is not None else None,
+                    change_pct=float(ext["change_pct"]) if ext.get("change_pct") is not None else None,
+                    timestamp=int(timestamp),
+                    session=str(item["session"]) if item.get("session") else None,
+                    name=str(ext["name"]) if ext.get("name") else None,
+                )
+        return quotes
 
     def get_financial_metrics(self, symbols: list[str], chunk_size: int = 80) -> dict[str, list[dict[str, Any]]]:
         metrics: dict[str, list[dict[str, Any]]] = {}

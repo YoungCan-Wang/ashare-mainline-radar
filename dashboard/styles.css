@@ -474,7 +474,20 @@ select {
 
 .filter-controls {
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.sort-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.sort-control svg {
+  width: 16px;
+  height: 16px;
 }
 
 .search-control {
@@ -535,7 +548,31 @@ select {
 }
 
 .candidate-table {
-  min-width: 980px;
+  min-width: 1280px;
+}
+
+.selection-time {
+  color: var(--muted);
+}
+
+.current-price {
+  font-weight: 700;
+}
+
+.return-value {
+  font-weight: 720;
+}
+
+.return-value.positive {
+  color: var(--red);
+}
+
+.return-value.negative {
+  color: var(--green);
+}
+
+.return-value.neutral {
+  color: var(--muted);
 }
 
 .candidate-table td {
@@ -924,7 +961,7 @@ select {
   }
 
   .filter-controls .select-control {
-    width: 128px;
+    width: 132px;
   }
 
   .page-footer {
@@ -943,14 +980,18 @@ select {
     table-layout: fixed;
   }
 
+  .candidate-table th:nth-child(2),
+  .candidate-table td:nth-child(2),
   .candidate-table th:nth-child(4),
   .candidate-table td:nth-child(4),
-  .candidate-table th:nth-child(5),
-  .candidate-table td:nth-child(5),
-  .candidate-table th:nth-child(6),
-  .candidate-table td:nth-child(6),
   .candidate-table th:nth-child(7),
-  .candidate-table td:nth-child(7) {
+  .candidate-table td:nth-child(7),
+  .candidate-table th:nth-child(8),
+  .candidate-table td:nth-child(8),
+  .candidate-table th:nth-child(9),
+  .candidate-table td:nth-child(9),
+  .candidate-table th:nth-child(10),
+  .candidate-table td:nth-child(10) {
     display: none;
   }
 
@@ -965,9 +1006,19 @@ select {
     width: 31%;
   }
 
-  .candidate-table th:nth-child(2),
-  .candidate-table td:nth-child(2) {
-    width: 25%;
+  .candidate-table th:nth-child(3),
+  .candidate-table td:nth-child(3) {
+    width: 23%;
+  }
+
+  .candidate-table th:nth-child(5),
+  .candidate-table td:nth-child(5) {
+    width: 17%;
+  }
+
+  .candidate-table th:nth-child(6),
+  .candidate-table td:nth-child(6) {
+    width: 21%;
   }
 
   .candidate-table th:last-child,

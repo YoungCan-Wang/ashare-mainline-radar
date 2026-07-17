@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from ashare_mainline_radar.dashboard import build_dashboard_payload, fetch_dashboard_history, write_dashboard
 
 
@@ -37,6 +39,23 @@ def test_dashboard_payload_merges_local_run_over_remote() -> None:
         "runs": [{"run_key": "cn:2026-07-17:universe:CN_Equity_A", "top_theme": "旧值"}],
         "themes": [],
         "symbols": [],
+        "selections": [
+            {
+                "symbol": "300122.SZ",
+                "first_selected_at": "2026-07-16T08:45:00+00:00",
+                "first_market_date": "2026-07-16",
+                "first_selected_price": 35.0,
+            }
+        ],
+        "quotes": [
+            {
+                "symbol": "300122.SZ",
+                "latest_price": 38.5,
+                "daily_change_pct": 0.03,
+                "quote_at": "2026-07-17T07:00:00+00:00",
+                "refreshed_at": "2026-07-17T07:01:00+00:00",
+            }
+        ],
     }
 
     payload = build_dashboard_payload(_bundle(), history)
@@ -45,6 +64,9 @@ def test_dashboard_payload_merges_local_run_over_remote() -> None:
     assert payload["runs"][0]["top_theme"] == "创新药"
     assert payload["themes"][0]["theme"] == "创新药"
     assert payload["symbols"][0]["symbol"] == "300122.SZ"
+    assert payload["symbols"][0]["first_selected_price"] == 35.0
+    assert payload["symbols"][0]["latest_price"] == 38.5
+    assert payload["symbols"][0]["return_since_selection"] == pytest.approx(0.1)
 
 
 def test_fetch_dashboard_history_paginates_and_scopes_requests() -> None:
@@ -76,7 +98,7 @@ def test_fetch_dashboard_history_paginates_and_scopes_requests() -> None:
         opener=opener,
     )
 
-    assert len(requests) == 3
+    assert len(requests) == 5
     assert requests[0][0].get_header("X-radar-ingest-key") == "private-key"
     assert history["runs"][0]["run_key"] == "r1"
 

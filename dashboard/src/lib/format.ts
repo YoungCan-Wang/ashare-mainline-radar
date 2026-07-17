@@ -24,6 +24,17 @@ export function formatPercent(value: number | undefined): string {
   return value != null && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "--";
 }
 
+export function formatSignedPercent(value: number | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "--";
+  const percent = value * 100;
+  return `${percent > 0 ? "+" : ""}${percent.toFixed(1)}%`;
+}
+
+export function returnTone(value: number | undefined): "positive" | "negative" | "neutral" {
+  if (value == null || value === 0) return "neutral";
+  return value > 0 ? "positive" : "negative";
+}
+
 export function formatMetricPercent(value: number | undefined): string {
   return value != null && Number.isFinite(value) ? `${value.toFixed(1)}%` : "--";
 }

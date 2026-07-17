@@ -76,7 +76,8 @@ def test_artifact_backend_writes_portable_bundle_and_status(tmp_path) -> None:
     assert status.symbol_records == 1
     bundle = json.loads((tmp_path / "storage_bundle.json").read_text(encoding="utf-8"))
     persisted_status = json.loads((tmp_path / "storage_status.json").read_text(encoding="utf-8"))
-    assert bundle["schema_version"] == "radar-storage-v1"
+    assert bundle["schema_version"] == "radar-storage-v2"
+    assert bundle["tracking_policy"]["first_selected_price_source"] == "symbol_snapshot.last_close"
     assert persisted_status["backend"] == "artifact"
 
 
