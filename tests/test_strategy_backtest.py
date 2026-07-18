@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from inspect import signature
 
 import pytest
 
@@ -14,6 +15,7 @@ from ashare_mainline_radar.strategy_backtest import (
     _selection_score,
     _theme_vehicle_execution,
     sample_breadth_symbols,
+    simulate_variant,
 )
 
 
@@ -250,3 +252,9 @@ def test_theme_vehicle_execution_uses_first_tradeable_configured_etf() -> None:
     assert selected is not None
     assert selected[0] == "510002.SH"
     assert selected[1] == "测试ETF"
+
+
+def test_production_simulation_keeps_two_day_theme_exit_default() -> None:
+    parameter = signature(simulate_variant).parameters["theme_exit_days"]
+
+    assert parameter.default == 2

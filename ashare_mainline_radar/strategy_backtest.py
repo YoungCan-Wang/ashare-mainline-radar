@@ -102,6 +102,7 @@ class BacktestVariant:
     test: BacktestMetrics
     trades: list[StrategyTrade] = field(default_factory=list)
     execution_stats: SimulationStats = field(default_factory=SimulationStats)
+    theme_exit_days: int | None = 2
 
 
 @dataclass
@@ -181,6 +182,10 @@ class RobustnessAudit:
     signal_vehicle_stable_holds: int
     signal_vehicle_total_holds: int
     signal_vehicle_verdict: str
+    stock_exit_policy_stable: int
+    signal_vehicle_exit_policy_stable: int
+    exit_policy_variants_per_mode: int
+    exit_policy_verdict: str
     positive_position_capacities: int
     total_position_capacities: int
     positive_signal_profiles: int
@@ -308,6 +313,11 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
             f"持有期稳定 {report.robustness.signal_vehicle_stable_holds}/"
             f"{report.robustness.signal_vehicle_total_holds}",
             f"- ETF执行挑战者结论：**{report.robustness.signal_vehicle_verdict}**",
+            f"- 主题退出敏感性：股票执行 {report.robustness.stock_exit_policy_stable}/"
+            f"{report.robustness.exit_policy_variants_per_mode}、ETF执行 "
+            f"{report.robustness.signal_vehicle_exit_policy_stable}/"
+            f"{report.robustness.exit_policy_variants_per_mode} 档在验证与留出均为正",
+            f"- 退出状态机结论：**{report.robustness.exit_policy_verdict}**",
             f"- 仓位容量稳定性：{report.robustness.positive_position_capacities}/"
             f"{report.robustness.total_position_capacities} 档在验证段和留出段均为正",
             f"- 入场强度稳定性：{report.robustness.positive_signal_profiles}/"
@@ -851,6 +861,7 @@ def simulate_variant(
     gate_cache: dict[int, str],
     breadth_symbols: set[str],
     theme_cache: dict[tuple[str, int], set[str]],
+    theme_exit_days: int | None = 2,
 ) -> tuple[list[StrategyTrade], SimulationStats]:
     strategy_config = _etf_proxy_config(theme_config) if signal_mode == "etf_proxy" else theme_config
     config_by_theme = {str(item["name"]): item for item in theme_config.get("themes", [])}
@@ -1006,16 +1017,20 @@ def simulate_variant(
                     exit_index = check_index + 1
                     break
                 check_timestamp = calendar[check_index]
-                if theme_name in active_themes(check_timestamp):
-                    inactive_theme_days = 0
-                else:
-                    inactive_theme_days += 1
-                if inactive_theme_days >= 2:
-                    exit_timestamp = calendar[check_index + 1]
-                    exit_field = "open"
-                    exit_reason = "主线连续两日退出前三或失去候选身份，次日开盘退出"
-                    exit_index = check_index + 1
-                    break
+                if theme_exit_days is not None:
+                    if theme_name in active_themes(check_timestamp):
+                        inactive_theme_days = 0
+                    else:
+                        inactive_theme_days += 1
+                    if inactive_theme_days >= theme_exit_days:
+                        exit_days_text = "两" if theme_exit_days == 2 else str(theme_exit_days)
+                        exit_timestamp = calendar[check_index + 1]
+                        exit_field = "open"
+                        exit_reason = (
+                            f"主线连续{exit_days_text}日退出前三或失去候选身份，次日开盘退出"
+                        )
+                        exit_index = check_index + 1
+                        break
             resolved_exit_index, raw_exit_price, limit_down_delays, suspension_delays = _find_sellable_exit(
                 series,
                 calendar,
@@ -1474,6 +1489,52 @@ def run_strategy_backtest(
             )
         )
 
+    for signal_mode in ("stock_basket", "stock_signal_theme_vehicle"):
+        for theme_exit_days in (3, None):
+            trades, execution_stats = simulate_variant(
+                theme_config,
+                a_klines,
+                a_instruments,
+                hk_klines,
+                hk_instruments,
+                15,
+                "off",
+                signal_mode,
+                cost_model,
+                stop_loss,
+                position_fraction,
+                2,
+                "base",
+                warmup_days,
+                gate_cache,
+                breadth_symbols,
+                theme_cache,
+                theme_exit_days=theme_exit_days,
+            )
+            train = [trade for trade in trades if trade.signal_date <= train_end_date]
+            validation = [trade for trade in trades if train_end_date < trade.signal_date <= validation_end_date]
+            test = [trade for trade in trades if trade.signal_date > validation_end_date]
+            exit_label = str(theme_exit_days) if theme_exit_days is not None else "off"
+            variants.append(
+                BacktestVariant(
+                    name=f"{signal_mode}_positions_2_hold_15_off_theme_exit_{exit_label}",
+                    hold_days=15,
+                    max_positions=2,
+                    cross_market_mode="off",
+                    signal_mode=signal_mode,
+                    signal_profile="base",
+                    position_fraction=position_fraction,
+                    stop_loss=stop_loss,
+                    all_period=_metrics(trades, a_klines),
+                    train=_metrics(train, a_klines),
+                    validation=_metrics(validation, a_klines),
+                    test=_metrics(test, a_klines),
+                    trades=trades,
+                    execution_stats=execution_stats,
+                    theme_exit_days=theme_exit_days,
+                )
+            )
+
     for signal_profile in ("loose", "strict"):
         trades, execution_stats = simulate_variant(
             theme_config,
@@ -1707,6 +1768,31 @@ def run_strategy_backtest(
         and (signal_vehicle_core.test.cumulative_return or 0) > 0
         and (signal_vehicle_core.test.max_drawdown or -1) >= -0.15
     )
+    exit_policy_variants_by_mode = {
+        signal_mode: [
+            item
+            for item in variants
+            if item.signal_mode == signal_mode
+            and item.max_positions == 2
+            and item.hold_days == 15
+            and item.cross_market_mode == "off"
+            and item.signal_profile == "base"
+            and item.position_fraction == position_fraction
+            and item.stop_loss == stop_loss
+            and item.theme_exit_days in {2, 3, None}
+        ]
+        for signal_mode in ("stock_basket", "stock_signal_theme_vehicle")
+    }
+    stock_exit_policy_stable = sum(
+        (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
+        for item in exit_policy_variants_by_mode["stock_basket"]
+    )
+    signal_vehicle_exit_policy_stable = sum(
+        (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
+        for item in exit_policy_variants_by_mode["stock_signal_theme_vehicle"]
+    )
+    exit_policy_total = len(exit_policy_variants_by_mode["stock_basket"])
+    exit_policy_has_candidate = max(stock_exit_policy_stable, signal_vehicle_exit_policy_stable) >= 2
     position_capacity_variants = [
         item
         for item in variants
@@ -1832,6 +1918,14 @@ def run_strategy_backtest(
             if signal_vehicle_pass
             else "ETF执行未通过跨时期门槛，不进入生产"
         ),
+        stock_exit_policy_stable=stock_exit_policy_stable,
+        signal_vehicle_exit_policy_stable=signal_vehicle_exit_policy_stable,
+        exit_policy_variants_per_mode=exit_policy_total,
+        exit_policy_verdict=(
+            "退出结构存在跨期候选，继续滚动模拟验证"
+            if exit_policy_has_candidate
+            else "退出结构对验证和留出不稳定，保持生产默认值"
+        ),
         positive_position_capacities=positive_position_capacities,
         total_position_capacities=len(position_capacity_variants),
         positive_signal_profiles=positive_signal_profiles,
@@ -1912,6 +2006,7 @@ def run_strategy_backtest(
             "未使用历史财务公告和历史政策新闻，回测只检验价格主线与A/H确认增量。",
             "主线内选股归因使用每个主题配置中首个具备完整同期行情的ETF，并按个股完全相同的进出日期、仓位和ETF交易成本计算；无ETF主题不纳入可比交易。",
             "个股先行信号+主题ETF执行是独立挑战者：主线和个股只负责产生触发，实际成交、止损和退出均使用主题ETF自身行情；即使过线也只进入模拟观察。",
+            "退出状态机额外审计连续2日、连续3日和不按主题排名退出三档；不按主题排名退出仍保留8%硬失效位与固定持有到期，审计结果不会自动修改生产默认值。",
             f"A/H确认在 {stable_increment_holds}/3 个持有期使验证段、最终留出段累计收益均为正且高于未确认版；"
             "达到历史门槛也只进入模拟观察，不直接提高实盘评分。",
         ],
