@@ -50,6 +50,14 @@ class StrategyTrade:
     exit_delay_days: int = 0
     market_gate: str | None = None
     signal_status: str | None = None
+    signal_score: float | None = None
+    signal_ret_5d: float | None = None
+    signal_ret_20d: float | None = None
+    signal_amount_ratio: float | None = None
+    signal_high_proximity_20d: float | None = None
+    theme_vehicle_symbol: str | None = None
+    theme_vehicle_net_return: float | None = None
+    stock_selection_excess: float | None = None
 
 
 @dataclass
@@ -138,6 +146,17 @@ class GroupDiagnostic:
 
 
 @dataclass
+class SelectionAttribution:
+    period: str
+    stock_trades: int
+    matched_trades: int
+    avg_stock_net_return: float | None
+    avg_theme_vehicle_net_return: float | None
+    avg_stock_selection_excess: float | None
+    portfolio_selection_contribution: float | None
+
+
+@dataclass
 class RobustnessAudit:
     default_variant: str
     positive_folds: int
@@ -163,6 +182,7 @@ class RobustnessAudit:
     walk_forward: WalkForwardAudit
     exit_diagnostics: list[GroupDiagnostic]
     gate_diagnostics: list[GroupDiagnostic]
+    selection_attribution: list[SelectionAttribution]
     verdict: str
 
 
@@ -333,6 +353,25 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
         lines.append(
             f"| {item.group} | {item.trades} | {_percent(item.win_rate)} | "
             f"{_percent(item.avg_net_return)} | {_percent(item.portfolio_contribution)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 主线时机与主线内选股归因",
+            "",
+            "将每笔个股交易按完全相同的进出日期和仓位映射到该主题首个有完整行情的ETF；"
+            "该对照不改变交易，只判断收益来自主线时机还是个股选择。",
+            "",
+            "| 区间 | 个股交易 | ETF可比交易 | 个股单笔净收益 | 主题ETF单笔净收益 | 个股选择超额 | 组合选股贡献 |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for item in report.robustness.selection_attribution:
+        lines.append(
+            f"| {item.period} | {item.stock_trades} | {item.matched_trades} | "
+            f"{_percent(item.avg_stock_net_return)} | {_percent(item.avg_theme_vehicle_net_return)} | "
+            f"{_percent(item.avg_stock_selection_excess)} | "
+            f"{_percent(item.portfolio_selection_contribution)} |"
         )
     lines.extend(["", "## 审计说明", ""])
     lines.extend(f"- {note}" for note in report.notes)
@@ -719,6 +758,40 @@ def _find_sellable_exit(
     return None, None, limit_down_delays, suspension_delays
 
 
+def _theme_vehicle_comparison(
+    theme: dict[str, Any] | None,
+    klines: dict[str, KlineSeries],
+    entry_timestamp: int,
+    exit_timestamp: int,
+    exit_field: str,
+    entry_date: str,
+    exit_date: str,
+    position_fraction: float,
+    cost_model: TradingCostModel,
+) -> tuple[str | None, float | None]:
+    if theme is None:
+        return None, None
+    for symbol in theme.get("vehicles", []):
+        series = klines.get(str(symbol))
+        if series is None:
+            continue
+        raw_entry_price = _price_at(series, entry_timestamp, "open")
+        raw_exit_price = _price_at(series, exit_timestamp, exit_field)
+        if not raw_entry_price or not raw_exit_price:
+            continue
+        cost = apply_execution_costs(
+            raw_entry_price,
+            raw_exit_price,
+            entry_date,
+            exit_date,
+            cost_model.account_capital * position_fraction,
+            is_fund=True,
+            cost_model=cost_model,
+        )
+        return str(symbol), float(cost["net_return"])
+    return None, None
+
+
 def simulate_variant(
     theme_config: dict[str, Any],
     a_klines: dict[str, KlineSeries],
@@ -739,6 +812,7 @@ def simulate_variant(
     theme_cache: dict[tuple[str, int], set[str]],
 ) -> tuple[list[StrategyTrade], SimulationStats]:
     strategy_config = _etf_proxy_config(theme_config) if signal_mode == "etf_proxy" else theme_config
+    config_by_theme = {str(item["name"]): item for item in theme_config.get("themes", [])}
     calendar = _calendar(a_klines)
     symbol_to_themes = theme_symbol_map(strategy_config)
     strategy_symbols = set(configured_symbols(strategy_config))
@@ -877,6 +951,7 @@ def simulate_variant(
                 continue
             if resolved_exit_index != exit_index:
                 exit_reason += f"；因跌停或停牌延迟{resolved_exit_index - exit_index}日"
+                exit_field = "open"
             exit_index = resolved_exit_index
             exit_timestamp = calendar[exit_index]
             entry_date = cn_market_date_from_ms(entry_timestamp) or ""
@@ -889,6 +964,22 @@ def simulate_variant(
                 cost_model.account_capital * trade_position_fraction,
                 is_fund=is_fund_security(candidate.name),
                 cost_model=cost_model,
+            )
+            vehicle_symbol, vehicle_net_return = _theme_vehicle_comparison(
+                config_by_theme.get(theme_name),
+                a_klines,
+                entry_timestamp,
+                exit_timestamp,
+                exit_field,
+                entry_date,
+                exit_date,
+                trade_position_fraction,
+                cost_model,
+            )
+            stock_selection_excess = (
+                float(cost["net_return"]) - vehicle_net_return
+                if vehicle_net_return is not None and signal_mode == "stock_basket"
+                else None
             )
             trades.append(
                 StrategyTrade(
@@ -915,6 +1006,14 @@ def simulate_variant(
                     exit_delay_days=limit_down_delays + suspension_delays,
                     market_gate=entry_gate,
                     signal_status=candidate.status,
+                    signal_score=candidate.score,
+                    signal_ret_5d=candidate.ret_5d,
+                    signal_ret_20d=candidate.ret_20d,
+                    signal_amount_ratio=candidate.amount_ratio,
+                    signal_high_proximity_20d=candidate.high_proximity_20d,
+                    theme_vehicle_symbol=vehicle_symbol if signal_mode == "stock_basket" else None,
+                    theme_vehicle_net_return=vehicle_net_return if signal_mode == "stock_basket" else None,
+                    stock_selection_excess=stock_selection_excess,
                 )
             )
             planned_positions.append((exit_index, candidate.symbol, theme_name))
@@ -1126,6 +1225,49 @@ def _group_diagnostics(
             )
         )
     return diagnostics
+
+
+def _selection_attribution(
+    trades: list[StrategyTrade],
+    train_end_date: str,
+    validation_end_date: str,
+) -> list[SelectionAttribution]:
+    periods = (
+        ("全期", trades),
+        ("训练", [trade for trade in trades if trade.signal_date <= train_end_date]),
+        (
+            "验证",
+            [trade for trade in trades if train_end_date < trade.signal_date <= validation_end_date],
+        ),
+        ("最终留出", [trade for trade in trades if trade.signal_date > validation_end_date]),
+    )
+    results: list[SelectionAttribution] = []
+    for period, rows in periods:
+        matched = [
+            trade
+            for trade in rows
+            if trade.theme_vehicle_net_return is not None and trade.stock_selection_excess is not None
+        ]
+        results.append(
+            SelectionAttribution(
+                period=period,
+                stock_trades=len(rows),
+                matched_trades=len(matched),
+                avg_stock_net_return=(fmean(trade.net_return for trade in matched) if matched else None),
+                avg_theme_vehicle_net_return=(
+                    fmean(float(trade.theme_vehicle_net_return) for trade in matched) if matched else None
+                ),
+                avg_stock_selection_excess=(
+                    fmean(float(trade.stock_selection_excess) for trade in matched) if matched else None
+                ),
+                portfolio_selection_contribution=(
+                    sum(float(trade.stock_selection_excess) * trade.position_fraction for trade in matched)
+                    if matched
+                    else None
+                ),
+            )
+        )
+    return results
 
 
 def _top_profit_share(trades: list[StrategyTrade]) -> float | None:
@@ -1526,6 +1668,11 @@ def run_strategy_backtest(
         walk_forward=walk_forward,
         exit_diagnostics=_group_diagnostics(default_variant.trades, "exit"),
         gate_diagnostics=_group_diagnostics(default_variant.trades, "gate"),
+        selection_attribution=_selection_attribution(
+            default_variant.trades,
+            train_end_date,
+            validation_end_date,
+        ),
         verdict=("核心规则通过第一轮反过拟合审计" if robustness_pass else "核心规则未通过反过拟合审计，继续研究"),
     )
     confirmed_core_folds = _time_folds(confirmed_core.trades, calendar, benchmark, a_klines, warmup_days)
@@ -1588,6 +1735,7 @@ def run_strategy_backtest(
             "主题个股成分和市场广度样本来自当前可见股票池，仍有退市股票缺失造成的幸存者偏差。",
             "历史风险警示名称不完整，ST状态无法逐日恢复；能够从当日名称识别时按主板5%限制处理，否则按所属板块普通涨跌幅处理。",
             "未使用历史财务公告和历史政策新闻，回测只检验价格主线与A/H确认增量。",
+            "主线内选股归因使用每个主题配置中首个具备完整同期行情的ETF，并按个股完全相同的进出日期、仓位和ETF交易成本计算；无ETF主题不纳入可比交易。",
             f"A/H确认在 {stable_increment_holds}/3 个持有期使验证段、最终留出段累计收益均为正且高于未确认版；"
             "达到历史门槛也只进入模拟观察，不直接提高实盘评分。",
         ],

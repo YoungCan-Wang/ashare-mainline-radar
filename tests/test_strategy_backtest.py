@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from ashare_mainline_radar.models import KlineSeries
 from ashare_mainline_radar.strategy_backtest import (
     BacktestMetrics,
@@ -7,6 +9,7 @@ from ashare_mainline_radar.strategy_backtest import (
     _exposure_matched_benchmark_return,
     _group_diagnostics,
     _metrics,
+    _selection_attribution,
     _selection_score,
     sample_breadth_symbols,
 )
@@ -148,3 +151,38 @@ def test_exposure_matched_benchmark_uses_strategy_position_size() -> None:
 
     assert matched is not None
     assert 0 < matched < 0.1
+
+
+def test_selection_attribution_compares_only_matched_theme_vehicle_trades() -> None:
+    train_trade = _trade(0.01)
+    train_trade.signal_date = "2021-01-01"
+    train_trade.net_return = 0.08
+    train_trade.position_fraction = 0.1
+    train_trade.theme_vehicle_net_return = 0.03
+    train_trade.stock_selection_excess = 0.05
+    validation_trade = _trade(-0.01)
+    validation_trade.signal_date = "2022-01-01"
+    validation_trade.net_return = -0.02
+    validation_trade.position_fraction = 0.2
+    validation_trade.theme_vehicle_net_return = 0.01
+    validation_trade.stock_selection_excess = -0.03
+    unmatched_test_trade = _trade(0.02)
+    unmatched_test_trade.signal_date = "2023-01-01"
+    unmatched_test_trade.net_return = 0.06
+
+    result = _selection_attribution(
+        [train_trade, validation_trade, unmatched_test_trade],
+        "2021-12-31",
+        "2022-12-31",
+    )
+
+    assert [item.period for item in result] == ["全期", "训练", "验证", "最终留出"]
+    assert result[0].stock_trades == 3
+    assert result[0].matched_trades == 2
+    assert result[0].avg_stock_selection_excess == pytest.approx(0.01)
+    assert result[0].portfolio_selection_contribution == pytest.approx(-0.001)
+    assert result[1].avg_stock_selection_excess == 0.05
+    assert result[2].avg_stock_selection_excess == -0.03
+    assert result[3].stock_trades == 1
+    assert result[3].matched_trades == 0
+    assert result[3].avg_stock_selection_excess is None
