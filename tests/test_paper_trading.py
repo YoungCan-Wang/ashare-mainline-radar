@@ -158,3 +158,31 @@ def test_exit_delay_is_not_counted_twice_on_same_market_date() -> None:
 
     assert plan["status"] == "open"
     assert plan["exit_delay_days"] == 1
+
+
+def test_shadow_plan_records_three_day_theme_exit_reason() -> None:
+    series = KlineSeries(
+        symbol="600001.SH",
+        timestamp=_timestamps("2026-07-01", "2026-07-02"),
+        open=[10, 10.2],
+        high=[10.2, 10.4],
+        low=[9.9, 10.1],
+        close=[10, 10.3],
+        volume=[100, 100],
+        amount=[1000, 1000],
+    )
+    plan = _plan(
+        status="open",
+        strategy_version="mainline-v2-theme-exit-3d-frozen-20260718",
+        theme_exit_days=3,
+        exit_signal_date="2026-07-01",
+        entry_date="2026-07-01",
+        raw_entry_price=10,
+        entry_price=10.005,
+    )
+
+    plan, events = _evaluate_exit(plan, series, TradingCostModel())
+
+    assert plan["status"] == "closed"
+    assert plan["exit_reason"] == "主线连续3日退出前三"
+    assert events[-1]["strategy_version"] == "mainline-v2-theme-exit-3d-frozen-20260718"

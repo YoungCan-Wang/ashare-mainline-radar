@@ -77,7 +77,11 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     assert symbol["trade_plan"]["entry_plan"] == "回踩不破后分批"
     assert symbol["fundamental_payload"]["status"] == "基本面兑现"
     assert symbol["target_payload"]["target_high"] == 45.0
-    assert bundle["trade_plans"][0]["plan_key"] == "2026-07-17:300122.SZ"
+    assert len(bundle["trade_plans"]) == 2
+    assert bundle["trade_plans"][0]["plan_key"] == "2026-07-17:300122.SZ:mainline-v1-theme-exit-2d"
+    assert bundle["trade_plans"][0]["theme_exit_days"] == 2
+    assert bundle["trade_plans"][1]["is_shadow"] is True
+    assert bundle["trade_plans"][1]["theme_exit_days"] == 3
     assert bundle["trade_events"][0]["event_type"] == "created"
 
 
@@ -88,7 +92,7 @@ def test_artifact_backend_writes_portable_bundle_and_status(tmp_path) -> None:
     assert status.symbol_records == 1
     bundle = json.loads((tmp_path / "storage_bundle.json").read_text(encoding="utf-8"))
     persisted_status = json.loads((tmp_path / "storage_status.json").read_text(encoding="utf-8"))
-    assert bundle["schema_version"] == "radar-storage-v2"
+    assert bundle["schema_version"] == "radar-storage-v3"
     assert bundle["tracking_policy"]["first_selected_price_source"] == "symbol_snapshot.last_close"
     assert persisted_status["backend"] == "artifact"
 
@@ -127,3 +131,68 @@ def test_publishable_key_uses_scoped_ingest_header(tmp_path) -> None:
     assert requests[0][0].get_header("Apikey") == "sb_publishable_test"
     assert requests[0][0].get_header("X-radar-ingest-key") == "private-ingest-key"
     assert requests[0][0].get_header("Authorization") is None
+
+
+def test_existing_production_plan_does_not_block_shadow_plan(tmp_path) -> None:
+    requests = []
+
+    class Response:
+        status = 204
+
+        def __init__(self, payload=b"[]"):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return self.payload
+
+    def opener(request, timeout):
+        requests.append((request, timeout))
+        if request.full_url.startswith("https://example.supabase.co/rest/v1/radar_trade_plans?") and request.data is None:
+            existing = [
+                {
+                    "plan_key": "2026-07-16:300122.SZ:mainline-v1-theme-exit-2d",
+                    "symbol": "300122.SZ",
+                    "strategy_version": "mainline-v1-theme-exit-2d",
+                    "status": "open",
+                }
+            ]
+            return Response(json.dumps(existing).encode("utf-8"))
+        return Response()
+
+    status = persist_report(
+        _report(),
+        tmp_path,
+        backend="supabase",
+        supabase_url="https://example.supabase.co",
+        supabase_publishable_key="sb_publishable_test",
+        radar_ingest_key="private-ingest-key",
+        opener=opener,
+    )
+
+    assert status.status == "stored"
+    plan_request = next(
+        request
+        for request, _timeout in requests
+        if request.full_url.startswith("https://example.supabase.co/rest/v1/radar_trade_plans?")
+        and request.data is not None
+    )
+    plans = json.loads(plan_request.data.decode("utf-8"))
+    assert [plan["strategy_version"] for plan in plans] == [
+        "mainline-v2-theme-exit-3d-frozen-20260718"
+    ]
+
+    event_request = next(
+        request
+        for request, _timeout in requests
+        if request.full_url.startswith("https://example.supabase.co/rest/v1/radar_trade_events?")
+    )
+    events = json.loads(event_request.data.decode("utf-8"))
+    assert [event["strategy_version"] for event in events] == [
+        "mainline-v2-theme-exit-3d-frozen-20260718"
+    ]

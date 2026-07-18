@@ -536,7 +536,7 @@ select {
 }
 
 .candidate-table {
-  min-width: 1480px;
+  min-width: 1580px;
 }
 
 .paper-status {
@@ -1017,7 +1017,9 @@ select {
   .candidate-table th:nth-child(11),
   .candidate-table td:nth-child(11),
   .candidate-table th:nth-child(12),
-  .candidate-table td:nth-child(12) {
+  .candidate-table td:nth-child(12),
+  .candidate-table th:nth-child(13),
+  .candidate-table td:nth-child(13) {
     display: none;
   }
 

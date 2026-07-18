@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 export type SortDirection = "asc" | "desc";
-export type SortKey = "selected_at" | "selected_price" | "latest_price" | "selection_return" | "daily_return" | "strategy_return";
+export type SortKey = "selected_at" | "selected_price" | "latest_price" | "selection_return" | "daily_return" | "strategy_return" | "shadow_return";
 
 interface SortableHeaderProps {
   label: string;

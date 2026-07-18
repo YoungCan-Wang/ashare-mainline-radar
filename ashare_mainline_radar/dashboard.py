@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.request import urlopen
 
+from .paper_strategies import FROZEN_EXIT_CHALLENGER, PRODUCTION_PAPER_STRATEGY
 from .quotes import ACTIONABLE_ROLES
 from .supabase_rest import fetch_rows
 
-DASHBOARD_SCHEMA_VERSION = "radar-dashboard-v2"
+DASHBOARD_SCHEMA_VERSION = "radar-dashboard-v3"
 
 
 def fetch_dashboard_history(
@@ -128,11 +129,18 @@ def build_dashboard_payload(
         for row in history.get("quotes", [])
         if isinstance(row, dict) and row.get("symbol")
     }
-    trade_plans: dict[str, dict[str, Any]] = {}
+    production_trade_plans: dict[str, dict[str, Any]] = {}
+    shadow_trade_plans: dict[str, dict[str, Any]] = {}
     for row in history.get("trade_plans", []):
         symbol = str(row.get("symbol") or "")
-        if symbol and symbol not in trade_plans:
-            trade_plans[symbol] = row
+        strategy_version = str(row.get("strategy_version") or PRODUCTION_PAPER_STRATEGY.version)
+        if not symbol:
+            continue
+        if strategy_version == FROZEN_EXIT_CHALLENGER.version or row.get("is_shadow") is True:
+            if symbol not in shadow_trade_plans:
+                shadow_trade_plans[symbol] = row
+        elif symbol not in production_trade_plans:
+            production_trade_plans[symbol] = row
     enriched_symbols = []
     for row in symbols:
         enriched = dict(row)
@@ -146,7 +154,8 @@ def build_dashboard_payload(
                 "first_selected_price": row.get("last_close"),
             }
         quote = quotes.get(symbol)
-        paper_plan = trade_plans.get(symbol) if row.get("run_key") == current_run.get("run_key") else None
+        paper_plan = production_trade_plans.get(symbol) if row.get("run_key") == current_run.get("run_key") else None
+        shadow_plan = shadow_trade_plans.get(symbol) if row.get("run_key") == current_run.get("run_key") else None
         if selection:
             enriched.update(
                 {
@@ -169,6 +178,8 @@ def build_dashboard_payload(
             enriched["latest_price"] = row.get("last_close")
         if paper_plan:
             enriched["paper_trade_plan"] = paper_plan
+        if shadow_plan:
+            enriched["shadow_trade_plan"] = shadow_plan
         selected_price = enriched.get("first_selected_price")
         latest_price = enriched.get("latest_price")
         if selected_price and latest_price:

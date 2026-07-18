@@ -80,6 +80,10 @@ export interface PaperTradePlan {
   net_return?: number;
   exit_reason?: string;
   exit_delay_days?: number;
+  strategy_version?: string;
+  strategy_label?: string;
+  theme_exit_days?: number;
+  is_shadow?: boolean;
 }
 
 export interface TargetPayload {
@@ -139,6 +143,7 @@ export interface SymbolRow {
   daily_change_pct?: number;
   return_since_selection?: number;
   paper_trade_plan?: PaperTradePlan;
+  shadow_trade_plan?: PaperTradePlan;
   trade_plan?: TradePlan;
   target_payload?: TargetPayload;
   fundamental_payload?: FundamentalPayload;

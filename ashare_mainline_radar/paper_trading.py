@@ -16,6 +16,7 @@ from .execution import (
     is_sealed_limit_up,
 )
 from .models import KlineSeries, cn_market_date_from_ms
+from .paper_strategies import PRODUCTION_PAPER_STRATEGY
 from .supabase_rest import fetch_rows, upsert_rows
 from .tickflow import TickFlowClient
 
@@ -51,6 +52,7 @@ def _event(plan: dict[str, Any], event_type: str, event_date: str, price: float 
         "event_key": f"{plan['plan_key']}:{event_type}:{event_date}",
         "plan_key": plan["plan_key"],
         "symbol": plan["symbol"],
+        "strategy_version": plan.get("strategy_version") or PRODUCTION_PAPER_STRATEGY.version,
         "event_type": event_type,
         "event_date": event_date,
         "price": price,
@@ -174,10 +176,12 @@ def _evaluate_exit(
     requested_index: int | None = None
     requested_field = "open"
     reason = ""
+    theme_exit_days = int(plan.get("theme_exit_days") or PRODUCTION_PAPER_STRATEGY.theme_exit_days)
     exit_signal_date = str(plan.get("exit_signal_date") or "")
     if exit_signal_date in dates and dates.index(exit_signal_date) + 1 <= latest_index:
         requested_index = dates.index(exit_signal_date) + 1
-        reason = "主线连续两日退出前三"
+        exit_days_text = "两" if theme_exit_days == 2 else str(theme_exit_days)
+        reason = f"主线连续{exit_days_text}日退出前三"
     else:
         for index in range(entry_index, latest_index + 1):
             if series.close[index] <= float(plan["stop_price"]) and index + 1 <= latest_index:
@@ -329,13 +333,16 @@ def refresh_paper_trades(
             continue
         latest_date = _dates(series)[-1]
         if str(plan.get("last_evaluated_date") or "") != latest_date:
+            theme_exit_days = int(plan.get("theme_exit_days") or PRODUCTION_PAPER_STRATEGY.theme_exit_days)
             inactive_days = 0 if str(plan["theme"]) in active_themes else int(plan.get("inactive_theme_days") or 0) + 1
             plan.update(inactive_theme_days=inactive_days, last_evaluated_date=latest_date)
-            if plan["status"] == "open" and inactive_days >= 2 and not plan.get("exit_signal_date"):
+            if plan["status"] == "open" and inactive_days >= theme_exit_days and not plan.get("exit_signal_date"):
                 plan["exit_signal_date"] = latest_date
         if plan["status"] in {"watching", "triggered"}:
-            if int(plan.get("inactive_theme_days") or 0) >= 2:
-                plan.update(status="cancelled", exit_reason="主线连续两日退出前三，入场计划取消")
+            theme_exit_days = int(plan.get("theme_exit_days") or PRODUCTION_PAPER_STRATEGY.theme_exit_days)
+            if int(plan.get("inactive_theme_days") or 0) >= theme_exit_days:
+                exit_days_text = "两" if theme_exit_days == 2 else str(theme_exit_days)
+                plan.update(status="cancelled", exit_reason=f"主线连续{exit_days_text}日退出前三，入场计划取消")
                 plan_events = [_event(plan, "cancelled", latest_date, None, reason="theme_inactive")]
             else:
                 plan, plan_events = _evaluate_entry(plan, series, model)

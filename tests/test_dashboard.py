@@ -62,7 +62,16 @@ def test_dashboard_payload_merges_local_run_over_remote() -> None:
                 "symbol": "300122.SZ",
                 "status": "open",
                 "entry_price": 36.0,
-            }
+            },
+            {
+                "plan_key": "2026-07-17:300122.SZ:mainline-v2-theme-exit-3d-frozen-20260718",
+                "symbol": "300122.SZ",
+                "status": "open",
+                "entry_price": 36.0,
+                "net_return": 0.05,
+                "strategy_version": "mainline-v2-theme-exit-3d-frozen-20260718",
+                "is_shadow": True,
+            },
         ],
     }
 
@@ -76,6 +85,7 @@ def test_dashboard_payload_merges_local_run_over_remote() -> None:
     assert payload["symbols"][0]["latest_price"] == 38.5
     assert payload["symbols"][0]["return_since_selection"] == pytest.approx(0.1)
     assert payload["symbols"][0]["paper_trade_plan"]["status"] == "open"
+    assert payload["symbols"][0]["shadow_trade_plan"]["net_return"] == 0.05
 
 
 def test_fetch_dashboard_history_paginates_and_scopes_requests() -> None:

@@ -8,9 +8,10 @@ from typing import Any, Callable
 from urllib.request import urlopen
 
 from .models import RadarReport
+from .paper_strategies import PAPER_STRATEGIES, PRODUCTION_PAPER_STRATEGY
 from .supabase_rest import fetch_rows, upsert_rows
 
-SCHEMA_VERSION = "radar-storage-v2"
+SCHEMA_VERSION = "radar-storage-v3"
 ROLE_ORDER = (
     "next_buy",
     "strong_stock",
@@ -97,45 +98,52 @@ def _paper_trade_records(
         if not isinstance(candidate, dict) or any(candidate.get(key) in (None, "") for key in required):
             continue
         symbol = str(candidate["symbol"])
-        plan_key = f"{market_date}:{symbol}"
-        plans.append(
-            {
-                "plan_key": plan_key,
-                "source_run_key": run_key,
-                "symbol": symbol,
-                "name": candidate["name"],
-                "theme": candidate["theme"],
-                "signal_date": market_date,
-                "signal_price": candidate["last_close"],
-                "status": candidate.get("execution_status") or "watching",
-                "entry_mode": candidate["entry_mode"],
-                "entry_zone_low": candidate["entry_zone_low"],
-                "entry_zone_high": candidate["entry_zone_high"],
-                "confirm_price": candidate["confirm_price"],
-                "stop_price": candidate["stop_price"],
-                "valid_for_days": candidate.get("valid_for_days") or 5,
-                "max_hold_days": candidate.get("max_hold_days") or 15,
-                "max_position_fraction": candidate.get("max_position_fraction") or 0.25,
-                "initial_position_fraction": candidate.get("initial_position_fraction") or (1 / 12),
-                "created_at": generated_at,
-                "updated_at": generated_at,
-            }
-        )
-        events.append(
-            {
-                "event_key": f"{plan_key}:created",
-                "plan_key": plan_key,
-                "symbol": symbol,
-                "event_type": "created",
-                "event_date": market_date,
-                "price": candidate["last_close"],
-                "payload": {
-                    "decision": candidate.get("decision"),
-                    "entry_plan": candidate.get("entry_plan"),
-                },
-                "created_at": generated_at,
-            }
-        )
+        for strategy in PAPER_STRATEGIES:
+            plan_key = f"{market_date}:{symbol}:{strategy.version}"
+            plans.append(
+                {
+                    "plan_key": plan_key,
+                    "source_run_key": run_key,
+                    "symbol": symbol,
+                    "name": candidate["name"],
+                    "theme": candidate["theme"],
+                    "signal_date": market_date,
+                    "signal_price": candidate["last_close"],
+                    "status": candidate.get("execution_status") or "watching",
+                    "entry_mode": candidate["entry_mode"],
+                    "entry_zone_low": candidate["entry_zone_low"],
+                    "entry_zone_high": candidate["entry_zone_high"],
+                    "confirm_price": candidate["confirm_price"],
+                    "stop_price": candidate["stop_price"],
+                    "valid_for_days": candidate.get("valid_for_days") or 5,
+                    "max_hold_days": candidate.get("max_hold_days") or 15,
+                    "max_position_fraction": candidate.get("max_position_fraction") or 0.25,
+                    "initial_position_fraction": candidate.get("initial_position_fraction") or (1 / 12),
+                    "strategy_version": strategy.version,
+                    "strategy_label": strategy.label,
+                    "theme_exit_days": strategy.theme_exit_days,
+                    "is_shadow": strategy.is_shadow,
+                    "created_at": generated_at,
+                    "updated_at": generated_at,
+                }
+            )
+            events.append(
+                {
+                    "event_key": f"{plan_key}:created",
+                    "plan_key": plan_key,
+                    "symbol": symbol,
+                    "strategy_version": strategy.version,
+                    "event_type": "created",
+                    "event_date": market_date,
+                    "price": candidate["last_close"],
+                    "payload": {
+                        "decision": candidate.get("decision"),
+                        "entry_plan": candidate.get("entry_plan"),
+                        "strategy_label": strategy.label,
+                    },
+                    "created_at": generated_at,
+                }
+            )
     return plans, events
 
 
@@ -408,15 +416,19 @@ def persist_report(
                 filters={"status": "in.(watching,triggered,open)"},
                 opener=opener,
             )
-            active_by_symbol = {
-                str(row.get("symbol")): str(row.get("plan_key"))
+            active_by_symbol_strategy = {
+                (
+                    str(row.get("symbol")),
+                    str(row.get("strategy_version") or PRODUCTION_PAPER_STRATEGY.version),
+                ): str(row.get("plan_key"))
                 for row in active_plans
                 if row.get("symbol") and row.get("plan_key")
             }
             new_plans = [
                 row
                 for row in bundle["trade_plans"]
-                if row["symbol"] not in active_by_symbol or active_by_symbol[row["symbol"]] == row["plan_key"]
+                if (row["symbol"], row["strategy_version"]) not in active_by_symbol_strategy
+                or active_by_symbol_strategy[(row["symbol"], row["strategy_version"])] == row["plan_key"]
             ]
             new_plan_keys = {row["plan_key"] for row in new_plans}
             upsert_rows(
