@@ -186,6 +186,16 @@ class RobustnessAudit:
     signal_vehicle_exit_policy_stable: int
     exit_policy_variants_per_mode: int
     exit_policy_verdict: str
+    exit_challenger_variant: str
+    exit_challenger_positive_folds: int
+    exit_challenger_excess_positive_folds: int
+    exit_challenger_folds: list[FoldResult]
+    exit_challenger_doubled_cost_metrics: BacktestMetrics
+    exit_challenger_stable_holds: int
+    exit_challenger_total_holds: int
+    exit_challenger_stable_stops: int
+    exit_challenger_total_stops: int
+    exit_challenger_verdict: str
     positive_position_capacities: int
     total_position_capacities: int
     positive_signal_profiles: int
@@ -318,6 +328,17 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
             f"{report.robustness.signal_vehicle_exit_policy_stable}/"
             f"{report.robustness.exit_policy_variants_per_mode} 档在验证与留出均为正",
             f"- 退出状态机结论：**{report.robustness.exit_policy_verdict}**",
+            f"- 连续3日退出候选：`{report.robustness.exit_challenger_variant}`，时间折为正 "
+            f"{report.robustness.exit_challenger_positive_folds}/"
+            f"{len(report.robustness.exit_challenger_folds)}，跑赢基准 "
+            f"{report.robustness.exit_challenger_excess_positive_folds}/"
+            f"{len(report.robustness.exit_challenger_folds)}，双倍成本全期 "
+            f"{_percent(report.robustness.exit_challenger_doubled_cost_metrics.cumulative_return)}",
+            f"- 连续3日退出稳定性：持有期 {report.robustness.exit_challenger_stable_holds}/"
+            f"{report.robustness.exit_challenger_total_holds}，硬失效位 "
+            f"{report.robustness.exit_challenger_stable_stops}/"
+            f"{report.robustness.exit_challenger_total_stops} 档在验证与留出均为正",
+            f"- 连续3日退出结论：**{report.robustness.exit_challenger_verdict}**",
             f"- 仓位容量稳定性：{report.robustness.positive_position_capacities}/"
             f"{report.robustness.total_position_capacities} 档在验证段和留出段均为正",
             f"- 入场强度稳定性：{report.robustness.positive_signal_profiles}/"
@@ -341,6 +362,7 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
         (report.robustness.default_variant, report.robustness.folds),
         (report.robustness.etf_proxy_variant, report.robustness.etf_proxy_folds),
         (report.robustness.signal_vehicle_variant, report.robustness.signal_vehicle_folds),
+        (report.robustness.exit_challenger_variant, report.robustness.exit_challenger_folds),
     ):
         for fold in folds:
             lines.append(
@@ -355,7 +377,8 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
             "",
             "## 滚动参数选择",
             "",
-            "每一步只用此前区间选择方案，再评估紧随其后的时间折；选择范围预先固定为1/2/3仓、10/15/20日和A/H关闭/确认。",
+            "每一步只用此前区间选择方案，再评估紧随其后的时间折；选择范围包含预先生成的1/2/3仓、"
+            "10/15/20日、A/H关闭/确认，以及连续2日、连续3日或不按主题排名退出的研究变体。",
             "",
             "| 步骤 | 训练截至 | 测试区间 | 过去数据选中方案 | 测试交易 | 测试收益 | 满仓基准 | 同暴露基准 | 超额 |",
             "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
@@ -1535,6 +1558,58 @@ def run_strategy_backtest(
                 )
             )
 
+    for challenger_hold_days, challenger_stop_loss in (
+        (10, stop_loss),
+        (20, stop_loss),
+        (15, 0.06),
+        (15, 0.10),
+    ):
+        trades, execution_stats = simulate_variant(
+            theme_config,
+            a_klines,
+            a_instruments,
+            hk_klines,
+            hk_instruments,
+            challenger_hold_days,
+            "off",
+            "stock_basket",
+            cost_model,
+            challenger_stop_loss,
+            position_fraction,
+            2,
+            "base",
+            warmup_days,
+            gate_cache,
+            breadth_symbols,
+            theme_cache,
+            theme_exit_days=3,
+        )
+        train = [trade for trade in trades if trade.signal_date <= train_end_date]
+        validation = [trade for trade in trades if train_end_date < trade.signal_date <= validation_end_date]
+        test = [trade for trade in trades if trade.signal_date > validation_end_date]
+        variants.append(
+            BacktestVariant(
+                name=(
+                    f"stock_basket_positions_2_hold_{challenger_hold_days}_off_theme_exit_3_"
+                    f"stop_{challenger_stop_loss:.2f}"
+                ),
+                hold_days=challenger_hold_days,
+                max_positions=2,
+                cross_market_mode="off",
+                signal_mode="stock_basket",
+                signal_profile="base",
+                position_fraction=position_fraction,
+                stop_loss=challenger_stop_loss,
+                all_period=_metrics(trades, a_klines),
+                train=_metrics(train, a_klines),
+                validation=_metrics(validation, a_klines),
+                test=_metrics(test, a_klines),
+                trades=trades,
+                execution_stats=execution_stats,
+                theme_exit_days=3,
+            )
+        )
+
     for signal_profile in ("loose", "strict"):
         trades, execution_stats = simulate_variant(
             theme_config,
@@ -1793,6 +1868,79 @@ def run_strategy_backtest(
     )
     exit_policy_total = len(exit_policy_variants_by_mode["stock_basket"])
     exit_policy_has_candidate = max(stock_exit_policy_stable, signal_vehicle_exit_policy_stable) >= 2
+    exit_challenger = next(
+        item
+        for item in variants
+        if item.signal_mode == "stock_basket"
+        and item.max_positions == 2
+        and item.hold_days == 15
+        and item.cross_market_mode == "off"
+        and item.signal_profile == "base"
+        and item.position_fraction == position_fraction
+        and item.stop_loss == stop_loss
+        and item.theme_exit_days == 3
+    )
+    exit_challenger_holds = [
+        item
+        for item in variants
+        if item.signal_mode == "stock_basket"
+        and item.max_positions == 2
+        and item.hold_days in {10, 15, 20}
+        and item.cross_market_mode == "off"
+        and item.signal_profile == "base"
+        and item.position_fraction == position_fraction
+        and item.stop_loss == stop_loss
+        and item.theme_exit_days == 3
+    ]
+    exit_challenger_stops = [
+        item
+        for item in variants
+        if item.signal_mode == "stock_basket"
+        and item.max_positions == 2
+        and item.hold_days == 15
+        and item.cross_market_mode == "off"
+        and item.signal_profile == "base"
+        and item.position_fraction == position_fraction
+        and item.stop_loss in {0.06, stop_loss, 0.10}
+        and item.theme_exit_days == 3
+    ]
+    exit_challenger_folds = _time_folds(
+        exit_challenger.trades,
+        calendar,
+        benchmark,
+        a_klines,
+        warmup_days,
+    )
+    exit_challenger_positive_folds = sum(
+        (fold.metrics.cumulative_return or 0) > 0 for fold in exit_challenger_folds
+    )
+    exit_challenger_excess_positive_folds = sum(
+        (fold.excess_return or 0) > 0 for fold in exit_challenger_folds
+    )
+    exit_challenger_stable_holds = sum(
+        (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
+        for item in exit_challenger_holds
+    )
+    exit_challenger_stable_stops = sum(
+        (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
+        for item in exit_challenger_stops
+    )
+    exit_challenger_doubled_cost = _metrics_with_cost(
+        exit_challenger.trades,
+        cost_model,
+        a_klines,
+        2.0,
+    )
+    exit_challenger_pass = bool(
+        exit_challenger_positive_folds >= 3
+        and exit_challenger_excess_positive_folds >= 2
+        and exit_challenger_stable_holds >= 2
+        and exit_challenger_stable_stops >= 2
+        and (exit_challenger.validation.cumulative_return or 0) > 0
+        and (exit_challenger.test.cumulative_return or 0) > 0
+        and (exit_challenger_doubled_cost.cumulative_return or 0) > 0
+        and (_top_profit_share(exit_challenger.trades) or 1) <= 0.65
+    )
     position_capacity_variants = [
         item
         for item in variants
@@ -1926,6 +2074,20 @@ def run_strategy_backtest(
             if exit_policy_has_candidate
             else "退出结构对验证和留出不稳定，保持生产默认值"
         ),
+        exit_challenger_variant=exit_challenger.name,
+        exit_challenger_positive_folds=exit_challenger_positive_folds,
+        exit_challenger_excess_positive_folds=exit_challenger_excess_positive_folds,
+        exit_challenger_folds=exit_challenger_folds,
+        exit_challenger_doubled_cost_metrics=exit_challenger_doubled_cost,
+        exit_challenger_stable_holds=exit_challenger_stable_holds,
+        exit_challenger_total_holds=len(exit_challenger_holds),
+        exit_challenger_stable_stops=exit_challenger_stable_stops,
+        exit_challenger_total_stops=len(exit_challenger_stops),
+        exit_challenger_verdict=(
+            "历史稳健性门槛通过，冻结规则并进入模拟观察"
+            if exit_challenger_pass
+            else "历史稳健性门槛未通过，保留研究不进入生产"
+        ),
         positive_position_capacities=positive_position_capacities,
         total_position_capacities=len(position_capacity_variants),
         positive_signal_profiles=positive_signal_profiles,
@@ -2007,6 +2169,7 @@ def run_strategy_backtest(
             "主线内选股归因使用每个主题配置中首个具备完整同期行情的ETF，并按个股完全相同的进出日期、仓位和ETF交易成本计算；无ETF主题不纳入可比交易。",
             "个股先行信号+主题ETF执行是独立挑战者：主线和个股只负责产生触发，实际成交、止损和退出均使用主题ETF自身行情；即使过线也只进入模拟观察。",
             "退出状态机额外审计连续2日、连续3日和不按主题排名退出三档；不按主题排名退出仍保留8%硬失效位与固定持有到期，审计结果不会自动修改生产默认值。",
+            "连续3日退出候选额外检查10/15/20日、6%/8%/10%硬失效位、双倍交易成本和四时间折；本轮迭代已查看既有最终留出表现，因此即使历史门槛通过也必须冻结规则并依靠后续模拟盘获得新样本。",
             f"A/H确认在 {stable_increment_holds}/3 个持有期使验证段、最终留出段累计收益均为正且高于未确认版；"
             "达到历史门槛也只进入模拟观察，不直接提高实盘评分。",
         ],
