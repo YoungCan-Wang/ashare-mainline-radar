@@ -1,7 +1,15 @@
 from datetime import datetime, timezone
 
 from ashare_mainline_radar.models import KlineSeries
-from ashare_mainline_radar.strategy_backtest import StrategyTrade, _metrics, sample_breadth_symbols
+from ashare_mainline_radar.strategy_backtest import (
+    BacktestMetrics,
+    StrategyTrade,
+    _exposure_matched_benchmark_return,
+    _group_diagnostics,
+    _metrics,
+    _selection_score,
+    sample_breadth_symbols,
+)
 
 
 def _trade(portfolio_return: float) -> StrategyTrade:
@@ -93,3 +101,50 @@ def test_metrics_value_concurrent_positions_as_one_portfolio() -> None:
 
     assert metrics.cumulative_return is not None
     assert round(metrics.cumulative_return, 8) == 0
+
+
+def test_walk_forward_selection_rejects_tiny_samples() -> None:
+    tiny = BacktestMetrics(11, 1.0, 0.1, 0.1, 0.5, -0.01, 2.0, "2026-01-01", "2026-02-01")
+    eligible = BacktestMetrics(12, 0.5, 0.01, 0.01, 0.08, -0.04, 1.2, "2026-01-01", "2026-02-01")
+
+    assert _selection_score(tiny) == float("-inf")
+    assert _selection_score(eligible) == 2.0
+
+
+def test_diagnostics_separate_exit_and_market_gate_contributions() -> None:
+    winning = _trade(0.03)
+    winning.net_return = 0.09
+    winning.market_gate = "yellow"
+    losing = _trade(-0.02)
+    losing.net_return = -0.06
+    losing.exit_reason = "收盘跌破8%失效位，次日开盘退出"
+    losing.market_gate = "green"
+
+    exits = _group_diagnostics([winning, losing], "exit")
+    gates = _group_diagnostics([winning, losing], "gate")
+
+    assert {item.group for item in exits} == {"固定持有15日", "收盘跌破8%失效位，次日开盘退出"}
+    assert {item.group for item in gates} == {"市场闸门：yellow", "市场闸门：green"}
+
+
+def test_exposure_matched_benchmark_uses_strategy_position_size() -> None:
+    timestamps = [int(datetime(2026, 1, day, tzinfo=timezone.utc).timestamp() * 1000) for day in range(1, 6)]
+    benchmark = KlineSeries(
+        "510300.SH",
+        timestamps,
+        [10, 10, 10.2, 10.6, 11],
+        [10.2, 10.2, 10.4, 10.8, 11.2],
+        [9.9, 9.9, 10.1, 10.5, 10.9],
+        [10, 10, 10.2, 10.6, 11],
+        [1] * 5,
+        [1] * 5,
+    )
+    trade = _trade(0.0)
+    trade.entry_date = "2026-01-02"
+    trade.exit_date = "2026-01-05"
+    trade.position_fraction = 0.1
+
+    matched = _exposure_matched_benchmark_return([trade], benchmark)
+
+    assert matched is not None
+    assert 0 < matched < 0.1
