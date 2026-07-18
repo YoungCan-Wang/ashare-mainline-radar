@@ -2,15 +2,17 @@ from datetime import datetime, timezone
 
 import pytest
 
-from ashare_mainline_radar.models import KlineSeries
+from ashare_mainline_radar.models import KlineSeries, SymbolSnapshot
 from ashare_mainline_radar.strategy_backtest import (
     BacktestMetrics,
     StrategyTrade,
     _exposure_matched_benchmark_return,
+    _find_entry,
     _group_diagnostics,
     _metrics,
     _selection_attribution,
     _selection_score,
+    _theme_vehicle_execution,
     sample_breadth_symbols,
 )
 
@@ -186,3 +188,65 @@ def test_selection_attribution_compares_only_matched_theme_vehicle_trades() -> N
     assert result[3].stock_trades == 1
     assert result[3].matched_trades == 0
     assert result[3].avg_stock_selection_excess is None
+
+
+def test_stock_signal_mode_defers_tradeability_check_to_actual_vehicle() -> None:
+    timestamps = [int(datetime(2026, 1, day, tzinfo=timezone.utc).timestamp() * 1000) for day in range(1, 5)]
+    series = KlineSeries(
+        "600000.SH",
+        timestamps,
+        [10, 10, 11.22, 11.3],
+        [10.1, 10.3, 11.22, 11.4],
+        [9.9, 10, 11.22, 11.2],
+        [10, 10.2, 11.22, 11.3],
+        [1, 1, 1, 1],
+        [1, 1, 1, 1],
+    )
+    candidate = SymbolSnapshot(
+        symbol="600000.SH",
+        name="测试股票",
+        themes=["测试主题"],
+        last_close=10,
+        ret_1d=0.01,
+        ret_5d=0.05,
+        ret_20d=0.1,
+        amount_ma5=1,
+        amount_ma20=1,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.01,
+        drawdown_20d=-0.02,
+        score=90,
+        status="突破观察",
+    )
+
+    blocked = _find_entry(series, timestamps, 0, candidate, 1, 0.25, 0.08)
+    deferred = _find_entry(
+        series,
+        timestamps,
+        0,
+        candidate,
+        1,
+        0.25,
+        0.08,
+        enforce_entry_tradeability=False,
+    )
+
+    assert blocked[2] == "limit_up"
+    assert deferred == (2, 1, "filled")
+
+
+def test_theme_vehicle_execution_uses_first_tradeable_configured_etf() -> None:
+    timestamp = int(datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp() * 1000)
+    suspended = KlineSeries("510001.SH", [timestamp], [1], [1], [1], [1], [0], [0])
+    tradeable = KlineSeries("510002.SH", [timestamp], [2], [2.1], [1.9], [2], [10], [20])
+
+    selected = _theme_vehicle_execution(
+        {"vehicles": ["510001.SH", "510002.SH"]},
+        {"510001.SH": suspended, "510002.SH": tradeable},
+        {"510002.SH": {"name": "测试ETF"}},
+        timestamp,
+    )
+
+    assert selected is not None
+    assert selected[0] == "510002.SH"
+    assert selected[1] == "测试ETF"

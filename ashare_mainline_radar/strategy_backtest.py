@@ -58,6 +58,8 @@ class StrategyTrade:
     theme_vehicle_symbol: str | None = None
     theme_vehicle_net_return: float | None = None
     stock_selection_excess: float | None = None
+    signal_symbol: str | None = None
+    signal_name: str | None = None
 
 
 @dataclass
@@ -66,6 +68,7 @@ class SimulationStats:
     plans_expired: int = 0
     entries_blocked_limit_up: int = 0
     entries_blocked_suspension: int = 0
+    entries_blocked_no_theme_vehicle: int = 0
     exits_delayed_limit_down: int = 0
     exits_delayed_suspension: int = 0
 
@@ -171,6 +174,13 @@ class RobustnessAudit:
     etf_proxy_positive_folds: int
     etf_proxy_excess_positive_folds: int
     etf_proxy_folds: list[FoldResult]
+    signal_vehicle_variant: str
+    signal_vehicle_positive_folds: int
+    signal_vehicle_excess_positive_folds: int
+    signal_vehicle_folds: list[FoldResult]
+    signal_vehicle_stable_holds: int
+    signal_vehicle_total_holds: int
+    signal_vehicle_verdict: str
     positive_position_capacities: int
     total_position_capacities: int
     positive_signal_profiles: int
@@ -273,6 +283,7 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
                 "",
                 f"- 生成交易计划：{stats.plans_created} 个；等待期满未触发：{stats.plans_expired} 个",
                 f"- 封死涨停无法买入：{stats.entries_blocked_limit_up} 次；停牌无法买入：{stats.entries_blocked_suspension} 次",
+                f"- 个股信号主题缺少可交易ETF：{stats.entries_blocked_no_theme_vehicle} 次",
                 f"- 封死跌停导致延迟退出：{stats.exits_delayed_limit_down} 个交易日；停牌导致延迟退出：{stats.exits_delayed_suspension} 个交易日",
             ]
         )
@@ -291,6 +302,12 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
             f"- ETF代理方案：`{report.robustness.etf_proxy_variant}`，时间折为正 "
             f"{report.robustness.etf_proxy_positive_folds}/{len(report.robustness.etf_proxy_folds)}，跑赢基准 "
             f"{report.robustness.etf_proxy_excess_positive_folds}/{len(report.robustness.etf_proxy_folds)}",
+            f"- 个股先行信号+主题ETF执行：`{report.robustness.signal_vehicle_variant}`，时间折为正 "
+            f"{report.robustness.signal_vehicle_positive_folds}/{len(report.robustness.signal_vehicle_folds)}，跑赢基准 "
+            f"{report.robustness.signal_vehicle_excess_positive_folds}/{len(report.robustness.signal_vehicle_folds)}；"
+            f"持有期稳定 {report.robustness.signal_vehicle_stable_holds}/"
+            f"{report.robustness.signal_vehicle_total_holds}",
+            f"- ETF执行挑战者结论：**{report.robustness.signal_vehicle_verdict}**",
             f"- 仓位容量稳定性：{report.robustness.positive_position_capacities}/"
             f"{report.robustness.total_position_capacities} 档在验证段和留出段均为正",
             f"- 入场强度稳定性：{report.robustness.positive_signal_profiles}/"
@@ -313,6 +330,7 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
     for variant_name, folds in (
         (report.robustness.default_variant, report.robustness.folds),
         (report.robustness.etf_proxy_variant, report.robustness.etf_proxy_folds),
+        (report.robustness.signal_vehicle_variant, report.robustness.signal_vehicle_folds),
     ):
         for fold in folds:
             lines.append(
@@ -687,6 +705,7 @@ def _find_entry(
     hold_days: int,
     max_position_fraction: float,
     stop_loss: float,
+    enforce_entry_tradeability: bool = True,
 ) -> tuple[int | None, int | None, str]:
     plan = build_trade_execution_plan(
         candidate.last_close,
@@ -707,6 +726,8 @@ def _find_entry(
         ):
             continue
         entry_index = trigger_index + 1
+        if not enforce_entry_tradeability:
+            return entry_index, trigger_index, "filled"
         entry_bar = _bar(series, calendar[entry_index])
         if not entry_bar or entry_bar["volume"] <= 0:
             return None, last_trigger_index, "suspension"
@@ -792,6 +813,26 @@ def _theme_vehicle_comparison(
     return None, None
 
 
+def _theme_vehicle_execution(
+    theme: dict[str, Any] | None,
+    klines: dict[str, KlineSeries],
+    instruments: dict[str, dict[str, Any]],
+    entry_timestamp: int,
+) -> tuple[str, str, KlineSeries] | None:
+    if theme is None:
+        return None
+    for raw_symbol in theme.get("vehicles", []):
+        symbol = str(raw_symbol)
+        series = klines.get(symbol)
+        bar = _bar(series, entry_timestamp) if series is not None else None
+        if series is None or bar is None or bar["volume"] <= 0:
+            continue
+        instrument = instruments.get(symbol) or {}
+        name = str(instrument.get("name") or instrument.get("display_name") or f"{symbol} ETF")
+        return symbol, name, series
+    return None
+
+
 def simulate_variant(
     theme_config: dict[str, Any],
     a_klines: dict[str, KlineSeries],
@@ -846,7 +887,7 @@ def simulate_variant(
 
     trades: list[StrategyTrade] = []
     execution_stats = SimulationStats()
-    planned_positions: list[tuple[int, str, str]] = []
+    planned_positions: list[tuple[int, str, str, str]] = []
     index = warmup_days
     while index < len(calendar) - hold_days - 1:
         cutoff = calendar[index]
@@ -866,6 +907,7 @@ def simulate_variant(
         planned_positions = [item for item in planned_positions if item[0] > entry_index]
         excluded_symbols = {item[1] for item in planned_positions}
         excluded_themes = {item[2] for item in planned_positions}
+        active_execution_symbols = {item[3] for item in planned_positions}
         slots = max(0, max_positions - len(planned_positions))
         for _ in range(slots):
             selected = _candidate(
@@ -882,16 +924,17 @@ def simulate_variant(
             if selected is None:
                 break
             candidate, theme_name, status = selected
-            series = a_klines[candidate.symbol]
+            signal_series = a_klines[candidate.symbol]
             execution_stats.plans_created += 1
             resolved_entry_index, trigger_index, entry_status = _find_entry(
-                series,
+                signal_series,
                 calendar,
                 index,
                 candidate,
                 hold_days,
                 position_fraction,
                 stop_loss,
+                enforce_entry_tradeability=signal_mode != "stock_signal_theme_vehicle",
             )
             if resolved_entry_index is None:
                 if entry_status == "limit_up":
@@ -901,11 +944,47 @@ def simulate_variant(
                 else:
                     execution_stats.plans_expired += 1
                 reservation_end = trigger_index if trigger_index is not None else index + 1
-                planned_positions.append((reservation_end, candidate.symbol, theme_name))
+                planned_positions.append((reservation_end, candidate.symbol, theme_name, candidate.symbol))
                 excluded_symbols.add(candidate.symbol)
                 continue
             entry_index = resolved_entry_index
             entry_timestamp = calendar[entry_index]
+            execution_symbol = candidate.symbol
+            execution_name = candidate.name
+            series = signal_series
+            if signal_mode == "stock_signal_theme_vehicle":
+                vehicle = _theme_vehicle_execution(
+                    config_by_theme.get(theme_name),
+                    a_klines,
+                    a_instruments,
+                    entry_timestamp,
+                )
+                if vehicle is None:
+                    execution_stats.entries_blocked_no_theme_vehicle += 1
+                    excluded_symbols.add(candidate.symbol)
+                    excluded_themes.add(theme_name)
+                    continue
+                execution_symbol, execution_name, series = vehicle
+                if execution_symbol in active_execution_symbols:
+                    excluded_symbols.add(candidate.symbol)
+                    excluded_themes.add(theme_name)
+                    continue
+                entry_bar = _bar(series, entry_timestamp)
+                previous_bar = _bar(series, calendar[entry_index - 1]) if entry_index > 0 else None
+                entry_date = cn_market_date_from_ms(entry_timestamp) or ""
+                if entry_bar and previous_bar and is_sealed_limit_up(
+                    execution_symbol,
+                    execution_name,
+                    entry_date,
+                    previous_bar["close"],
+                    day_low=entry_bar["low"],
+                    day_close=entry_bar["close"],
+                    volume=entry_bar["volume"],
+                ):
+                    execution_stats.entries_blocked_limit_up += 1
+                    excluded_symbols.add(candidate.symbol)
+                    excluded_themes.add(theme_name)
+                    continue
             raw_entry_price = _price_at(series, entry_timestamp, "open")
             if not raw_entry_price or raw_entry_price <= 0:
                 excluded_symbols.add(candidate.symbol)
@@ -942,7 +1021,7 @@ def simulate_variant(
                 calendar,
                 exit_index,
                 exit_field,
-                candidate.name,
+                execution_name,
             )
             execution_stats.exits_delayed_limit_down += limit_down_delays
             execution_stats.exits_delayed_suspension += suspension_delays
@@ -962,7 +1041,9 @@ def simulate_variant(
                 entry_date,
                 exit_date,
                 cost_model.account_capital * trade_position_fraction,
-                is_fund=is_fund_security(candidate.name),
+                is_fund=(
+                    signal_mode == "stock_signal_theme_vehicle" or is_fund_security(execution_name)
+                ),
                 cost_model=cost_model,
             )
             vehicle_symbol, vehicle_net_return = _theme_vehicle_comparison(
@@ -983,8 +1064,8 @@ def simulate_variant(
             )
             trades.append(
                 StrategyTrade(
-                    symbol=candidate.symbol,
-                    name=candidate.name,
+                    symbol=execution_symbol,
+                    name=execution_name,
                     theme=theme_name,
                     signal_date=cn_market_date_from_ms(cutoff) or "",
                     entry_date=entry_date,
@@ -1014,9 +1095,12 @@ def simulate_variant(
                     theme_vehicle_symbol=vehicle_symbol if signal_mode == "stock_basket" else None,
                     theme_vehicle_net_return=vehicle_net_return if signal_mode == "stock_basket" else None,
                     stock_selection_excess=stock_selection_excess,
+                    signal_symbol=candidate.symbol,
+                    signal_name=candidate.name,
                 )
             )
-            planned_positions.append((exit_index, candidate.symbol, theme_name))
+            planned_positions.append((exit_index, candidate.symbol, theme_name, execution_symbol))
+            active_execution_symbols.add(execution_symbol)
             excluded_symbols.add(candidate.symbol)
             excluded_themes.add(theme_name)
         index += 1
@@ -1348,6 +1432,48 @@ def run_strategy_backtest(
                         )
                     )
 
+    for hold_days in (10, 15, 20):
+        trades, execution_stats = simulate_variant(
+            theme_config,
+            a_klines,
+            a_instruments,
+            hk_klines,
+            hk_instruments,
+            hold_days,
+            "off",
+            "stock_signal_theme_vehicle",
+            cost_model,
+            stop_loss,
+            position_fraction,
+            2,
+            "base",
+            warmup_days,
+            gate_cache,
+            breadth_symbols,
+            theme_cache,
+        )
+        train = [trade for trade in trades if trade.signal_date <= train_end_date]
+        validation = [trade for trade in trades if train_end_date < trade.signal_date <= validation_end_date]
+        test = [trade for trade in trades if trade.signal_date > validation_end_date]
+        variants.append(
+            BacktestVariant(
+                name=f"stock_signal_theme_vehicle_positions_2_hold_{hold_days}_off",
+                hold_days=hold_days,
+                max_positions=2,
+                cross_market_mode="off",
+                signal_mode="stock_signal_theme_vehicle",
+                signal_profile="base",
+                position_fraction=position_fraction,
+                stop_loss=stop_loss,
+                all_period=_metrics(trades, a_klines),
+                train=_metrics(train, a_klines),
+                validation=_metrics(validation, a_klines),
+                test=_metrics(test, a_klines),
+                trades=trades,
+                execution_stats=execution_stats,
+            )
+        )
+
     for signal_profile in ("loose", "strict"):
         trades, execution_stats = simulate_variant(
             theme_config,
@@ -1536,13 +1662,51 @@ def run_strategy_backtest(
         and item.position_fraction == position_fraction
         and item.stop_loss == stop_loss
     )
+    signal_vehicle_variants = [
+        item
+        for item in variants
+        if item.signal_mode == "stock_signal_theme_vehicle"
+        and item.max_positions == 2
+        and item.cross_market_mode == "off"
+        and item.signal_profile == "base"
+        and item.position_fraction == position_fraction
+        and item.stop_loss == stop_loss
+    ]
+    signal_vehicle_core = next(item for item in signal_vehicle_variants if item.hold_days == 15)
     benchmark = a_klines.get("510300.SH")
     default_folds = _time_folds(default_variant.trades, calendar, benchmark, a_klines, warmup_days)
     etf_folds = _time_folds(etf_proxy_variant.trades, calendar, benchmark, a_klines, warmup_days)
+    signal_vehicle_folds = _time_folds(
+        signal_vehicle_core.trades,
+        calendar,
+        benchmark,
+        a_klines,
+        warmup_days,
+    )
     positive_folds = sum((fold.metrics.cumulative_return or 0) > 0 for fold in default_folds)
     excess_positive_folds = sum((fold.excess_return or 0) > 0 for fold in default_folds)
     etf_positive_folds = sum((fold.metrics.cumulative_return or 0) > 0 for fold in etf_folds)
     etf_excess_positive_folds = sum((fold.excess_return or 0) > 0 for fold in etf_folds)
+    signal_vehicle_positive_folds = sum(
+        (fold.metrics.cumulative_return or 0) > 0 for fold in signal_vehicle_folds
+    )
+    signal_vehicle_excess_positive_folds = sum(
+        (fold.excess_return or 0) > 0 for fold in signal_vehicle_folds
+    )
+    signal_vehicle_stable_holds = sum(
+        (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
+        for item in signal_vehicle_variants
+    )
+    signal_vehicle_pass = bool(
+        signal_vehicle_positive_folds >= 3
+        and signal_vehicle_excess_positive_folds >= 2
+        and signal_vehicle_stable_holds >= 2
+        and signal_vehicle_core.validation.trades >= 8
+        and signal_vehicle_core.test.trades >= 10
+        and (signal_vehicle_core.validation.cumulative_return or 0) > 0
+        and (signal_vehicle_core.test.cumulative_return or 0) > 0
+        and (signal_vehicle_core.test.max_drawdown or -1) >= -0.15
+    )
     position_capacity_variants = [
         item
         for item in variants
@@ -1657,6 +1821,17 @@ def run_strategy_backtest(
         etf_proxy_positive_folds=etf_positive_folds,
         etf_proxy_excess_positive_folds=etf_excess_positive_folds,
         etf_proxy_folds=etf_folds,
+        signal_vehicle_variant=signal_vehicle_core.name,
+        signal_vehicle_positive_folds=signal_vehicle_positive_folds,
+        signal_vehicle_excess_positive_folds=signal_vehicle_excess_positive_folds,
+        signal_vehicle_folds=signal_vehicle_folds,
+        signal_vehicle_stable_holds=signal_vehicle_stable_holds,
+        signal_vehicle_total_holds=len(signal_vehicle_variants),
+        signal_vehicle_verdict=(
+            "ETF执行达到初步挑战者门槛，保持模拟观察"
+            if signal_vehicle_pass
+            else "ETF执行未通过跨时期门槛，不进入生产"
+        ),
         positive_position_capacities=positive_position_capacities,
         total_position_capacities=len(position_capacity_variants),
         positive_signal_profiles=positive_signal_profiles,
@@ -1736,6 +1911,7 @@ def run_strategy_backtest(
             "历史风险警示名称不完整，ST状态无法逐日恢复；能够从当日名称识别时按主板5%限制处理，否则按所属板块普通涨跌幅处理。",
             "未使用历史财务公告和历史政策新闻，回测只检验价格主线与A/H确认增量。",
             "主线内选股归因使用每个主题配置中首个具备完整同期行情的ETF，并按个股完全相同的进出日期、仓位和ETF交易成本计算；无ETF主题不纳入可比交易。",
+            "个股先行信号+主题ETF执行是独立挑战者：主线和个股只负责产生触发，实际成交、止损和退出均使用主题ETF自身行情；即使过线也只进入模拟观察。",
             f"A/H确认在 {stable_increment_holds}/3 个持有期使验证段、最终留出段累计收益均为正且高于未确认版；"
             "达到历史门槛也只进入模拟观察，不直接提高实盘评分。",
         ],
