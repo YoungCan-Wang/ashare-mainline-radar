@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .execution import TradeExecutionPlan, build_trade_execution_plan
 from .models import (
     MarketPulse,
     NextBuyPlan,
@@ -120,33 +121,44 @@ def _decision(
     return "优先候选，分批确认"
 
 
-def _entry_plan(candidate: StrongStockCandidate, lifecycle: ThemeLifecycleSignal | None) -> str:
-    close = candidate.last_close
-    pullback_low = close * 0.955
-    pullback_high = close * 0.985
-    breakout = close * 1.012
+def _entry_plan(
+    candidate: StrongStockCandidate,
+    lifecycle: ThemeLifecycleSignal | None,
+    execution: TradeExecutionPlan,
+) -> str:
     if lifecycle and lifecycle.stage == "主线回踩":
-        return f"先等止跌；重新站上 {_fmt_price(pullback_high)} 且板块广度回升后再评估，下跌过程中不补仓。"
+        return (
+            f"先等止跌；重新站上 {_fmt_price(execution.entry_zone_high)} 且板块广度回升后再评估，"
+            "下跌过程中不补仓。"
+        )
     if lifecycle and lifecycle.stage == "扩散启动":
         return "只进入观察池；等待20日广度、核心股和ETF同步完成主线确认。"
-    if candidate.ret_5d is not None and candidate.ret_5d >= 0.15:
+    if execution.entry_mode == "breakout_close_confirm":
         return (
-            f"不追高；优先等回踩到 {_fmt_price(pullback_low)}-{_fmt_price(pullback_high)} 区间后企稳，"
-            "或盘中缩量回踩后重新放量转强再分批。"
+            f"未来{execution.valid_for_days}个交易日内，收盘站上 {_fmt_price(execution.confirm_price)} 且当日收阳；"
+            "下一交易日开盘未封涨停时执行首笔，封死涨停则取消本次计划。"
         )
-    if candidate.status == "突破观察":
-        return f"放量站上 {_fmt_price(breakout)} 附近并保持主线强度时再确认；否则等回踩到 {_fmt_price(pullback_high)} 附近。"
-    return f"可用小仓试探，优先等 {_fmt_price(pullback_high)} 附近回踩不破后再加仓。"
+    return (
+        f"未来{execution.valid_for_days}个交易日内，最低价触及 "
+        f"{_fmt_price(execution.entry_zone_low)}-{_fmt_price(execution.entry_zone_high)}，"
+        f"收盘重新站上 {_fmt_price(execution.entry_zone_high)} 且收阳；"
+        "下一交易日开盘未封涨停时执行首笔。"
+    )
 
 
-def _invalidation(candidate: StrongStockCandidate) -> str:
-    close = candidate.last_close
-    hard_stop = close * 0.92
-    soft_stop = close * 0.95
-    return f"跌破 {_fmt_price(soft_stop)} 先降级观察；有效跌破 {_fmt_price(hard_stop)} 或主线连续两日退出前三，视为交易假设失效。"
+def _invalidation(candidate: StrongStockCandidate, execution: TradeExecutionPlan) -> str:
+    soft_stop = candidate.last_close * 0.95
+    return (
+        f"跌破 {_fmt_price(soft_stop)} 先降级观察；收盘跌破 {_fmt_price(execution.stop_price)} "
+        "或主线连续两日退出前三，下一可成交交易日退出；封死跌停时顺延，不假设能够卖出。"
+    )
 
 
-def _position_note(candidate: StrongStockCandidate, lifecycle: ThemeLifecycleSignal | None) -> str:
+def _position_note(
+    candidate: StrongStockCandidate,
+    lifecycle: ThemeLifecycleSignal | None,
+    execution: TradeExecutionPlan,
+) -> str:
     backtest = candidate.backtest
     hold_days = backtest.hold_days if backtest else 15
     if backtest and backtest.worst_return is not None and backtest.worst_return < -0.12:
@@ -159,7 +171,11 @@ def _position_note(candidate: StrongStockCandidate, lifecycle: ThemeLifecycleSig
             f"按{hold_days}个交易日波段处理；首笔只用计划仓位1/3。"
             "仅在已有浮盈、主线延续且回踩确认后递减加仓，跌破失效位不补仓。"
         )
-    note = "组合基准最多同时两仓、单仓不超过总资金25%；" + note
+    note = (
+        "组合基准最多同时两仓、单仓不超过总资金"
+        f"{execution.max_position_fraction * 100:.0f}%；首笔约占总资金"
+        f"{execution.initial_position_fraction * 100:.1f}%。" + note
+    )
     if lifecycle and lifecycle.independence_status == "逆势独立主线":
         note += "当前属于弱市独立主线，只按试错仓处理，不因板块强势放宽总仓位。"
     return note
@@ -218,6 +234,8 @@ def _build_plan(
     theme = next((item for item in themes if item.name == candidate.theme), None)
     status = theme.status if theme else _theme_status(candidate.theme, themes)
     phase = theme.price_phase if theme else "阶段未确认"
+    hold_days = candidate.backtest.hold_days if candidate.backtest else 15
+    execution = build_trade_execution_plan(candidate.last_close, candidate.status, hold_days=hold_days)
     return NextBuyPlan(
         symbol=candidate.symbol,
         name=candidate.name,
@@ -225,13 +243,22 @@ def _build_plan(
         decision=_decision(candidate, phase, lifecycle),
         priority_score=_priority_score(candidate, status, market_pulses, phase, lifecycle),
         last_close=candidate.last_close,
-        entry_plan=_entry_plan(candidate, lifecycle),
-        invalidation=_invalidation(candidate),
-        position_note=_position_note(candidate, lifecycle),
+        entry_plan=_entry_plan(candidate, lifecycle, execution),
+        invalidation=_invalidation(candidate, execution),
+        position_note=_position_note(candidate, lifecycle, execution),
         evidence=[*_evidence(candidate, status, market_pulses, lifecycle), f"主题价格阶段：{phase}"],
         risk_notes=_risk_notes(candidate),
         lifecycle_stage=lifecycle.stage if lifecycle else "阶段未确认",
         independence_status=lifecycle.independence_status if lifecycle else "随市主线",
+        entry_mode=execution.entry_mode,
+        entry_zone_low=execution.entry_zone_low,
+        entry_zone_high=execution.entry_zone_high,
+        confirm_price=execution.confirm_price,
+        stop_price=execution.stop_price,
+        valid_for_days=execution.valid_for_days,
+        max_hold_days=execution.max_hold_days,
+        max_position_fraction=execution.max_position_fraction,
+        initial_position_fraction=execution.initial_position_fraction,
     )
 
 
@@ -297,6 +324,7 @@ def build_next_buy_report(
     notes = [
         "系统输出的是下一笔优先候选和条件化交易计划，不是无条件市价买入指令。",
         "若主线强度、市场环境或个股触发条件变弱，候选应自动降级。",
+        "触发采用收盘确认、下一交易日开盘执行；封死涨停不买，封死跌停不假设能够卖出。",
     ]
     by_theme = _theme_groups(plans, themes, lifecycle_by_theme)
     if not plans:

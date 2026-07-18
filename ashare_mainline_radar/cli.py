@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
 from .feishu import FeishuStatus, build_feishu_card, post_feishu_card, write_feishu_status
+from .paper_trading import PaperTradeRefreshStatus, refresh_paper_trades
 from .report import write_report
 from .storage import persist_report
 from .tickflow import TickFlowClient
@@ -78,6 +79,20 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"Storage: {storage_status.status} via {storage_status.backend}; "
         f"themes={storage_status.theme_records} symbols={storage_status.symbol_records}"
+    )
+    active_themes = {
+        theme.name for theme in report.themes[:3] if theme.status in {"主线成立", "主线候选"}
+    }
+    try:
+        paper_status = refresh_paper_trades(active_themes, client=client)
+    except Exception as exc:
+        paper_status = PaperTradeRefreshStatus("failed", 0, 0, 0, f"{type(exc).__name__}: {exc}")
+    (args.output_dir / "paper_trade_status.json").write_text(
+        json.dumps(paper_status.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(
+        f"Paper trades: {paper_status.status}; checked={paper_status.plans_checked} "
+        f"updated={paper_status.plans_updated} events={paper_status.events_written}"
     )
     if report.themes:
         top = report.themes[0]

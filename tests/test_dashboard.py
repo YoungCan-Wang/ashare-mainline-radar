@@ -56,6 +56,14 @@ def test_dashboard_payload_merges_local_run_over_remote() -> None:
                 "refreshed_at": "2026-07-17T07:01:00+00:00",
             }
         ],
+        "trade_plans": [
+            {
+                "plan_key": "2026-07-17:300122.SZ",
+                "symbol": "300122.SZ",
+                "status": "open",
+                "entry_price": 36.0,
+            }
+        ],
     }
 
     payload = build_dashboard_payload(_bundle(), history)
@@ -67,6 +75,7 @@ def test_dashboard_payload_merges_local_run_over_remote() -> None:
     assert payload["symbols"][0]["first_selected_price"] == 35.0
     assert payload["symbols"][0]["latest_price"] == 38.5
     assert payload["symbols"][0]["return_since_selection"] == pytest.approx(0.1)
+    assert payload["symbols"][0]["paper_trade_plan"]["status"] == "open"
 
 
 def test_fetch_dashboard_history_paginates_and_scopes_requests() -> None:
@@ -98,7 +107,7 @@ def test_fetch_dashboard_history_paginates_and_scopes_requests() -> None:
         opener=opener,
     )
 
-    assert len(requests) == 5
+    assert len(requests) == 6
     assert requests[0][0].get_header("X-radar-ingest-key") == "private-key"
     assert history["runs"][0]["run_key"] == "r1"
 

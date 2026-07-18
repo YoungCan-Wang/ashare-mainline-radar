@@ -56,6 +56,30 @@ export interface TradePlan {
   invalidation?: string;
   position_note?: string;
   action?: string;
+  entry_mode?: string;
+  entry_zone_low?: number;
+  entry_zone_high?: number;
+  confirm_price?: number;
+  stop_price?: number;
+  valid_for_days?: number;
+  max_hold_days?: number;
+}
+
+export interface PaperTradePlan {
+  plan_key: string;
+  status: "watching" | "triggered" | "open" | "expired" | "cancelled" | "closed" | string;
+  signal_date?: string;
+  signal_price?: number;
+  trigger_date?: string;
+  entry_date?: string;
+  entry_price?: number;
+  mark_date?: string;
+  mark_price?: number;
+  exit_date?: string;
+  exit_price?: number;
+  net_return?: number;
+  exit_reason?: string;
+  exit_delay_days?: number;
 }
 
 export interface TargetPayload {
@@ -114,6 +138,7 @@ export interface SymbolRow {
   quote_refreshed_at?: string;
   daily_change_pct?: number;
   return_since_selection?: number;
+  paper_trade_plan?: PaperTradePlan;
   trade_plan?: TradePlan;
   target_payload?: TargetPayload;
   fundamental_payload?: FundamentalPayload;

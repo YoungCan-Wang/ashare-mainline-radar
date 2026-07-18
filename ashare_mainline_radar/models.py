@@ -202,6 +202,16 @@ class NextBuyPlan:
     risk_notes: list[str] = field(default_factory=list)
     lifecycle_stage: str = "阶段未确认"
     independence_status: str = "随市主线"
+    execution_status: str = "watching"
+    entry_mode: str = "pullback_close_reclaim"
+    entry_zone_low: float | None = None
+    entry_zone_high: float | None = None
+    confirm_price: float | None = None
+    stop_price: float | None = None
+    valid_for_days: int = 5
+    max_hold_days: int = 15
+    max_position_fraction: float = 0.25
+    initial_position_fraction: float = 1 / 12
 
 
 @dataclass

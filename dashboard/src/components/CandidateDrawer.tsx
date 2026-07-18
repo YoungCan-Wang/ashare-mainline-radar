@@ -11,6 +11,15 @@ interface CandidateDrawerProps {
   onClose: () => void;
 }
 
+const PAPER_STATUS_LABELS: Record<string, string> = {
+  watching: "等待触发",
+  triggered: "已触发待成交",
+  open: "模拟持仓",
+  expired: "到期未触发",
+  cancelled: "计划取消",
+  closed: "模拟已退出",
+};
+
 export function CandidateDrawer({ candidate, onClose }: CandidateDrawerProps) {
   const target = candidate?.target_payload;
   const fundamental = candidate?.fundamental_payload;
@@ -18,6 +27,8 @@ export function CandidateDrawer({ candidate, onClose }: CandidateDrawerProps) {
   const plan = candidate?.trade_plan;
   const strong = candidate?.signal_payload?.strong_stock;
   const backtest = strong?.backtest;
+  const paperPlan = candidate?.paper_trade_plan;
+  const paperStatus = paperPlan ? (PAPER_STATUS_LABELS[paperPlan.status] ?? paperPlan.status) : "尚未生成可执行计划";
 
   const targetMetrics: MetricItem[] = [
     { label: "入选价", value: formatPrice(candidate?.first_selected_price) },
@@ -72,6 +83,10 @@ export function CandidateDrawer({ candidate, onClose }: CandidateDrawerProps) {
               <dl className="detail-list">
                 <div className="detail-row"><dt>所属主线</dt><dd>{candidate?.primary_theme ?? candidate?.themes?.join("、") ?? "未映射"}</dd></div>
                 <div className="detail-row"><dt>首次入选</dt><dd>{formatDateTime(candidate?.first_selected_at)} · {formatPrice(candidate?.first_selected_price)}</dd></div>
+                <div className="detail-row"><dt>模拟状态</dt><dd>{paperStatus}</dd></div>
+                <div className="detail-row"><dt>触发与成交</dt><dd>{paperPlan ? `${paperPlan.trigger_date ? `${paperPlan.trigger_date} 触发` : "尚未触发"} · ${paperPlan.entry_date ? `${paperPlan.entry_date} 以 ${formatPrice(paperPlan.entry_price)} 模拟成交` : "尚未成交"}` : "--"}</dd></div>
+                <div className="detail-row"><dt>持仓估值</dt><dd>{paperPlan?.status === "open" ? `${paperPlan.mark_date ?? "--"} 按 ${formatPrice(paperPlan.mark_price)} 估值 · 扣费净收益 ${formatSignedPercent(paperPlan.net_return)}` : "--"}</dd></div>
+                <div className="detail-row"><dt>退出结果</dt><dd>{paperPlan?.status === "closed" ? `${paperPlan.exit_date ?? "--"} 退出 · 净收益 ${formatSignedPercent(paperPlan.net_return)}${paperPlan.exit_delay_days ? ` · 延迟 ${paperPlan.exit_delay_days} 日成交` : ""}` : (paperPlan?.exit_reason ?? "尚未退出")}</dd></div>
                 <div className="detail-row"><dt>行情时间</dt><dd>{formatDateTime(candidate?.quote_at ?? candidate?.quote_refreshed_at)}</dd></div>
                 <div className="detail-row"><dt>参与条件</dt><dd>{plan?.entry_plan ?? plan?.confirmation ?? "等待条件确认"}</dd></div>
                 <div className="detail-row"><dt>失效条件</dt><dd>{plan?.invalidation ?? (target?.stop_price == null ? "未覆盖" : `跌破 ${formatPrice(target.stop_price)}`)}</dd></div>

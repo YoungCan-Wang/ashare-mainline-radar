@@ -30,6 +30,7 @@ dist/
 build/
 node_modules/
 dashboard/dist/
+supabase/.temp/
 *.tsbuildinfo
 *.egg-info/
 reports/*

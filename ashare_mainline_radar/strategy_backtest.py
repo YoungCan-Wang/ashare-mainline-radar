@@ -8,6 +8,15 @@ from typing import Any
 
 from .config import configured_symbols, theme_candidate_symbols, theme_symbol_map
 from .cross_market import build_cross_market_report
+from .execution import (
+    TradingCostModel,
+    apply_execution_costs,
+    build_trade_execution_plan,
+    entry_confirmed,
+    is_fund_security,
+    is_sealed_limit_down,
+    is_sealed_limit_up,
+)
 from .market import build_theme_snapshots, compute_symbol_snapshot
 from .market_context import build_market_pulses
 from .market_structure import build_market_structure
@@ -32,6 +41,23 @@ class StrategyTrade:
     position_fraction: float
     exit_reason: str
     cross_market_status: str | None = None
+    trigger_date: str | None = None
+    raw_entry_price: float | None = None
+    raw_exit_price: float | None = None
+    buy_fee_rate: float = 0.0
+    sell_fee_rate: float = 0.0
+    fee_breakdown: dict[str, Any] = field(default_factory=dict)
+    exit_delay_days: int = 0
+
+
+@dataclass
+class SimulationStats:
+    plans_created: int = 0
+    plans_expired: int = 0
+    entries_blocked_limit_up: int = 0
+    entries_blocked_suspension: int = 0
+    exits_delayed_limit_down: int = 0
+    exits_delayed_suspension: int = 0
 
 
 @dataclass
@@ -61,6 +87,7 @@ class BacktestVariant:
     validation: BacktestMetrics
     test: BacktestMetrics
     trades: list[StrategyTrade] = field(default_factory=list)
+    execution_stats: SimulationStats = field(default_factory=SimulationStats)
 
 
 @dataclass
@@ -112,6 +139,7 @@ class StrategyBacktestReport:
     robustness: RobustnessAudit
     verdict: str
     cross_market_verdict: str
+    cost_model: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -128,11 +156,23 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
         "",
         f"- 结论：**{report.verdict}**",
         f"- A/H增量：**{report.cross_market_verdict}**",
-        f"- 交易成本：{_percent(report.transaction_cost)}",
-        f"- 单笔最大资金占比：{_percent(report.position_fraction)}",
+        f"- 当前费率下估算单次完整交易成本：{_percent(report.transaction_cost)}",
+        f"- 计划单仓上限：{_percent(report.position_fraction)}；回测首笔按计划仓位1/3，不假设后续加仓",
         f"- 硬失效位：{_percent(report.stop_loss)}",
         f"- 历史市场广度样本：{report.breadth_symbols}只",
         f"- 时间切分：训练截至 {report.split_dates['train_end']}，验证截至 {report.split_dates['validation_end']}，最终留出截至 {report.split_dates['test_end']}",
+        "",
+        "## 成交成本与可成交性",
+        "",
+        f"- 假设账户资金：{float(report.cost_model.get('account_capital') or 0):,.0f} 元",
+        f"- 券商净佣金：{_percent(report.cost_model.get('broker_commission_rate'))} 双边，单笔最低 "
+        f"{float(report.cost_model.get('minimum_commission') or 0):.0f} 元",
+        f"- 证管费：{_percent(report.cost_model.get('regulatory_fee_rate'))} 双边",
+        "- A股经手费：2023-08-28起0.00341%双边，此前0.00487%双边",
+        "- A股过户费：2022-04-29起0.001%双边，此前0.002%双边",
+        "- 印花税：仅卖出收取，2023-08-28起0.05%，此前0.10%",
+        f"- 滑点：{_percent(report.cost_model.get('slippage_rate_each_side'))} 每边",
+        "- 封死涨停不成交并取消该计划；停牌同样不成交。封死跌停或停牌无法卖出时，顺延到首个可成交交易日。",
         "",
         "## 基准",
         "",
@@ -160,6 +200,19 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
             f"{_percent(variant.validation.avg_return)} | {_percent(variant.validation.cumulative_return)} | "
             f"{variant.test.trades} | {_percent(variant.test.avg_return)} | "
             f"{_percent(variant.test.cumulative_return)} | {_percent(variant.test.max_drawdown)} |"
+        )
+    core = next((item for item in report.variants if item.name == report.robustness.default_variant), None)
+    if core:
+        stats = core.execution_stats
+        lines.extend(
+            [
+                "",
+                "## 核心方案执行统计",
+                "",
+                f"- 生成交易计划：{stats.plans_created} 个；等待期满未触发：{stats.plans_expired} 个",
+                f"- 封死涨停无法买入：{stats.entries_blocked_limit_up} 次；停牌无法买入：{stats.entries_blocked_suspension} 次",
+                f"- 封死跌停导致延迟退出：{stats.exits_delayed_limit_down} 个交易日；停牌导致延迟退出：{stats.exits_delayed_suspension} 个交易日",
+            ]
         )
     lines.extend(
         [
@@ -277,9 +330,8 @@ def _portfolio_performance(
             position = active.pop(trade_id, None)
             if position is None:
                 continue
-            _, shares, notional = position
-            transaction_cost = max(0.0, trade.gross_return - trade.net_return)
-            cash += shares * trade.exit_price - notional * transaction_cost
+            _, shares, _ = position
+            cash += shares * trade.exit_price * (1 - trade.sell_fee_rate)
 
         opening_equity = cash
         for trade, shares, _ in active.values():
@@ -288,10 +340,11 @@ def _portfolio_performance(
             if price is not None:
                 opening_equity += shares * price
         for trade_id, trade in entries.get(date, []):
-            notional = min(cash, opening_equity * trade.position_fraction)
+            target_notional = opening_equity * trade.position_fraction
+            notional = min(cash / (1 + trade.buy_fee_rate), target_notional)
             if notional <= 0:
                 continue
-            cash -= notional
+            cash -= notional * (1 + trade.buy_fee_rate)
             active[trade_id] = (trade, notional / trade.entry_price, notional)
 
         closing_equity = cash
@@ -343,19 +396,38 @@ def _metrics(
 
 def _metrics_with_cost(
     trades: list[StrategyTrade],
-    transaction_cost: float,
+    cost_model: TradingCostModel,
     klines: dict[str, KlineSeries],
+    multiplier: float,
 ) -> BacktestMetrics:
-    adjusted = [
-        StrategyTrade(
-            **{
-                **asdict(trade),
-                "net_return": trade.gross_return - transaction_cost,
-                "portfolio_return": (trade.gross_return - transaction_cost) * trade.position_fraction,
-            }
+    adjusted: list[StrategyTrade] = []
+    for trade in trades:
+        raw_entry = trade.raw_entry_price or trade.entry_price
+        raw_exit = trade.raw_exit_price or trade.exit_price
+        cost = apply_execution_costs(
+            raw_entry,
+            raw_exit,
+            trade.entry_date,
+            trade.exit_date,
+            cost_model.account_capital * trade.position_fraction,
+            is_fund=is_fund_security(trade.name),
+            cost_model=cost_model,
+            multiplier=multiplier,
         )
-        for trade in trades
-    ]
+        adjusted.append(
+            StrategyTrade(
+                **{
+                    **asdict(trade),
+                    "entry_price": cost["entry_price"],
+                    "exit_price": cost["exit_price"],
+                    "buy_fee_rate": cost["buy_fee_rate"],
+                    "sell_fee_rate": cost["sell_fee_rate"],
+                    "net_return": cost["net_return"],
+                    "portfolio_return": cost["net_return"] * trade.position_fraction,
+                    "fee_breakdown": {"buy": cost["buy_fees"], "sell": cost["sell_fees"]},
+                }
+            )
+        )
     return _metrics(adjusted, klines)
 
 
@@ -471,6 +543,96 @@ def _series_drawdown(series: KlineSeries | None, start: int, end: int) -> float 
     return max_drawdown if peak is not None else None
 
 
+def _bar(series: KlineSeries, timestamp: int) -> dict[str, float] | None:
+    index = bisect_right(series.timestamp, timestamp) - 1
+    if index < 0 or series.timestamp[index] != timestamp:
+        return None
+    return {
+        "open": series.open[index],
+        "high": series.high[index],
+        "low": series.low[index],
+        "close": series.close[index],
+        "volume": series.volume[index],
+    }
+
+
+def _find_entry(
+    series: KlineSeries,
+    calendar: list[int],
+    signal_index: int,
+    candidate: SymbolSnapshot,
+    hold_days: int,
+    max_position_fraction: float,
+) -> tuple[int | None, int | None, str]:
+    plan = build_trade_execution_plan(
+        candidate.last_close,
+        candidate.status,
+        hold_days=hold_days,
+        max_position_fraction=max_position_fraction,
+    )
+    last_trigger_index = min(signal_index + plan.valid_for_days, len(calendar) - 2)
+    for trigger_index in range(signal_index + 1, last_trigger_index + 1):
+        trigger_bar = _bar(series, calendar[trigger_index])
+        if not trigger_bar or not entry_confirmed(
+            plan,
+            day_open=trigger_bar["open"],
+            day_high=trigger_bar["high"],
+            day_low=trigger_bar["low"],
+            day_close=trigger_bar["close"],
+        ):
+            continue
+        entry_index = trigger_index + 1
+        entry_bar = _bar(series, calendar[entry_index])
+        if not entry_bar or entry_bar["volume"] <= 0:
+            return None, last_trigger_index, "suspension"
+        previous_bar = _bar(series, calendar[entry_index - 1])
+        entry_date = cn_market_date_from_ms(calendar[entry_index]) or ""
+        if previous_bar and is_sealed_limit_up(
+            candidate.symbol,
+            candidate.name,
+            entry_date,
+            previous_bar["close"],
+            day_low=entry_bar["low"],
+            day_close=entry_bar["close"],
+            volume=entry_bar["volume"],
+        ):
+            return None, last_trigger_index, "limit_up"
+        return entry_index, trigger_index, "filled"
+    return None, last_trigger_index, "expired"
+
+
+def _find_sellable_exit(
+    series: KlineSeries,
+    calendar: list[int],
+    requested_index: int,
+    requested_field: str,
+    name: str,
+) -> tuple[int | None, float | None, int, int]:
+    limit_down_delays = 0
+    suspension_delays = 0
+    for exit_index in range(requested_index, len(calendar)):
+        bar = _bar(series, calendar[exit_index])
+        if not bar or bar["volume"] <= 0:
+            suspension_delays += 1
+            continue
+        previous_bar = _bar(series, calendar[exit_index - 1]) if exit_index > 0 else None
+        exit_date = cn_market_date_from_ms(calendar[exit_index]) or ""
+        if previous_bar and is_sealed_limit_down(
+            series.symbol,
+            name,
+            exit_date,
+            previous_bar["close"],
+            day_high=bar["high"],
+            day_close=bar["close"],
+            volume=bar["volume"],
+        ):
+            limit_down_delays += 1
+            continue
+        field = requested_field if exit_index == requested_index else "open"
+        return exit_index, bar[field], limit_down_delays, suspension_delays
+    return None, None, limit_down_delays, suspension_delays
+
+
 def simulate_variant(
     theme_config: dict[str, Any],
     a_klines: dict[str, KlineSeries],
@@ -480,7 +642,7 @@ def simulate_variant(
     hold_days: int,
     cross_market_mode: str,
     signal_mode: str,
-    transaction_cost: float,
+    cost_model: TradingCostModel,
     stop_loss: float,
     position_fraction: float,
     max_positions: int,
@@ -489,7 +651,7 @@ def simulate_variant(
     gate_cache: dict[int, str],
     breadth_symbols: set[str],
     theme_cache: dict[tuple[str, int], set[str]],
-) -> list[StrategyTrade]:
+) -> tuple[list[StrategyTrade], SimulationStats]:
     strategy_config = _etf_proxy_config(theme_config) if signal_mode == "etf_proxy" else theme_config
     calendar = _calendar(a_klines)
     symbol_to_themes = theme_symbol_map(strategy_config)
@@ -523,6 +685,7 @@ def simulate_variant(
         return active
 
     trades: list[StrategyTrade] = []
+    execution_stats = SimulationStats()
     planned_positions: list[tuple[int, str, str]] = []
     index = warmup_days
     while index < len(calendar) - hold_days - 1:
@@ -559,21 +722,44 @@ def simulate_variant(
             if selected is None:
                 break
             candidate, theme_name, status = selected
-            trade_position_fraction = position_fraction if entry_gate == "green" else position_fraction / 2
-            exit_index = entry_index + hold_days
-            entry_timestamp = calendar[entry_index]
-            exit_timestamp = calendar[exit_index]
             series = a_klines[candidate.symbol]
-            entry_price = _price_at(series, entry_timestamp, "open")
-            if not entry_price or entry_price <= 0:
+            execution_stats.plans_created += 1
+            resolved_entry_index, trigger_index, entry_status = _find_entry(
+                series,
+                calendar,
+                index,
+                candidate,
+                hold_days,
+                position_fraction,
+            )
+            if resolved_entry_index is None:
+                if entry_status == "limit_up":
+                    execution_stats.entries_blocked_limit_up += 1
+                elif entry_status == "suspension":
+                    execution_stats.entries_blocked_suspension += 1
+                else:
+                    execution_stats.plans_expired += 1
+                reservation_end = trigger_index if trigger_index is not None else index + 1
+                planned_positions.append((reservation_end, candidate.symbol, theme_name))
                 excluded_symbols.add(candidate.symbol)
                 continue
+            entry_index = resolved_entry_index
+            entry_timestamp = calendar[entry_index]
+            raw_entry_price = _price_at(series, entry_timestamp, "open")
+            if not raw_entry_price or raw_entry_price <= 0:
+                excluded_symbols.add(candidate.symbol)
+                continue
+            trade_position_fraction = position_fraction / 3
+            if entry_gate != "green":
+                trade_position_fraction /= 2
+            exit_index = min(entry_index + hold_days, len(calendar) - 1)
+            exit_timestamp = calendar[exit_index]
             exit_reason = f"固定持有{hold_days}日"
             exit_field = "close"
             inactive_theme_days = 0
             for check_index in range(entry_index, exit_index):
                 check_close = _price_at(series, calendar[check_index], "close")
-                if check_close is not None and check_close <= entry_price * (1 - stop_loss):
+                if check_close is not None and check_close <= raw_entry_price * (1 - stop_loss):
                     exit_timestamp = calendar[check_index + 1]
                     exit_field = "open"
                     exit_reason = f"收盘跌破{stop_loss * 100:.0f}%失效位，次日开盘退出"
@@ -590,34 +776,63 @@ def simulate_variant(
                     exit_reason = "主线连续两日退出前三或失去候选身份，次日开盘退出"
                     exit_index = check_index + 1
                     break
-            exit_price = _price_at(series, exit_timestamp, exit_field)
-            if not exit_price:
+            resolved_exit_index, raw_exit_price, limit_down_delays, suspension_delays = _find_sellable_exit(
+                series,
+                calendar,
+                exit_index,
+                exit_field,
+                candidate.name,
+            )
+            execution_stats.exits_delayed_limit_down += limit_down_delays
+            execution_stats.exits_delayed_suspension += suspension_delays
+            if resolved_exit_index is None or raw_exit_price is None:
                 excluded_symbols.add(candidate.symbol)
                 continue
-            gross_return = exit_price / entry_price - 1
+            if resolved_exit_index != exit_index:
+                exit_reason += f"；因跌停或停牌延迟{resolved_exit_index - exit_index}日"
+            exit_index = resolved_exit_index
+            exit_timestamp = calendar[exit_index]
+            entry_date = cn_market_date_from_ms(entry_timestamp) or ""
+            exit_date = cn_market_date_from_ms(exit_timestamp) or ""
+            cost = apply_execution_costs(
+                raw_entry_price,
+                raw_exit_price,
+                entry_date,
+                exit_date,
+                cost_model.account_capital * trade_position_fraction,
+                is_fund=is_fund_security(candidate.name),
+                cost_model=cost_model,
+            )
             trades.append(
                 StrategyTrade(
                     symbol=candidate.symbol,
                     name=candidate.name,
                     theme=theme_name,
                     signal_date=cn_market_date_from_ms(cutoff) or "",
-                    entry_date=cn_market_date_from_ms(entry_timestamp) or "",
-                    exit_date=cn_market_date_from_ms(exit_timestamp) or "",
-                    entry_price=entry_price,
-                    exit_price=exit_price,
-                    gross_return=gross_return,
-                    net_return=gross_return - transaction_cost,
-                    portfolio_return=(gross_return - transaction_cost) * trade_position_fraction,
+                    entry_date=entry_date,
+                    exit_date=exit_date,
+                    entry_price=cost["entry_price"],
+                    exit_price=cost["exit_price"],
+                    gross_return=cost["gross_return"],
+                    net_return=cost["net_return"],
+                    portfolio_return=cost["net_return"] * trade_position_fraction,
                     position_fraction=trade_position_fraction,
                     exit_reason=exit_reason,
                     cross_market_status=status,
+                    trigger_date=cn_market_date_from_ms(calendar[trigger_index]) if trigger_index is not None else None,
+                    raw_entry_price=raw_entry_price,
+                    raw_exit_price=raw_exit_price,
+                    buy_fee_rate=cost["buy_fee_rate"],
+                    sell_fee_rate=cost["sell_fee_rate"],
+                    fee_breakdown={"buy": cost["buy_fees"], "sell": cost["sell_fees"]},
+                    exit_delay_days=limit_down_delays + suspension_delays,
                 )
             )
             planned_positions.append((exit_index, candidate.symbol, theme_name))
             excluded_symbols.add(candidate.symbol)
             excluded_themes.add(theme_name)
         index += 1
-    return trades
+    return trades, execution_stats
 
 
 def _time_folds(
@@ -671,13 +886,14 @@ def run_strategy_backtest(
     a_instruments: dict[str, dict[str, Any]],
     hk_klines: dict[str, KlineSeries],
     hk_instruments: dict[str, dict[str, Any]],
-    transaction_cost: float = 0.003,
     stop_loss: float = 0.08,
     position_fraction: float = 0.25,
     warmup_days: int = 140,
     breadth_symbols: set[str] | None = None,
+    cost_model: TradingCostModel | None = None,
 ) -> StrategyBacktestReport:
     breadth_symbols = breadth_symbols or set()
+    cost_model = cost_model or TradingCostModel()
     calendar = _calendar(a_klines)
     usable_dates = calendar[warmup_days:]
     train_end = usable_dates[int(len(usable_dates) * 0.60)]
@@ -693,7 +909,7 @@ def run_strategy_backtest(
             for hold_days in (10, 15, 20):
                 modes = ("off", "confirm") if signal_mode == "stock_basket" else ("off",)
                 for mode in modes:
-                    trades = simulate_variant(
+                    trades, execution_stats = simulate_variant(
                         theme_config,
                         a_klines,
                         a_instruments,
@@ -702,7 +918,7 @@ def run_strategy_backtest(
                         hold_days,
                         mode,
                         signal_mode,
-                        transaction_cost,
+                        cost_model,
                         stop_loss,
                         position_fraction,
                         max_positions,
@@ -731,11 +947,12 @@ def run_strategy_backtest(
                             validation=_metrics(validation, a_klines),
                             test=_metrics(test, a_klines),
                             trades=trades,
+                            execution_stats=execution_stats,
                         )
                     )
 
     for signal_profile in ("loose", "strict"):
-        trades = simulate_variant(
+        trades, execution_stats = simulate_variant(
             theme_config,
             a_klines,
             a_instruments,
@@ -744,7 +961,7 @@ def run_strategy_backtest(
             15,
             "off",
             "stock_basket",
-            transaction_cost,
+            cost_model,
             stop_loss,
             position_fraction,
             2,
@@ -771,11 +988,12 @@ def run_strategy_backtest(
                 validation=_metrics(validation, a_klines),
                 test=_metrics(test, a_klines),
                 trades=trades,
+                execution_stats=execution_stats,
             )
         )
 
     for size_fraction in (0.20, 1 / 3):
-        trades = simulate_variant(
+        trades, execution_stats = simulate_variant(
             theme_config,
             a_klines,
             a_instruments,
@@ -784,7 +1002,7 @@ def run_strategy_backtest(
             15,
             "off",
             "stock_basket",
-            transaction_cost,
+            cost_model,
             stop_loss,
             size_fraction,
             2,
@@ -811,6 +1029,7 @@ def run_strategy_backtest(
                 validation=_metrics(validation, a_klines),
                 test=_metrics(test, a_klines),
                 trades=trades,
+                execution_stats=execution_stats,
             )
         )
 
@@ -911,8 +1130,9 @@ def run_strategy_backtest(
         theme_trade_counts[trade.theme] = theme_trade_counts.get(trade.theme, 0) + 1
     doubled_cost_metrics = _metrics_with_cost(
         default_variant.trades,
-        transaction_cost * 2,
+        cost_model,
         a_klines,
+        2.0,
     )
     strategy_return = default_variant.all_period.cumulative_return or 0
     strategy_drawdown = abs(default_variant.all_period.max_drawdown or -1)
@@ -963,9 +1183,18 @@ def run_strategy_backtest(
         and (default_variant.test.max_drawdown or -1) >= -0.15
     )
     cross_market_verdict = "A/H确认信号通过初步样本外门槛" if accept else "A/H确认信号暂不进入生产评分"
+    current_cost = apply_execution_costs(
+        100.0,
+        100.0,
+        cn_market_date_from_ms(usable_dates[-1]) or "2026-01-01",
+        cn_market_date_from_ms(usable_dates[-1]) or "2026-01-01",
+        cost_model.account_capital * position_fraction / 3,
+        is_fund=False,
+        cost_model=cost_model,
+    )
     return StrategyBacktestReport(
         generated_for="A股主线轮动与A/H确认增量",
-        transaction_cost=transaction_cost,
+        transaction_cost=-(current_cost["net_return"]),
         stop_loss=stop_loss,
         position_fraction=position_fraction,
         warmup_days=warmup_days,
@@ -991,12 +1220,16 @@ def run_strategy_backtest(
         robustness=robustness,
         verdict=robustness.verdict,
         cross_market_verdict=cross_market_verdict,
+        cost_model=cost_model.assumptions(),
         notes=[
-            "所有信号使用当日收盘前可见数据，下一交易日开盘成交。",
+            "所有信号使用当日收盘前可见数据；等待最多5个交易日完成回踩收复或突破收盘确认，再于下一交易日开盘成交。",
             "固定规则同时测试10/15/20日，不能只选择单一最优持有期。",
-            "回测同时检查最多一仓、两仓和三仓；基准单仓使用总资金1/4，橙色闸门单仓减半，并审计20%、25%和33%三档风险预算。",
+            "回测同时检查最多一仓、两仓和三仓；首笔只使用计划仓位的1/3，橙色闸门再减半，并审计20%、25%和33%三档计划风险预算。",
             "主线连续两日确认后才入场；市场闸门转红时禁止新仓，已有仓位继续由主线失效位、8%硬失效位和到期规则管理。",
+            "A股交易逐笔计入券商佣金及最低5元、证管费、经手费、过户费、卖出印花税和双边滑点；ETF按基金费率且不收印花税。",
+            "封死涨停或停牌时不买入并取消该计划；封死跌停或停牌时不假设能够卖出，顺延到首个可成交交易日。",
             "主题个股成分和市场广度样本来自当前可见股票池，仍有退市股票缺失造成的幸存者偏差。",
+            "历史风险警示名称不完整，ST状态无法逐日恢复；能够从当日名称识别时按主板5%限制处理，否则按所属板块普通涨跌幅处理。",
             "未使用历史财务公告和历史政策新闻，回测只检验价格主线与A/H确认增量。",
             f"A/H确认在 {stable_increment_holds}/3 个持有期同时改善验证段和最终留出段。",
         ],

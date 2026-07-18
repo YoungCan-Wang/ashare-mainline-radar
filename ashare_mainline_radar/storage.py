@@ -8,7 +8,7 @@ from typing import Any, Callable
 from urllib.request import urlopen
 
 from .models import RadarReport
-from .supabase_rest import upsert_rows
+from .supabase_rest import fetch_rows, upsert_rows
 
 SCHEMA_VERSION = "radar-storage-v2"
 ROLE_ORDER = (
@@ -75,6 +75,70 @@ def _candidate_sections(report: dict[str, Any]) -> list[tuple[str, list[dict[str
     ]
 
 
+def _paper_trade_records(
+    report: dict[str, Any], run_key: str, market_date: str, generated_at: str | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    next_buy = _dict(report.get("next_buy"))
+    candidates = [next_buy.get("primary"), *_list(next_buy.get("alternatives"))]
+    plans: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    required = (
+        "symbol",
+        "name",
+        "theme",
+        "last_close",
+        "entry_mode",
+        "entry_zone_low",
+        "entry_zone_high",
+        "confirm_price",
+        "stop_price",
+    )
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or any(candidate.get(key) in (None, "") for key in required):
+            continue
+        symbol = str(candidate["symbol"])
+        plan_key = f"{market_date}:{symbol}"
+        plans.append(
+            {
+                "plan_key": plan_key,
+                "source_run_key": run_key,
+                "symbol": symbol,
+                "name": candidate["name"],
+                "theme": candidate["theme"],
+                "signal_date": market_date,
+                "signal_price": candidate["last_close"],
+                "status": candidate.get("execution_status") or "watching",
+                "entry_mode": candidate["entry_mode"],
+                "entry_zone_low": candidate["entry_zone_low"],
+                "entry_zone_high": candidate["entry_zone_high"],
+                "confirm_price": candidate["confirm_price"],
+                "stop_price": candidate["stop_price"],
+                "valid_for_days": candidate.get("valid_for_days") or 5,
+                "max_hold_days": candidate.get("max_hold_days") or 15,
+                "max_position_fraction": candidate.get("max_position_fraction") or 0.25,
+                "initial_position_fraction": candidate.get("initial_position_fraction") or (1 / 12),
+                "created_at": generated_at,
+                "updated_at": generated_at,
+            }
+        )
+        events.append(
+            {
+                "event_key": f"{plan_key}:created",
+                "plan_key": plan_key,
+                "symbol": symbol,
+                "event_type": "created",
+                "event_date": market_date,
+                "price": candidate["last_close"],
+                "payload": {
+                    "decision": candidate.get("decision"),
+                    "entry_plan": candidate.get("entry_plan"),
+                },
+                "created_at": generated_at,
+            }
+        )
+    return plans, events
+
+
 def _themes(candidate: dict[str, Any]) -> list[str]:
     values = [str(value) for value in _list(candidate.get("themes")) if value]
     for key in ("theme", "primary_theme"):
@@ -102,6 +166,16 @@ def _trade_plan(candidate: dict[str, Any]) -> dict[str, Any]:
         "action",
         "lifecycle_stage",
         "independence_status",
+        "execution_status",
+        "entry_mode",
+        "entry_zone_low",
+        "entry_zone_high",
+        "confirm_price",
+        "stop_price",
+        "valid_for_days",
+        "max_hold_days",
+        "max_position_fraction",
+        "initial_position_fraction",
     )
     return {key: candidate[key] for key in keys if candidate.get(key) not in (None, "")}
 
@@ -133,6 +207,7 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
     run_key = _run_key(data)
     market_date = data.get("data_as_of") or str(data.get("generated_at") or "")[:10]
     generated_at = data.get("generated_at")
+    trade_plans, trade_events = _paper_trade_records(data, run_key, str(market_date), generated_at)
 
     lifecycle_by_theme = {
         item.get("theme"): item
@@ -247,10 +322,13 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
             "first_selected_at_source": "symbol_snapshot.updated_at",
             "first_selected_price_source": "symbol_snapshot.last_close",
             "live_quote_source": "radar_symbol_quotes",
+            "paper_trade_source": "radar_trade_plans and radar_trade_events",
         },
         "run": run,
         "themes": themes,
         "symbols": list(symbols.values()),
+        "trade_plans": trade_plans,
+        "trade_events": trade_events,
     }
 
 
@@ -320,6 +398,45 @@ def persist_report(
                 bundle["themes"],
                 opener,
             )
+            active_plans = fetch_rows(
+                str(url),
+                str(api_key),
+                ingest_key,
+                "radar_trade_plans",
+                order="signal_date.desc",
+                max_rows=10000,
+                filters={"status": "in.(watching,triggered,open)"},
+                opener=opener,
+            )
+            active_by_symbol = {
+                str(row.get("symbol")): str(row.get("plan_key"))
+                for row in active_plans
+                if row.get("symbol") and row.get("plan_key")
+            }
+            new_plans = [
+                row
+                for row in bundle["trade_plans"]
+                if row["symbol"] not in active_by_symbol or active_by_symbol[row["symbol"]] == row["plan_key"]
+            ]
+            new_plan_keys = {row["plan_key"] for row in new_plans}
+            upsert_rows(
+                str(url),
+                str(api_key),
+                ingest_key,
+                "radar_trade_plans",
+                "plan_key",
+                new_plans,
+                opener,
+            )
+            upsert_rows(
+                str(url),
+                str(api_key),
+                ingest_key,
+                "radar_trade_events",
+                "event_key",
+                [row for row in bundle["trade_events"] if row["plan_key"] in new_plan_keys],
+                opener,
+            )
             upsert_rows(
                 str(url),
                 str(api_key),
@@ -335,7 +452,7 @@ def persist_report(
                 run_key,
                 len(bundle["themes"]),
                 len(bundle["symbols"]),
-                "normalized snapshots upserted",
+                "normalized snapshots and paper-trade plans upserted",
             )
         except Exception as exc:
             status = PersistenceStatus(

@@ -24,6 +24,15 @@ const ROLE_DEFINITIONS: ReadonlyArray<{ id: RoleFilter; label: string }> = [
   { id: "monthly_base", label: "月线箱体" },
 ] as const;
 
+const PAPER_STATUS_LABELS: Record<string, string> = {
+  watching: "等待触发",
+  triggered: "已触发待成交",
+  open: "模拟持仓",
+  expired: "到期未触发",
+  cancelled: "计划取消",
+  closed: "模拟已退出",
+};
+
 function roleMatches(row: SymbolRow, role: RoleFilter): boolean {
   if (role === "all") return true;
   if (role === "waiting") {
@@ -42,6 +51,7 @@ function sortableValue(row: SymbolRow, key: SortKey): number | undefined {
   if (key === "selected_price") return row.first_selected_price;
   if (key === "latest_price") return row.latest_price ?? row.last_close;
   if (key === "selection_return") return row.return_since_selection;
+  if (key === "strategy_return") return row.paper_trade_plan?.net_return;
   return row.daily_change_pct;
 }
 
@@ -130,6 +140,8 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
               <SortableHeader label="现价" sortKey="latest_price" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
               <SortableHeader label="入选涨跌" sortKey="selection_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
               <SortableHeader label="当日涨跌" sortKey="daily_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+              <th scope="col">模拟状态</th>
+              <SortableHeader label="策略收益" sortKey="strategy_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
               <th scope="col">当前动作</th>
               <th scope="col">目标区间</th>
               <th scope="col">信号身份</th>
@@ -141,6 +153,7 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
               const target = row.target_payload;
               const targetRange = target?.target_low == null && target?.target_high == null ? "--" : `${formatPrice(target.target_low)} - ${formatPrice(target.target_high)}`;
               const selectionTime = row.first_selected_at ? formatDateTime(row.first_selected_at) : shortDate(row.first_market_date);
+              const paperPlan = row.paper_trade_plan;
               return (
                 <tr key={`${row.run_key}:${row.symbol}`}>
                   <td><div className="symbol-name">{row.name ?? row.symbol}</div><div className="symbol-code">{row.symbol}</div></td>
@@ -150,6 +163,8 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
                   <td className="numeric current-price">{formatPrice(row.latest_price ?? row.last_close)}</td>
                   <td className={`numeric return-value ${returnTone(row.return_since_selection)}`}>{formatSignedPercent(row.return_since_selection)}</td>
                   <td className={`numeric return-value ${returnTone(row.daily_change_pct)}`}>{formatSignedPercent(row.daily_change_pct)}</td>
+                  <td className="paper-status">{paperPlan ? (PAPER_STATUS_LABELS[paperPlan.status] ?? paperPlan.status) : "未生成计划"}</td>
+                  <td className={`numeric return-value ${returnTone(paperPlan?.net_return)}`}>{paperPlan?.status === "open" || paperPlan?.status === "closed" ? formatSignedPercent(paperPlan.net_return) : "--"}</td>
                   <td className="action-cell"><span className="action-text">{row.action_state ?? (planSummary(row) || "继续观察")}</span></td>
                   <td className="numeric">{targetRange}</td>
                   <td><div className="role-stack">{row.roles?.slice(0, 4).map((item) => <span className="role-badge" key={item}>{ROLE_LABELS[item]}</span>)}</div></td>

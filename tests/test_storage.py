@@ -37,6 +37,16 @@ def _report() -> dict:
                 "decision": "等待回踩",
                 "entry_plan": "回踩不破后分批",
                 "invalidation": "跌破箱底",
+                "execution_status": "watching",
+                "entry_mode": "pullback_close_reclaim",
+                "entry_zone_low": 33.43,
+                "entry_zone_high": 34.48,
+                "confirm_price": 35.42,
+                "stop_price": 32.20,
+                "valid_for_days": 5,
+                "max_hold_days": 15,
+                "max_position_fraction": 0.25,
+                "initial_position_fraction": 1 / 12,
             },
             "alternatives": [],
             "by_theme": [],
@@ -67,6 +77,8 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     assert symbol["trade_plan"]["entry_plan"] == "回踩不破后分批"
     assert symbol["fundamental_payload"]["status"] == "基本面兑现"
     assert symbol["target_payload"]["target_high"] == 45.0
+    assert bundle["trade_plans"][0]["plan_key"] == "2026-07-17:300122.SZ"
+    assert bundle["trade_events"][0]["event_type"] == "created"
 
 
 def test_artifact_backend_writes_portable_bundle_and_status(tmp_path) -> None:
@@ -93,6 +105,9 @@ def test_publishable_key_uses_scoped_ingest_header(tmp_path) -> None:
         def __exit__(self, *_args):
             return None
 
+        def read(self):
+            return b"[]"
+
     def opener(request, timeout):
         requests.append((request, timeout))
         return Response()
@@ -108,7 +123,7 @@ def test_publishable_key_uses_scoped_ingest_header(tmp_path) -> None:
     )
 
     assert status.status == "stored"
-    assert len(requests) == 3
+    assert len(requests) == 6
     assert requests[0][0].get_header("Apikey") == "sb_publishable_test"
     assert requests[0][0].get_header("X-radar-ingest-key") == "private-ingest-key"
     assert requests[0][0].get_header("Authorization") is None

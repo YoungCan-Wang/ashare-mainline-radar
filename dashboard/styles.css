@@ -536,7 +536,11 @@ select {
 }
 
 .candidate-table {
-  min-width: 1280px;
+  min-width: 1480px;
+}
+
+.paper-status {
+  white-space: nowrap;
 }
 
 .sortable-header-button {
@@ -1006,12 +1010,14 @@ select {
   .candidate-table td:nth-child(4),
   .candidate-table th:nth-child(7),
   .candidate-table td:nth-child(7),
-  .candidate-table th:nth-child(8),
-  .candidate-table td:nth-child(8),
   .candidate-table th:nth-child(9),
   .candidate-table td:nth-child(9),
   .candidate-table th:nth-child(10),
-  .candidate-table td:nth-child(10) {
+  .candidate-table td:nth-child(10),
+  .candidate-table th:nth-child(11),
+  .candidate-table td:nth-child(11),
+  .candidate-table th:nth-child(12),
+  .candidate-table td:nth-child(12) {
     display: none;
   }
 
@@ -1023,22 +1029,27 @@ select {
 
   .candidate-table th:first-child,
   .candidate-table td:first-child {
-    width: 31%;
+    width: 28%;
   }
 
   .candidate-table th:nth-child(3),
   .candidate-table td:nth-child(3) {
-    width: 23%;
+    width: 22%;
   }
 
   .candidate-table th:nth-child(5),
   .candidate-table td:nth-child(5) {
-    width: 17%;
+    width: 15%;
   }
 
   .candidate-table th:nth-child(6),
   .candidate-table td:nth-child(6) {
-    width: 21%;
+    width: 18%;
+  }
+
+  .candidate-table th:nth-child(8),
+  .candidate-table td:nth-child(8) {
+    width: 17%;
   }
 
   .candidate-table th:last-child,

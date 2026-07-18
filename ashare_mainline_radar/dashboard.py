@@ -25,7 +25,7 @@ def fetch_dashboard_history(
     api_key = supabase_publishable_key or os.getenv("SUPABASE_PUBLISHABLE_KEY")
     ingest_key = radar_ingest_key or os.getenv("RADAR_INGEST_KEY")
     if not url or not api_key or not ingest_key:
-        return {"runs": [], "themes": [], "symbols": [], "selections": [], "quotes": []}
+        return {"runs": [], "themes": [], "symbols": [], "selections": [], "quotes": [], "trade_plans": []}
 
     runs = fetch_rows(
         url,
@@ -76,7 +76,23 @@ def fetch_dashboard_history(
         max_rows=10000,
         opener=opener,
     )
-    return {"runs": runs, "themes": themes, "symbols": symbols, "selections": selections, "quotes": quotes}
+    trade_plans = fetch_rows(
+        url,
+        api_key,
+        ingest_key,
+        "radar_trade_plans",
+        order="signal_date.desc,updated_at.desc",
+        max_rows=10000,
+        opener=opener,
+    )
+    return {
+        "runs": runs,
+        "themes": themes,
+        "symbols": symbols,
+        "selections": selections,
+        "quotes": quotes,
+        "trade_plans": trade_plans,
+    }
 
 
 def _merge_rows(
@@ -93,7 +109,7 @@ def _merge_rows(
 def build_dashboard_payload(
     bundle: dict[str, Any], history: dict[str, list[dict[str, Any]]] | None = None
 ) -> dict[str, Any]:
-    history = history or {"runs": [], "themes": [], "symbols": [], "selections": [], "quotes": []}
+    history = history or {"runs": [], "themes": [], "symbols": [], "selections": [], "quotes": [], "trade_plans": []}
     current_run = bundle.get("run") if isinstance(bundle.get("run"), dict) else {}
     local_runs = [current_run] if current_run else []
     local_themes = [row for row in bundle.get("themes", []) if isinstance(row, dict)]
@@ -112,6 +128,11 @@ def build_dashboard_payload(
         for row in history.get("quotes", [])
         if isinstance(row, dict) and row.get("symbol")
     }
+    trade_plans: dict[str, dict[str, Any]] = {}
+    for row in history.get("trade_plans", []):
+        symbol = str(row.get("symbol") or "")
+        if symbol and symbol not in trade_plans:
+            trade_plans[symbol] = row
     enriched_symbols = []
     for row in symbols:
         enriched = dict(row)
@@ -125,6 +146,7 @@ def build_dashboard_payload(
                 "first_selected_price": row.get("last_close"),
             }
         quote = quotes.get(symbol)
+        paper_plan = trade_plans.get(symbol) if row.get("run_key") == current_run.get("run_key") else None
         if selection:
             enriched.update(
                 {
@@ -145,6 +167,8 @@ def build_dashboard_payload(
             )
         else:
             enriched["latest_price"] = row.get("last_close")
+        if paper_plan:
+            enriched["paper_trade_plan"] = paper_plan
         selected_price = enriched.get("first_selected_price")
         latest_price = enriched.get("latest_price")
         if selected_price and latest_price:
