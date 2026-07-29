@@ -233,14 +233,16 @@
       },
       {
         "name": "航运港口",
-        "source": "southbound shipping / port mapping basket",
+        "source": "southbound shipping / port cores (exclude thin B-shares and recycled tickers)",
         "symbols": [
           "01919.HK",
           "00316.HK",
           "01138.HK",
-          "02866.HK",
+          "01199.HK",
+          "00144.HK",
           "06198.HK",
-          "03378.HK"
+          "02343.HK",
+          "01308.HK"
         ]
       },
       {
