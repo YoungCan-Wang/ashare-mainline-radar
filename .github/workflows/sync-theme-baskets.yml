@@ -1,0 +1,108 @@
+name: Sync theme baskets
+
+# Theme baskets are scoring config, not runtime market data.
+# Refresh weekly (or manually), and open a PR when the basket changes.
+# Do not fold this into daily-mainline: East Money flakiness must not block the radar,
+# and silent basket edits would rewrite breadth denominators without review.
+
+on:
+  workflow_dispatch:
+    inputs:
+      offline:
+        description: "Use seed symbols only; skip East Money HTTP"
+        required: false
+        default: false
+        type: boolean
+      open_pr:
+        description: "Open a pull request when theme_baskets.json changes"
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    # Sunday 20:00 Beijing time — prep for the next trading week.
+    - cron: "0 12 * * 0"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      OFFLINE: ${{ github.event_name == 'workflow_dispatch' && inputs.offline || false }}
+      OPEN_PR: ${{ github.event_name == 'schedule' || inputs.open_pr }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Sync curated theme presets
+        id: sync
+        run: |
+          set -euo pipefail
+          as_of="$(TZ=Asia/Shanghai date +%F)"
+          args=(--all-presets --write --as-of "$as_of")
+          if [[ "$OFFLINE" == "true" ]]; then
+            args+=(--offline)
+          fi
+          python scripts/sync_theme_concepts.py "${args[@]}"
+          if git diff --quiet -- configs/theme_baskets.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "theme_baskets.json unchanged"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            mkdir -p reports
+            git --no-pager diff --stat -- configs/theme_baskets.json
+            git --no-pager diff -- configs/theme_baskets.json > reports/theme-baskets.diff
+            cp configs/theme_baskets.json reports/theme_baskets.json
+          fi
+      - name: Upload sync artifact
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-baskets-sync
+          path: |
+            reports/theme-baskets.diff
+            reports/theme_baskets.json
+          retention-days: 30
+      - name: Open pull request
+        if: steps.sync.outputs.changed == 'true' && env.OPEN_PR == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="chore/sync-theme-baskets-$(TZ=Asia/Shanghai date +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add configs/theme_baskets.json
+          git commit -m "$(cat <<'EOF'
+chore: refresh curated theme baskets from East Money
+
+Weekly liquidity/constituent sync for preset mainlines. Seed leaders stay first; review before merge because this changes scoring universes.
+EOF
+)"
+          git push -u origin "HEAD:$branch" --force
+          existing="$(gh pr list --head "$branch" --json number --jq '.[0].number')"
+          if [[ -n "$existing" ]]; then
+            echo "Updated existing PR #$existing"
+            exit 0
+          fi
+          gh pr create \
+            --title "chore: refresh curated theme baskets" \
+            --body "$(cat <<'EOF'
+## Summary
+- Ran `scripts/sync_theme_concepts.py --all-presets` against East Money boards
+- Seed leaders are preserved; only liquidity fill / source stamp may change
+- Please skim symbol diffs before merge — this rewrites theme breadth denominators
+
+## Test plan
+- [ ] Review `configs/theme_baskets.json` diff for unexpected small-cap churn
+- [ ] Confirm seed leaders for 大消费 / 光伏 / 新能源车 / 电力电网 still present
+- [ ] Optional: run `python scripts/run_daily.py --mode curated` after merge
+EOF
+)"

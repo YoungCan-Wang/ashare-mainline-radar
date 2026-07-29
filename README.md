@@ -191,21 +191,41 @@ python3 scripts/run_daily.py --mode universe --max-symbols 0
 
 ## 主题配置
 
-主题篮子在 `configs/theme_baskets.json`。第一版先维护常见 A 股主线：
+主题篮子在 `configs/theme_baskets.json`。这里维护的是**可交易轮动主线**（约 20+ 条），不是东财几百个概念的全量拷贝：
 
-- AI 算力
-- 半导体国产替代
-- 机器人
-- 低空经济
-- 固态电池
-- 创新药
-- 军工
-- 有色金属与铜
-- 券商金融
-- 高股息红利
-- 消费电子
+**科技成长**：AI 算力、半导体国产替代、机器人、低空经济、固态电池、消费电子、信创软件  
+**新能源链**：光伏与储能、新能源车、电力电网  
+**周期资源**：有色金属与铜、军工、航运港口、工程机械、农业种植、房地产链  
+**消费医药**：大消费、创新药、医疗器械、传媒游戏  
+**金融防御**：券商金融、保险、高股息红利  
 
-后续可以接入更细的行业/概念库，让全市场扫描自动归因。
+设计原则：
+
+1. 主题靠配置，不靠行情“自动发现”；漏配就不会进主线榜。  
+2. 东财概念只作篮子刷新源，不直接把 500 个概念都当主线打分。  
+3. 每个主题有流动性龙头 `seed_symbols`，同步时优先保留，避免小票冲进广度分母。
+
+```bash
+# 查看当前可同步的主线预设
+python3 scripts/sync_theme_concepts.py --list-presets
+
+# 浏览东财概念（发现候选，不自动入榜）
+python3 scripts/sync_theme_concepts.py --list-concepts --keyword 消费 --keyword 航运
+
+# 离线写回全部预设 / 在线按成交额补位
+python3 scripts/sync_theme_concepts.py --all-presets --offline --write
+python3 scripts/sync_theme_concepts.py --preset 航运港口 --write
+```
+
+**要不要每天跑？** 不用。日报只读当前 `theme_baskets.json`；主题名单是配置，不是盘中行情。  
+合理节奏是**每周刷新一次流动性成分**，有 diff 再人工过目。仓库已加 `.github/workflows/sync-theme-baskets.yml`：
+
+- 每周日 20:00（北京时间）定时跑在线同步  
+- 也可在 Actions 里手动触发（可勾选 offline）  
+- `theme_baskets.json` 有变更时开 PR，不直接推 main  
+- 不并进 `daily-mainline`，避免东财超时拖垮日报，也避免无审改评分分母
+
+后续可再接申万行业，做全市场扫描后的自动归因。
 
 ## 研报和新闻
 
@@ -229,6 +249,7 @@ data/research_reports/inbox/
 - 重型策略回测只手动触发；同一提交在24小时内已有成功回测时跳过。
 - 两个任务都可以手动设置 `force=true` 绕过频率闸门，用于明确需要的补跑。
 - Artifact 保留90天；长期可查询历史写入 Supabase。
+- `sync-theme-baskets.yml` 每周刷新东财预设篮子并在有变更时开 PR；不改日报链路。
 
 ## 可视化作战台
 
@@ -312,7 +333,7 @@ python3 scripts/run_daily.py --mode curated --output-dir reports/latest
 
 ## 下一步路线
 
-- 接行业/概念库，让全市场股票自动归因到题材。
+- 继续扩展东财/申万主题预设，并让全市场扫描自动归因到题材。
 - 加 ETF/指数和外围市场联动确认。
 - 加研报 PDF 解析与 LLM 摘要，但只处理你有权限的文件。
 - 加实盘观察清单：入场触发、仓位上限、失效条件、复盘记录。
