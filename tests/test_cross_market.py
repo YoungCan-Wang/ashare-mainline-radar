@@ -91,6 +91,31 @@ def test_cross_market_theme_names_align_with_a_share_themes() -> None:
     assert len(cross_market_symbols(config)) >= 60
 
 
+def test_cross_market_excludes_spike_members_from_theme_averages() -> None:
+    config = {
+        "cross_market": {
+            "themes": [{"name": "航运港口", "symbols": ["01919.HK", "03378.HK"]}],
+        }
+    }
+    normal = _series("01919.HK", 0.01)
+    spike = _series("03378.HK", 0.01)
+    # Force an IPO-like 5-day jump that should not dominate the basket average.
+    spike.close[-1] = spike.close[-6] * 11.0
+
+    report = build_cross_market_report(
+        config,
+        {"01919.HK": normal, "03378.HK": spike},
+        {"01919.HK": {"name": "中远海控"}, "03378.HK": {"name": "翰思艾泰-B"}},
+        [ThemeSnapshot("航运港口", 70, "轮动观察", 10, 0.6, 0.6, 0.02, 0.05, 1.0, 0, [])],
+        {},
+    )
+
+    assert report.themes[0].hk_members == 1
+    assert report.themes[0].hk_avg_ret_5d is not None
+    assert report.themes[0].hk_avg_ret_5d < 0.5
+    assert any("已剔除异常涨跌样本" in item for item in report.themes[0].evidence)
+
+
 def test_cross_market_uses_volume_when_hk_amount_is_unavailable() -> None:
     config = {"cross_market": {"themes": [{"name": "创新药", "symbols": ["06160.HK"]}]}}
     series = _series("06160.HK", 0.01)

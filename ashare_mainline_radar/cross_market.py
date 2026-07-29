@@ -75,6 +75,15 @@ def _action(status: str) -> str:
     return "跨市场均未形成趋势，不参与主题追涨。"
 
 
+def _is_stable_hk_member(snapshot: SymbolSnapshot) -> bool:
+    """Drop IPO/recycled-ticker spikes that would dominate theme averages."""
+    if snapshot.ret_5d is not None and abs(snapshot.ret_5d) >= 0.50:
+        return False
+    if snapshot.ret_20d is not None and abs(snapshot.ret_20d) >= 1.0:
+        return False
+    return True
+
+
 def build_cross_market_report(
     theme_config: dict[str, Any],
     klines: dict[str, KlineSeries],
@@ -100,7 +109,9 @@ def build_cross_market_report(
     signals: list[CrossMarketThemeSignal] = []
     for basket in config.get("themes", []):
         name = str(basket["name"])
-        members = [snapshots[str(symbol)] for symbol in basket.get("symbols", []) if str(symbol) in snapshots]
+        raw_members = [snapshots[str(symbol)] for symbol in basket.get("symbols", []) if str(symbol) in snapshots]
+        members = [item for item in raw_members if _is_stable_hk_member(item)]
+        excluded = len(raw_members) - len(members)
         if not members:
             continue
         breadth_5d = sum((item.ret_5d or 0) > 0 for item in members) / len(members)
@@ -116,6 +127,12 @@ def build_cross_market_report(
                 35 + breadth_5d * 20 + breadth_20d * 20 + avg_ret_5d / 0.10 * 15 + avg_ret_20d / 0.25 * 10,
             ),
         )
+        evidence = [
+            f"港股5日上涨 {sum((item.ret_5d or 0) > 0 for item in members)}/{len(members)}",
+            f"港股20日上涨 {sum((item.ret_20d or 0) > 0 for item in members)}/{len(members)}",
+        ]
+        if excluded:
+            evidence.append(f"已剔除异常涨跌样本 {excluded} 只")
         signals.append(
             CrossMarketThemeSignal(
                 theme=name,
@@ -131,10 +148,7 @@ def build_cross_market_report(
                 a_share_status=a_theme_by_name[name].status if name in a_theme_by_name else None,
                 action=_action(status),
                 leaders=sorted(members, key=lambda item: item.score, reverse=True)[:5],
-                evidence=[
-                    f"港股5日上涨 {sum((item.ret_5d or 0) > 0 for item in members)}/{len(members)}",
-                    f"港股20日上涨 {sum((item.ret_20d or 0) > 0 for item in members)}/{len(members)}",
-                ],
+                evidence=evidence,
             )
         )
 
@@ -178,5 +192,6 @@ def build_cross_market_report(
             "跨市场状态仅作确认/否决证据，尚未通过样本外检验前不直接提高买入分数。",
             "A/H配对只比较复权收益动量；未接入实时汇率和股本换算前不计算A/H溢价。",
             "港股篮子按 A 股主题配置港股通映射样本，不代表全部港股通证券。",
+            "主题联动会剔除5日涨跌幅绝对值≥50%或20日绝对值≥100%的异常样本，避免次新/代码变更污染广度。",
         ],
     )
