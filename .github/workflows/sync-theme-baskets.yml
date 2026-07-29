@@ -80,29 +80,23 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
           git add configs/theme_baskets.json
-          git commit -m "$(cat <<'EOF'
-chore: refresh curated theme baskets from East Money
-
-Weekly liquidity/constituent sync for preset mainlines. Seed leaders stay first; review before merge because this changes scoring universes.
-EOF
-)"
+          git commit -m "chore: refresh curated theme baskets from East Money" \
+            -m "Weekly liquidity/constituent sync for preset mainlines. Seed leaders stay first; review before merge because this changes scoring universes."
           git push -u origin "HEAD:$branch" --force
           existing="$(gh pr list --head "$branch" --json number --jq '.[0].number')"
           if [[ -n "$existing" ]]; then
             echo "Updated existing PR #$existing"
             exit 0
           fi
-          gh pr create \
-            --title "chore: refresh curated theme baskets" \
-            --body "$(cat <<'EOF'
-## Summary
-- Ran `scripts/sync_theme_concepts.py --all-presets` against East Money boards
-- Seed leaders are preserved; only liquidity fill / source stamp may change
-- Please skim symbol diffs before merge — this rewrites theme breadth denominators
-
-## Test plan
-- [ ] Review `configs/theme_baskets.json` diff for unexpected small-cap churn
-- [ ] Confirm seed leaders for 大消费 / 光伏 / 新能源车 / 电力电网 still present
-- [ ] Optional: run `python scripts/run_daily.py --mode curated` after merge
-EOF
-)"
+          {
+            echo "## Summary"
+            echo "- Ran \`scripts/sync_theme_concepts.py --all-presets\` against East Money boards"
+            echo "- Seed leaders are preserved; only liquidity fill / source stamp may change"
+            echo "- Please skim symbol diffs before merge — this rewrites theme breadth denominators"
+            echo
+            echo "## Test plan"
+            echo "- [ ] Review \`configs/theme_baskets.json\` diff for unexpected small-cap churn"
+            echo "- [ ] Confirm seed leaders for 大消费 / 光伏 / 新能源车 / 电力电网 still present"
+            echo "- [ ] Optional: run \`python scripts/run_daily.py --mode curated\` after merge"
+          } > /tmp/pr-body.md
+          gh pr create --title "chore: refresh curated theme baskets" --body-file /tmp/pr-body.md
