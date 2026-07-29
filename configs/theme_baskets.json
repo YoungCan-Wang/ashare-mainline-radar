@@ -173,6 +173,121 @@
           "00981.HK",
           "01347.HK"
         ]
+      },
+      {
+        "name": "大消费",
+        "source": "southbound consumer/brand mapping: F&B, sportswear, retail, dairy",
+        "symbols": [
+          "09633.HK",
+          "09987.HK",
+          "06862.HK",
+          "02020.HK",
+          "02331.HK",
+          "00291.HK",
+          "06186.HK",
+          "09992.HK",
+          "09896.HK",
+          "06690.HK",
+          "02319.HK",
+          "00168.HK"
+        ]
+      },
+      {
+        "name": "新能源车",
+        "source": "southbound EV OEM / auto mapping basket",
+        "symbols": [
+          "01211.HK",
+          "09868.HK",
+          "02015.HK",
+          "09866.HK",
+          "02333.HK",
+          "09863.HK",
+          "01958.HK",
+          "01775.HK"
+        ]
+      },
+      {
+        "name": "保险",
+        "source": "AH dual-listed insurers / southbound insurance cores",
+        "symbols": [
+          "02318.HK",
+          "02601.HK",
+          "02628.HK",
+          "01336.HK",
+          "01339.HK"
+        ]
+      },
+      {
+        "name": "高股息红利",
+        "source": "southbound large banks / cash-flow defensives overlapping A income basket",
+        "symbols": [
+          "01398.HK",
+          "00939.HK",
+          "01288.HK",
+          "03988.HK",
+          "03328.HK",
+          "00386.HK",
+          "00857.HK",
+          "01088.HK"
+        ]
+      },
+      {
+        "name": "航运港口",
+        "source": "southbound shipping / port mapping basket",
+        "symbols": [
+          "01919.HK",
+          "00316.HK",
+          "01138.HK",
+          "02866.HK",
+          "06198.HK",
+          "03378.HK"
+        ]
+      },
+      {
+        "name": "房地产链",
+        "source": "southbound developers / property management cores",
+        "symbols": [
+          "00688.HK",
+          "01109.HK",
+          "00960.HK",
+          "01209.HK",
+          "01997.HK",
+          "00817.HK"
+        ]
+      },
+      {
+        "name": "有色金属与铜",
+        "source": "AH dual-listed miners / copper-gold mapping",
+        "symbols": [
+          "02899.HK",
+          "03993.HK",
+          "00358.HK",
+          "01818.HK",
+          "01208.HK"
+        ]
+      },
+      {
+        "name": "消费电子",
+        "source": "southbound optics / acoustics / Apple-chain mapping",
+        "symbols": [
+          "02382.HK",
+          "02018.HK",
+          "01478.HK",
+          "01810.HK",
+          "00285.HK"
+        ]
+      },
+      {
+        "name": "医疗器械",
+        "source": "southbound medical device / healthcare equipment mapping",
+        "symbols": [
+          "00853.HK",
+          "01066.HK",
+          "02252.HK",
+          "09996.HK",
+          "06699.HK",
+          "02291.HK"
+        ]
       }
     ],
     "ah_pairs": [
@@ -200,6 +315,86 @@
         "company": "诺诚健华",
         "a_symbol": "688428.SH",
         "h_symbol": "09969.HK"
+      },
+      {
+        "company": "比亚迪",
+        "a_symbol": "002594.SZ",
+        "h_symbol": "01211.HK"
+      },
+      {
+        "company": "长城汽车",
+        "a_symbol": "601633.SH",
+        "h_symbol": "02333.HK"
+      },
+      {
+        "company": "中国平安",
+        "a_symbol": "601318.SH",
+        "h_symbol": "02318.HK"
+      },
+      {
+        "company": "中国太保",
+        "a_symbol": "601601.SH",
+        "h_symbol": "02601.HK"
+      },
+      {
+        "company": "新华保险",
+        "a_symbol": "601336.SH",
+        "h_symbol": "01336.HK"
+      },
+      {
+        "company": "工商银行",
+        "a_symbol": "601398.SH",
+        "h_symbol": "01398.HK"
+      },
+      {
+        "company": "建设银行",
+        "a_symbol": "601939.SH",
+        "h_symbol": "00939.HK"
+      },
+      {
+        "company": "农业银行",
+        "a_symbol": "601288.SH",
+        "h_symbol": "01288.HK"
+      },
+      {
+        "company": "中国石油",
+        "a_symbol": "601857.SH",
+        "h_symbol": "00857.HK"
+      },
+      {
+        "company": "中国神华",
+        "a_symbol": "601088.SH",
+        "h_symbol": "01088.HK"
+      },
+      {
+        "company": "中远海控",
+        "a_symbol": "601919.SH",
+        "h_symbol": "01919.HK"
+      },
+      {
+        "company": "紫金矿业",
+        "a_symbol": "601899.SH",
+        "h_symbol": "02899.HK"
+      },
+      {
+        "company": "洛阳钼业",
+        "a_symbol": "603993.SH",
+        "h_symbol": "03993.HK"
+      },
+      {
+        "company": "江西铜业",
+        "a_symbol": "600362.SH",
+        "h_symbol": "00358.HK"
+      },
+      {
+        "company": "海尔智家",
+        "a_symbol": "600690.SH",
+        "h_symbol": "06690.HK"
+      },
+      {
+        "company": "中联重科",
+        "a_symbol": "000157.SZ",
+        "h_symbol": "01157.HK"
       }
     ]
   },

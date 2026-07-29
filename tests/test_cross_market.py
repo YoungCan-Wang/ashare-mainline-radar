@@ -1,3 +1,4 @@
+from ashare_mainline_radar.config import DEFAULT_THEME_CONFIG, load_json
 from ashare_mainline_radar.cross_market import build_cross_market_report, cross_market_symbols
 from ashare_mainline_radar.models import KlineSeries, SymbolSnapshot, ThemeSnapshot
 
@@ -71,6 +72,23 @@ def test_cross_market_symbols_include_theme_and_pair_only_once() -> None:
     }
 
     assert cross_market_symbols(config) == ["06160.HK", "09926.HK"]
+
+
+def test_cross_market_theme_names_align_with_a_share_themes() -> None:
+    config = load_json(DEFAULT_THEME_CONFIG)
+    a_names = {theme["name"] for theme in config["themes"]}
+    cross_themes = (config.get("cross_market") or {}).get("themes") or []
+    assert {"大消费", "新能源车", "保险", "高股息红利", "航运港口"}.issubset(
+        {basket["name"] for basket in cross_themes}
+    )
+    for basket in cross_themes:
+        assert basket["name"] in a_names
+        assert len(basket.get("symbols") or []) >= 4
+    pairs = (config.get("cross_market") or {}).get("ah_pairs") or []
+    assert len(pairs) >= 15
+    assert all(str(pair["h_symbol"]).endswith(".HK") for pair in pairs)
+    assert all(str(pair["a_symbol"]).endswith((".SH", ".SZ")) for pair in pairs)
+    assert len(cross_market_symbols(config)) >= 60
 
 
 def test_cross_market_uses_volume_when_hk_amount_is_unavailable() -> None:
