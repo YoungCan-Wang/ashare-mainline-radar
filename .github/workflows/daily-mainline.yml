@@ -45,6 +45,7 @@ jobs:
       TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
       TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      DASHBOARD_PUBLIC_URL: ${{ vars.DASHBOARD_PUBLIC_URL || 'https://ashare-mainline-radar-dashboard.vercel.app' }}
       SUPABASE_URL: ${{ vars.SUPABASE_URL }}
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
       RADAR_INGEST_KEY: ${{ secrets.RADAR_INGEST_KEY }}

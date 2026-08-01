@@ -1,8 +1,11 @@
 import json
 
+import pytest
+
 from ashare_mainline_radar.feishu import (
     FeishuStatus,
     _hold_ready,
+    _normalize_dashboard_url,
     _target_text,
     _waiting_note,
     build_feishu_card,
@@ -157,6 +160,53 @@ def test_build_feishu_text_minimal_report() -> None:
     )
     assert "A/H联动确认" in contents
     assert "创新药｜A港共振" in contents
+
+
+def test_card_appends_dashboard_button_when_url_configured() -> None:
+    report = RadarReport(
+        generated_at="2026-06-29T00:00:00+00:00",
+        data_as_of="2026-06-26",
+        mode="curated",
+        universe="CN_Equity_A",
+        scanned_symbols=0,
+        data_source="test",
+        themes=[],
+        market_pulses=[],
+        market_structure=_market_structure(),
+        trading_gate=_green_gate(),
+        strong_stocks=StrongStockReport(selected_themes=[], hold_days=5, candidates=[]),
+        next_buy=NextBuyReport(primary=None),
+        accumulation=AccumulationReport(candidates=[]),
+        golden_pits=GoldenPitReport(candidates=[]),
+        policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
+        target_prices=TargetPriceReport(estimates=[]),
+        fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+        expectation_gaps=ExpectationGapReport(signals=[]),
+        leader_tape=[],
+        market_watchlist=[],
+        intel_items=[],
+        source_statuses=[],
+        warnings=[],
+    )
+
+    without_url = build_feishu_card(report)
+    assert all(element.get("tag") != "button" for element in without_url["body"]["elements"])
+
+    url = "https://ashare-mainline-radar-dashboard.vercel.app"
+    with_url = build_feishu_card(report, dashboard_url=f"  {url}  ")
+    button = with_url["body"]["elements"][-1]
+    assert button["tag"] == "button"
+    assert button["text"]["content"] == "打开完整作战台"
+    assert button["behaviors"][0]["type"] == "open_url"
+    assert button["behaviors"][0]["default_url"] == url
+    assert with_url["body"]["elements"][-2]["tag"] == "hr"
+
+
+def test_normalize_dashboard_url_rejects_non_http() -> None:
+    assert _normalize_dashboard_url(None) is None
+    assert _normalize_dashboard_url("   ") is None
+    with pytest.raises(ValueError, match="http"):
+        _normalize_dashboard_url("javascript:alert(1)")
 
 
 def test_write_feishu_status(tmp_path) -> None:

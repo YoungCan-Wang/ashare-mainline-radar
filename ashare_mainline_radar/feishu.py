@@ -284,7 +284,36 @@ def _div(content: str) -> dict[str, Any]:
     return {"tag": "markdown", "content": content}
 
 
-def build_feishu_card(report: RadarReport) -> dict[str, Any]:
+def _normalize_dashboard_url(dashboard_url: str | None) -> str | None:
+    if not dashboard_url:
+        return None
+    url = dashboard_url.strip()
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(f"dashboard_url must be an http(s) URL, got: {dashboard_url!r}")
+    return url
+
+
+def _dashboard_button(url: str) -> dict[str, Any]:
+    return {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "打开完整作战台"},
+        "type": "primary",
+        "width": "fill",
+        "behaviors": [
+            {
+                "type": "open_url",
+                "default_url": url,
+                "pc_url": url,
+                "ios_url": url,
+                "android_url": url,
+            }
+        ],
+    }
+
+
+def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> dict[str, Any]:
     candidates = {item.symbol: item for item in report.strong_stocks.candidates}
     targets = {item.symbol: item for item in report.target_prices.estimates}
     phase_by_theme = {item.name: item.price_phase for item in report.themes}
@@ -456,6 +485,9 @@ def build_feishu_card(report: RadarReport) -> dict[str, Any]:
             ),
         ]
     )
+    normalized_url = _normalize_dashboard_url(dashboard_url)
+    if normalized_url:
+        elements.extend([{"tag": "hr"}, _dashboard_button(normalized_url)])
     return {
         "schema": "2.0",
         "config": {

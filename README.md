@@ -265,6 +265,10 @@ data/research_reports/inbox/
 Vercel 部署使用仓库 Secret `VERCEL_TOKEN` 以及 Variables `VERCEL_ORG_ID`、
 `VERCEL_PROJECT_ID`。这些值只在部署 Job 中使用，不会进入页面产物。
 
+飞书作战卡末尾默认带「打开完整作战台」按钮。GitHub Actions 会读取仓库
+Variable `DASHBOARD_PUBLIC_URL`，未配置时回退到 Vercel 生产域名；本地调试
+可在 `.env` 写入同一变量。
+
 本地生成和预览：
 
 ```bash
@@ -304,7 +308,7 @@ RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写七张 `radar_*`
 数据库只保存进入研究清单的标的，不重复保存全市场原始K线。未配置 Supabase 时任务不会丢报告：
 规范化的 `storage_bundle.json` 会随 GitHub Artifact 保留，配置完成后可再导入。
 
-`FEISHU_WEBHOOK_URL` 配置后，工作流会发送红色交互卡片，按“可尝试建仓、已有仓位可继续持有、等待回踩、低位观察”组织结果，并展示入场触发、失效条件、目标区和15日回测。默认情况下，飞书侧临时失败不会阻断报告 artifact 上传；如果希望本地或 CI 严格失败，可以加 `--fail-on-feishu-error`。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
+`FEISHU_WEBHOOK_URL` 配置后，工作流会发送红色交互卡片，按“可尝试建仓、已有仓位可继续持有、等待回踩、低位观察”组织结果，并展示入场触发、失效条件、目标区和15日回测；卡片底部默认带跳转作战台的按钮。默认情况下，飞书侧临时失败不会阻断报告 artifact 上传；如果希望本地或 CI 严格失败，可以加 `--fail-on-feishu-error`。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
 
 飞书通知状态会写入：
 

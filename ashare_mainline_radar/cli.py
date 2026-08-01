@@ -36,6 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--as-of", help="Point-in-time cutoff in YYYY-MM-DD; excludes later market, news, and financial data.")
     parser.add_argument("--send-feishu", action="store_true", help="Send a compact report to FEISHU_WEBHOOK_URL.")
     parser.add_argument("--feishu-webhook-url", default=os.getenv("FEISHU_WEBHOOK_URL"))
+    parser.add_argument(
+        "--dashboard-public-url",
+        default=os.getenv("DASHBOARD_PUBLIC_URL"),
+        help="Public dashboard URL shown as a Feishu card button.",
+    )
     parser.add_argument("--fail-on-feishu-error", action="store_true")
     parser.add_argument(
         "--storage-backend",
@@ -69,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         as_of=args.as_of,
     )
     markdown_path, json_path = write_report(report, args.output_dir)
-    feishu_card = build_feishu_card(report)
+    feishu_card = build_feishu_card(report, dashboard_url=args.dashboard_public_url)
     feishu_card_path = args.output_dir / "feishu_card.json"
     feishu_card_path.write_text(json.dumps(feishu_card, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {markdown_path}")
