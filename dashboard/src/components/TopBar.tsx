@@ -1,8 +1,17 @@
-import { Radar, RefreshCw } from "lucide-react";
-import { memo } from "react";
+import { Moon, Radar, RefreshCw, Sun } from "lucide-react";
+import { memo, useState } from "react";
 
 import { formatInteger } from "../lib/format";
 import type { RadarRun } from "../types";
+
+type ThemeName = "dark" | "light";
+
+const THEME_STORAGE_KEY = "radar-theme";
+const THEME_COLORS: Record<ThemeName, string> = { dark: "#0b0e13", light: "#f4f6f4" };
+
+function readInitialTheme(): ThemeName {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
 
 interface TopBarProps {
   runs: RadarRun[];
@@ -12,6 +21,20 @@ interface TopBarProps {
 }
 
 export const TopBar = memo(function TopBar({ runs, activeRun, activeRunKey, onRunChange }: TopBarProps) {
+  const [theme, setTheme] = useState<ThemeName>(readInitialTheme);
+
+  const toggleTheme = () => {
+    const next: ThemeName = theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // 隐私模式下写不进去就只切当前会话
+    }
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLORS[next]);
+    setTheme(next);
+  };
+
   return (
     <header className="topbar">
       <div className="brand-block">
@@ -41,6 +64,15 @@ export const TopBar = memo(function TopBar({ runs, activeRun, activeRunKey, onRu
             </option>
           ))}
         </select>
+        <button
+          className="icon-button"
+          type="button"
+          title={theme === "dark" ? "切换到日间模式" : "切换到夜间模式"}
+          aria-label="切换日夜间主题"
+          onClick={toggleTheme}
+        >
+          {theme === "dark" ? <Sun /> : <Moon />}
+        </button>
         <button className="icon-button" type="button" title="刷新页面" aria-label="刷新页面" onClick={() => window.location.reload()}>
           <RefreshCw />
         </button>

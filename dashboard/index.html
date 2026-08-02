@@ -3,10 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
-    <meta name="theme-color" content="#f6f7f5" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0b0e13" />
+    <script>
+      // 首屏前决定主题，避免闪烁；与 TopBar 的 radar-theme 开关对应
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem("radar-theme") === "light" ? "light" : "dark";
+      } catch (error) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
+    <meta name="description" content="A股主线作战台：每日主线雷达、交易闸门与标的作战队列" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0e13'/%3E%3Ccircle cx='16' cy='16' r='9.5' fill='none' stroke='%232dd4bf' stroke-width='2'/%3E%3Cline x1='16' y1='16' x2='23.5' y2='8.5' stroke='%232dd4bf' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='16' r='2.6' fill='%232dd4bf'/%3E%3C/svg%3E"
+    />
     <title>A股主线作战台</title>
-    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div id="root"></div>

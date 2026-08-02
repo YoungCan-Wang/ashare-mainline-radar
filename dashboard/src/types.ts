@@ -25,6 +25,7 @@ export interface RadarRun {
   gate_score?: number;
   summary?: {
     market_structure?: MarketStructure;
+    gate_reasons?: string[];
   };
 }
 

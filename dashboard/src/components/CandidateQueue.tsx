@@ -1,6 +1,6 @@
 import * as Tabs from "@radix-ui/react-tabs";
-import { ChevronRight, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
 
 import { formatDateTime, formatPrice, formatSignedPercent, returnTone, shortDate } from "../lib/format";
 import { planSummary, ROLE_LABELS } from "../lib/presentation";
@@ -8,6 +8,7 @@ import type { RadarRole, SymbolRow, ThemeRow } from "../types";
 import { SortableHeader, type SortDirection, type SortKey } from "./SortableHeader";
 
 type RoleFilter = "all" | "waiting" | RadarRole;
+type QueueView = "decision" | "full";
 
 interface SortState {
   key: SortKey | "priority";
@@ -56,16 +57,32 @@ function sortableValue(row: SymbolRow, key: SortKey): number | undefined {
   return row.daily_change_pct;
 }
 
+function targetRangeText(row: SymbolRow): string {
+  const target = row.target_payload;
+  return target?.target_low == null && target?.target_high == null ? "--" : `${formatPrice(target.target_low)} - ${formatPrice(target.target_high)}`;
+}
+
+function selectedOnText(row: SymbolRow): string {
+  return row.first_selected_at ? shortDate(row.first_selected_at.slice(0, 10)) : shortDate(row.first_market_date);
+}
+
+function paperReturnText(plan: SymbolRow["paper_trade_plan"]): string {
+  return plan?.status === "open" || plan?.status === "closed" ? formatSignedPercent(plan.net_return) : "--";
+}
+
 interface CandidateQueueProps {
   symbols: SymbolRow[];
   themes: ThemeRow[];
+  theme: string;
+  onThemeChange: (theme: string) => void;
   onSelect: (candidate: SymbolRow) => void;
 }
 
-export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProps) {
+export function CandidateQueue({ symbols, themes, theme, onThemeChange, onSelect }: CandidateQueueProps) {
   const [role, setRole] = useState<RoleFilter>("all");
-  const [theme, setTheme] = useState("all");
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<QueueView>("decision");
+  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const [sortState, setSortState] = useState<SortState>({ key: "priority", direction: "desc" });
 
   const roleCounts = useMemo(
@@ -104,18 +121,31 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
       direction: current.key === key && current.direction === "desc" ? "asc" : "desc",
     }));
   };
+  const toggleExpanded = (symbol: string) => {
+    setExpandedSymbol((current) => (current === symbol ? null : symbol));
+  };
 
   return (
     <section className="section-block candidates-block">
       <div className="section-header candidates-header">
-        <div><h2>标的作战队列</h2><p>显示 {filteredSymbols.length} / {symbols.length} 只 · 现价更新 {formatDateTime(latestQuoteRefresh)}</p></div>
+        <div>
+          <h2>标的作战队列</h2>
+          <p>
+            显示 {filteredSymbols.length} / {symbols.length} 只 · 现价更新 {formatDateTime(latestQuoteRefresh)}
+            {view === "decision" ? " · 点击行可展开观察维度" : ""}
+          </p>
+        </div>
         <div className="filter-controls">
+          <div className="view-toggle" role="group" aria-label="队列视图">
+            <button type="button" className={view === "decision" ? "active" : ""} aria-pressed={view === "decision"} onClick={() => setView("decision")}>决策视图</button>
+            <button type="button" className={view === "full" ? "active" : ""} aria-pressed={view === "full"} onClick={() => setView("full")}>全部字段</button>
+          </div>
           <label className="search-control">
             <Search aria-hidden="true" />
             <span className="sr-only">搜索代码或名称</span>
             <input type="search" placeholder="代码或名称" value={search} onChange={(event) => setSearch(event.target.value)} />
           </label>
-          <select className="select-control" aria-label="筛选主线" value={theme} onChange={(event) => setTheme(event.target.value)}>
+          <select className="select-control" aria-label="筛选主线" value={theme} onChange={(event) => onThemeChange(event.target.value)}>
             <option value="all">全部主线</option>
             {themes.map((row) => <option key={row.theme} value={row.theme}>{row.theme}</option>)}
           </select>
@@ -131,53 +161,165 @@ export function CandidateQueue({ symbols, themes, onSelect }: CandidateQueueProp
         </Tabs.List>
       </Tabs.Root>
       <div className="table-scroll">
-        <table className="data-table candidate-table">
-          <thead>
-            <tr>
-              <th scope="col">标的</th>
-              <th scope="col">所属主线</th>
-              <SortableHeader label="入选时间" sortKey="selected_at" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
-              <SortableHeader label="入选价" sortKey="selected_price" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
-              <SortableHeader label="现价" sortKey="latest_price" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
-              <SortableHeader label="入选涨跌" sortKey="selection_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
-              <SortableHeader label="当日涨跌" sortKey="daily_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
-              <th scope="col">模拟状态</th>
-              <SortableHeader label="策略收益" sortKey="strategy_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
-              <SortableHeader label="3日影子" sortKey="shadow_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
-              <th scope="col">当前动作</th>
-              <th scope="col">目标区间</th>
-              <th scope="col">信号身份</th>
-              <th scope="col"><span className="sr-only">详情</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredSymbols.map((row) => {
-              const target = row.target_payload;
-              const targetRange = target?.target_low == null && target?.target_high == null ? "--" : `${formatPrice(target.target_low)} - ${formatPrice(target.target_high)}`;
-              const selectionTime = row.first_selected_at ? formatDateTime(row.first_selected_at) : shortDate(row.first_market_date);
-              const paperPlan = row.paper_trade_plan;
-              const shadowPlan = row.shadow_trade_plan;
-              return (
-                <tr key={`${row.run_key}:${row.symbol}`}>
-                  <td><div className="symbol-name">{row.name ?? row.symbol}</div><div className="symbol-code">{row.symbol}</div></td>
-                  <td>{row.primary_theme ?? row.themes?.[0] ?? "未映射"}</td>
-                  <td className="numeric selection-time">{selectionTime}</td>
-                  <td className="numeric">{formatPrice(row.first_selected_price)}</td>
-                  <td className="numeric current-price">{formatPrice(row.latest_price ?? row.last_close)}</td>
-                  <td className={`numeric return-value ${returnTone(row.return_since_selection)}`}>{formatSignedPercent(row.return_since_selection)}</td>
-                  <td className={`numeric return-value ${returnTone(row.daily_change_pct)}`}>{formatSignedPercent(row.daily_change_pct)}</td>
-                  <td className="paper-status">{paperPlan ? (PAPER_STATUS_LABELS[paperPlan.status] ?? paperPlan.status) : "未生成计划"}</td>
-                  <td className={`numeric return-value ${returnTone(paperPlan?.net_return)}`}>{paperPlan?.status === "open" || paperPlan?.status === "closed" ? formatSignedPercent(paperPlan.net_return) : "--"}</td>
-                  <td className={`numeric return-value ${returnTone(shadowPlan?.net_return)}`}>{shadowPlan?.status === "open" || shadowPlan?.status === "closed" ? formatSignedPercent(shadowPlan.net_return) : "--"}</td>
-                  <td className="action-cell"><span className="action-text">{row.action_state ?? (planSummary(row) || "继续观察")}</span></td>
-                  <td className="numeric">{targetRange}</td>
-                  <td><div className="role-stack">{row.roles?.slice(0, 4).map((item) => <span className="role-badge" key={item}>{ROLE_LABELS[item]}</span>)}</div></td>
-                  <td><button className="details-button" type="button" title="查看详情" aria-label={`查看 ${row.name ?? row.symbol} 详情`} onClick={() => onSelect(row)}><ChevronRight /></button></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {view === "decision" ? (
+          <table className="data-table candidate-table decision-table">
+            <thead>
+              <tr>
+                <th scope="col">标的</th>
+                <th scope="col">所属主线</th>
+                <SortableHeader label="现价" sortKey="latest_price" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <SortableHeader label="入选以来" sortKey="selection_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <th scope="col">当前动作</th>
+                <th scope="col">目标区间</th>
+                <th scope="col"><span className="sr-only">详情</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredSymbols.map((row) => {
+                const isExpanded = expandedSymbol === row.symbol;
+                const paperPlan = row.paper_trade_plan;
+                const shadowPlan = row.shadow_trade_plan;
+                const selectionTime = row.first_selected_at ? formatDateTime(row.first_selected_at) : shortDate(row.first_market_date);
+                return (
+                  <Fragment key={`${row.run_key}:${row.symbol}`}>
+                    <tr
+                      className={`candidate-row${isExpanded ? " expanded" : ""}`}
+                      onClick={() => toggleExpanded(row.symbol)}
+                    >
+                      <td>
+                        <div className="symbol-main">
+                          <span className={`row-chevron${isExpanded ? " open" : ""}`} aria-hidden="true">
+                            <ChevronDown />
+                          </span>
+                          <div>
+                            <div className="symbol-name">{row.name ?? row.symbol}</div>
+                            <div className="symbol-code">{row.symbol}</div>
+                            <div className="role-stack symbol-roles">{row.roles?.slice(0, 4).map((item) => <span className="role-badge" key={item}>{ROLE_LABELS[item]}</span>)}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="cell-theme">{row.primary_theme ?? row.themes?.[0] ?? "未映射"}</td>
+                      <td className="numeric">
+                        <div className="cell-primary">{formatPrice(row.latest_price ?? row.last_close)}</div>
+                        <div className={`cell-sub return-value ${returnTone(row.daily_change_pct)}`}>当日 {formatSignedPercent(row.daily_change_pct)}</div>
+                      </td>
+                      <td className="numeric">
+                        <div className={`cell-primary return-value ${returnTone(row.return_since_selection)}`}>{formatSignedPercent(row.return_since_selection)}</div>
+                        <div className="cell-sub">入选 {selectedOnText(row)} @ {formatPrice(row.first_selected_price)}</div>
+                      </td>
+                      <td className="action-cell"><span className="action-text">{row.action_state ?? (planSummary(row) || "继续观察")}</span></td>
+                      <td className="numeric cell-subtle">{targetRangeText(row)}</td>
+                      <td>
+                        <button
+                          className="details-button"
+                          type="button"
+                          title="打开完整详情"
+                          aria-label={`查看 ${row.name ?? row.symbol} 详情`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onSelect(row);
+                          }}
+                        >
+                          <ChevronRight />
+                        </button>
+                      </td>
+                    </tr>
+                    {isExpanded ? (
+                      <tr className="expand-detail-row">
+                        <td colSpan={7}>
+                          <div className="expand-panel">
+                            <div className="expand-metric">
+                              <span>入选时间</span>
+                              <strong>{selectionTime}</strong>
+                            </div>
+                            <div className="expand-metric">
+                              <span>入选价</span>
+                              <strong>{formatPrice(row.first_selected_price)}</strong>
+                            </div>
+                            <div className="expand-metric">
+                              <span>模拟状态</span>
+                              <strong className={`paper-pill status-${paperPlan?.status ?? "none"}`}>
+                                {paperPlan ? (PAPER_STATUS_LABELS[paperPlan.status] ?? paperPlan.status) : "未生成计划"}
+                              </strong>
+                            </div>
+                            <div className="expand-metric">
+                              <span>策略收益</span>
+                              <strong className={`return-value ${returnTone(paperPlan?.net_return)}`}>{paperReturnText(paperPlan)}</strong>
+                            </div>
+                            <div className="expand-metric">
+                              <span>3日影子</span>
+                              <strong className={`return-value ${returnTone(shadowPlan?.net_return)}`}>{paperReturnText(shadowPlan)}</strong>
+                            </div>
+                            <div className="expand-metric">
+                              <span>失效位</span>
+                              <strong>{formatPrice(row.trade_plan?.stop_price ?? row.target_payload?.stop_price)}</strong>
+                            </div>
+                            <button
+                              type="button"
+                              className="text-button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onSelect(row);
+                              }}
+                            >
+                              打开完整详情
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <table className="data-table candidate-table">
+            <thead>
+              <tr>
+                <th scope="col">标的</th>
+                <th scope="col">所属主线</th>
+                <SortableHeader label="入选时间" sortKey="selected_at" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <SortableHeader label="入选价" sortKey="selected_price" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <SortableHeader label="现价" sortKey="latest_price" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <SortableHeader label="入选涨跌" sortKey="selection_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <SortableHeader label="当日涨跌" sortKey="daily_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <th scope="col">模拟状态</th>
+                <SortableHeader label="策略收益" sortKey="strategy_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <SortableHeader label="3日影子" sortKey="shadow_return" activeKey={sortState.key} direction={sortState.direction} onSort={handleSort} />
+                <th scope="col">当前动作</th>
+                <th scope="col">目标区间</th>
+                <th scope="col">信号身份</th>
+                <th scope="col"><span className="sr-only">详情</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredSymbols.map((row) => {
+                const paperPlan = row.paper_trade_plan;
+                const shadowPlan = row.shadow_trade_plan;
+                const selectionTime = row.first_selected_at ? formatDateTime(row.first_selected_at) : shortDate(row.first_market_date);
+                return (
+                  <tr key={`${row.run_key}:${row.symbol}`}>
+                    <td><div className="symbol-name">{row.name ?? row.symbol}</div><div className="symbol-code">{row.symbol}</div></td>
+                    <td className="cell-theme">{row.primary_theme ?? row.themes?.[0] ?? "未映射"}</td>
+                    <td className="numeric selection-time">{selectionTime}</td>
+                    <td className="numeric cell-subtle">{formatPrice(row.first_selected_price)}</td>
+                    <td className="numeric current-price">{formatPrice(row.latest_price ?? row.last_close)}</td>
+                    <td className={`numeric return-value ${returnTone(row.return_since_selection)}`}>{formatSignedPercent(row.return_since_selection)}</td>
+                    <td className={`numeric return-value ${returnTone(row.daily_change_pct)}`}>{formatSignedPercent(row.daily_change_pct)}</td>
+                    <td className="paper-status"><span className={`paper-pill status-${paperPlan?.status ?? "none"}`}>{paperPlan ? (PAPER_STATUS_LABELS[paperPlan.status] ?? paperPlan.status) : "未生成计划"}</span></td>
+                    <td className={`numeric return-value ${returnTone(paperPlan?.net_return)}`}>{paperReturnText(paperPlan)}</td>
+                    <td className={`numeric return-value ${returnTone(shadowPlan?.net_return)}`}>{paperReturnText(shadowPlan)}</td>
+                    <td className="action-cell"><span className="action-text">{row.action_state ?? (planSummary(row) || "继续观察")}</span></td>
+                    <td className="numeric cell-subtle">{targetRangeText(row)}</td>
+                    <td><div className="role-stack">{row.roles?.slice(0, 4).map((item) => <span className="role-badge" key={item}>{ROLE_LABELS[item]}</span>)}</div></td>
+                    <td><button className="details-button" type="button" title="查看详情" aria-label={`查看 ${row.name ?? row.symbol} 详情`} onClick={() => onSelect(row)}><ChevronRight /></button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
       {filteredSymbols.length === 0 ? <div className="empty-state visible">当前筛选没有标的</div> : null}
     </section>

@@ -473,8 +473,30 @@ def test_red_gate_suppresses_attempt_section() -> None:
         data_source="test",
         themes=[],
         market_pulses=[],
-        market_structure=_market_structure(),
-        trading_gate=TradingGate("red", "暂停新仓", 24, 0, ["三大指数大跌"], ["观察黄金坑"]),
+        market_structure=MarketStructure(
+            status="破位确认",
+            score=0,
+            index_count=3,
+            above_ma5_ratio=0.33,
+            above_ma20_ratio=0,
+            bullish_alignment_ratio=0,
+            volume_confirmation_ratio=0,
+            higher_high_low_ratio=0,
+            confirmed_breakdown_ratio=1,
+            evidence=["站上20日线指数 0%", "连续3日跌破20日线指数 100%"],
+        ),
+        trading_gate=TradingGate(
+            "red",
+            "暂停新仓",
+            16.3,
+            0,
+            [
+                "硬熔断：指数结构破位确认，连续3日跌破20日线指数 100%；个股反弹再猛也不新开仓，直到多数指数收复20日线",
+                "三大指数单日中位涨跌 2.21%",
+                "扫描股票上涨占比 84.6%，跌超2%占比 2.8%",
+            ],
+            ["观察黄金坑"],
+        ),
         strong_stocks=StrongStockReport(selected_themes=[], hold_days=15, candidates=[]),
         next_buy=NextBuyReport(primary=None),
         accumulation=AccumulationReport(candidates=[]),
@@ -496,6 +518,11 @@ def test_red_gate_suppresses_attempt_section() -> None:
     )
 
     assert "今日交易状态：暂停新仓" in contents
+    assert "关闭原因" in contents
+    assert "硬熔断：指数结构破位确认" in contents
+    assert "结构证据" in contents
+    assert "连续3日跌破20日线指数 100%" in contents
+    assert "解锁条件" in contents
     assert "市场风险闸门已关闭" in contents
     assert "已有仓位：仅留强去弱" in contents
 

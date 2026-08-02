@@ -20,6 +20,25 @@ def _stock_like(snapshot: SymbolSnapshot, index_symbols: set[str]) -> bool:
     return not any(token in upper for token in ("ETF", "LOF", "REIT", "指数", "基金", "转债", "退"))
 
 
+def _hard_risk_trigger(
+    *,
+    market_structure: MarketStructure | None,
+    systemic_selloff: bool,
+    index_stress: bool,
+    breadth_confirms_stress: bool,
+) -> str:
+    """把真正触发硬熔断的路径写成首条理由，方便飞书卡片一眼看懂。"""
+    if market_structure and market_structure.status == "破位确认":
+        ratio = market_structure.confirmed_breakdown_ratio
+        ratio_text = f"，连续3日跌破20日线指数 {ratio * 100:.0f}%" if ratio is not None else ""
+        return f"硬熔断：指数结构破位确认{ratio_text}；个股反弹再猛也不新开仓，直到多数指数收复20日线"
+    if systemic_selloff:
+        return "硬熔断：系统性杀跌（上涨占比过低且跌超2%占比过高）"
+    if index_stress and breadth_confirms_stress:
+        return "硬熔断：指数压力叠加个股广度恶化"
+    return "硬熔断：市场风险闸门触发"
+
+
 def build_trading_gate(
     theme_config: dict[str, Any],
     snapshots: dict[str, SymbolSnapshot],
@@ -83,12 +102,18 @@ def build_trading_gate(
         or (market_structure and market_structure.status == "破位确认")
     )
     if hard_risk:
+        trigger = _hard_risk_trigger(
+            market_structure=market_structure,
+            systemic_selloff=systemic_selloff,
+            index_stress=index_stress,
+            breadth_confirms_stress=breadth_confirms_stress,
+        )
         return TradingGate(
             level="red",
             state="暂停新仓",
             score=round(broad.score if broad else 20.0, 2),
             max_initial_position_fraction=0.0,
-            reasons=reasons,
+            reasons=[trigger, *reasons],
             allowed_actions=["管理已有仓位", "执行减仓/退出纪律", "观察黄金坑确认信号"],
             advance_ratio=advance_ratio,
             decline_2pct_ratio=decline_2pct_ratio,

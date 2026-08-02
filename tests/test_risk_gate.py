@@ -1,5 +1,5 @@
 from ashare_mainline_radar.market_context import build_market_pulses
-from ashare_mainline_radar.models import SymbolSnapshot
+from ashare_mainline_radar.models import MarketStructure, SymbolSnapshot
 from ashare_mainline_radar.risk_gate import build_trading_gate
 
 
@@ -36,6 +36,38 @@ def test_broad_market_crash_closes_new_position_gate() -> None:
     assert gate.level == "red"
     assert gate.state == "暂停新仓"
     assert gate.max_initial_position_fraction == 0
+    assert gate.reasons[0].startswith("硬熔断：")
+
+
+def test_confirmed_breakdown_is_primary_red_trigger_even_with_hot_breadth() -> None:
+    config = {"market_context_groups": [{"name": "A股宽基环境", "symbols": ["000001.SH", "399001.SZ", "399006.SZ"]}]}
+    snapshots = {
+        "000001.SH": _snapshot("000001.SH", 0.01, -0.02, -0.08),
+        "399001.SZ": _snapshot("399001.SZ", 0.015, -0.01, -0.07),
+        "399006.SZ": _snapshot("399006.SZ", 0.012, -0.015, -0.09),
+    }
+    for index in range(10):
+        symbol = f"6000{index:02d}.SH"
+        snapshots[symbol] = _snapshot(symbol, 0.02, 0.01, -0.05)
+    pulses = build_market_pulses(config, snapshots)
+    structure = MarketStructure(
+        status="破位确认",
+        score=0,
+        index_count=3,
+        above_ma5_ratio=0.33,
+        above_ma20_ratio=0,
+        bullish_alignment_ratio=0,
+        volume_confirmation_ratio=0,
+        higher_high_low_ratio=0,
+        confirmed_breakdown_ratio=1,
+        evidence=["连续3日跌破20日线指数 100%"],
+    )
+
+    gate = build_trading_gate(config, snapshots, pulses, structure)
+
+    assert gate.level == "red"
+    assert "硬熔断：指数结构破位确认" in gate.reasons[0]
+    assert "连续3日跌破20日线指数 100%" in gate.reasons[0]
 
 
 def test_positive_stock_breadth_downgrades_index_drop_to_caution() -> None:

@@ -21,7 +21,7 @@ export function gateLabel(level: string | undefined): string {
 }
 
 export function gateColor(level: string | undefined): string {
-  return { green: "#147b5d", yellow: "#a86b12", red: "#bd4137" }[level ?? ""] ?? "#202521";
+  return { green: "var(--gate-green)", yellow: "var(--gate-amber)", red: "var(--gate-red)" }[level ?? ""] ?? "var(--text)";
 }
 
 export function gateTone(level: string | undefined): string {

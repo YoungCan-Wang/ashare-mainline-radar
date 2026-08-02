@@ -284,6 +284,30 @@ def _div(content: str) -> dict[str, Any]:
     return {"tag": "markdown", "content": content}
 
 
+def _gate_section(report: RadarReport) -> dict[str, Any]:
+    gate = report.trading_gate
+    structure = report.market_structure
+    gate_color = "red" if gate.level == "red" else "orange" if gate.level == "orange" else "green"
+    lines = [
+        f"<font color='{gate_color}'>**今日交易状态：{gate.state}**</font>",
+        f"指数结构：**{structure.status}**｜确认分 {structure.score:.0f}｜闸门分 {gate.score:.0f}",
+    ]
+    if gate.level == "red":
+        lines.append("<font color='red'>**关闭原因**</font>")
+        for reason in gate.reasons[:6] or ["环境数据不足"]:
+            lines.append(f"· {reason}")
+        if structure.evidence:
+            lines.append("**结构证据**")
+            for item in structure.evidence[:6]:
+                lines.append(f"· {item}")
+        lines.append("解锁条件：三大指数多数收复20日线、脱离「破位确认」后，才会重新评估试错/开仓。")
+    else:
+        reason_text = "；".join(gate.reasons) or "环境数据不足"
+        lines.append(f"依据：{reason_text}")
+    lines.append(f"允许：{'；'.join(gate.allowed_actions)}")
+    return _div("\n".join(lines))
+
+
 def _normalize_dashboard_url(dashboard_url: str | None) -> str | None:
     if not dashboard_url:
         return None
@@ -343,10 +367,6 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
     market = report.market_pulses[0] if report.market_pulses else None
     market_text = f"{market.name}｜{market.status}｜{market.score:.0f}" if market else "环境未确认"
     hold_days = report.strong_stocks.hold_days
-    gate_color = (
-        "red" if report.trading_gate.level == "red" else "orange" if report.trading_gate.level == "orange" else "green"
-    )
-    gate_reasons = "；".join(report.trading_gate.reasons) or "环境数据不足"
     elements: list[dict[str, Any]] = [
         _div(
             f"**行情 {report.data_as_of or 'n/a'}**　扫描 {report.scanned_symbols} 只\n"
@@ -397,11 +417,7 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
     elements.extend(
         [
             {"tag": "hr"},
-            _div(
-                f"<font color='{gate_color}'>**今日交易状态：{report.trading_gate.state}**</font>\n"
-                f"指数结构：**{report.market_structure.status}**｜确认分 {report.market_structure.score:.0f}\n"
-                f"{gate_reasons}\n允许：{'；'.join(report.trading_gate.allowed_actions)}"
-            ),
+            _gate_section(report),
             {"tag": "hr"},
             _div("<font color='red'>**一、可尝试建仓（触发后）**</font>\n只在触发条件出现后分批，不等于开盘直接买。"),
         ]
