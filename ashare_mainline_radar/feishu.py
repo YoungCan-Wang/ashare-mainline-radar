@@ -154,14 +154,6 @@ def build_feishu_text(report: RadarReport) -> str:
                 f"{idx}. {item.name} {item.symbol}｜{item.theme}｜{item.status}｜评分 {item.score:.1f}｜"
                 f"信号 {signals} 次｜胜率 {win}｜均值 {avg}"
             )
-    if report.theme_attributions:
-        lines.append("")
-        lines.append("未映射强势股归属建议（人工复核）：")
-        for idx, item in enumerate(report.theme_attributions[:5], start=1):
-            lines.append(
-                f"{idx}. {item.name} {item.symbol} → {item.suggested_theme}｜"
-                f"置信度 {item.confidence:.2f}｜{item.method}"
-            )
     lines.append("")
     lines.append("提示：仅用于研究和交易准备，不构成投资建议。")
     return "\n".join(lines)

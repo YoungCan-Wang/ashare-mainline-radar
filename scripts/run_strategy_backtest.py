@@ -15,7 +15,7 @@ from ashare_mainline_radar.strategy_backtest import (
     run_strategy_backtest,
     sample_breadth_symbols,
 )
-from ashare_mainline_radar.tickflow import TickFlowClient, TickFlowError
+from ashare_mainline_radar.tickflow import TickFlowClient
 
 
 def main() -> int:
@@ -40,13 +40,6 @@ def main() -> int:
     hk_instruments = client.get_instruments(hk_symbols)
     a_klines = client.get_klines_batch(a_symbols, period="1d", count=args.count, adjust="forward")
     hk_klines = client.get_klines_batch(hk_symbols, period="1d", count=args.count, adjust="forward")
-    strategy_symbols = configured_symbols(config)
-    raw_fundamentals: dict = {}
-    if client.api_key and strategy_symbols:
-        try:
-            raw_fundamentals = client.get_financial_metrics(strategy_symbols)
-        except TickFlowError as exc:
-            print(f"Warning: financial metrics unavailable for fund_block_drag challenger: {exc}")
     report = run_strategy_backtest(
         config,
         a_klines,
@@ -54,7 +47,6 @@ def main() -> int:
         hk_klines,
         hk_instruments,
         breadth_symbols=set(breadth_symbols),
-        raw_fundamentals=raw_fundamentals,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
