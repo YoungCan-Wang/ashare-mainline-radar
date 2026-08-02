@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from statistics import fmean, median
 from typing import Any
 
-from .config import configured_symbols, theme_candidate_symbols, theme_symbol_map
+from .config import configured_symbols, theme_candidate_symbols, theme_scoring_symbols, theme_symbol_map
 from .cross_market import build_cross_market_report
 from .execution import (
     TradingCostModel,
@@ -17,12 +17,21 @@ from .execution import (
     is_sealed_limit_down,
     is_sealed_limit_up,
 )
+from .fundamentals import build_fundamental_report
 from .market import build_theme_snapshots, compute_symbol_snapshot
 from .market_context import build_market_pulses
 from .market_structure import build_market_structure
-from .models import KlineSeries, SymbolSnapshot, cn_market_date_from_ms
+from .models import KlineSeries, SymbolSnapshot, TradingGate, cn_market_date_from_ms
 from .risk_gate import build_trading_gate
-from .strategy_rules import SIGNAL_PROFILES
+from .strategy_rules import (
+    SIGNAL_PROFILES,
+    EntryChallengerFlags,
+    challenger_edge_pass,
+    challenger_verdict,
+    theme_crowding_blocks_entry,
+    theme_diffusion_blocks_entry,
+    theme_rel_strength_5d,
+)
 
 
 @dataclass
@@ -71,6 +80,8 @@ class SimulationStats:
     entries_blocked_no_theme_vehicle: int = 0
     exits_delayed_limit_down: int = 0
     exits_delayed_suspension: int = 0
+    red_days: int = 0
+    entries_blocked_red: int = 0
 
 
 @dataclass
@@ -103,6 +114,17 @@ class BacktestVariant:
     trades: list[StrategyTrade] = field(default_factory=list)
     execution_stats: SimulationStats = field(default_factory=SimulationStats)
     theme_exit_days: int | None = 2
+    entry_flags: EntryChallengerFlags = field(default_factory=EntryChallengerFlags)
+
+
+@dataclass
+class EntryChallengerAudit:
+    label: str
+    variant: str
+    all_period_edge: float | None
+    validation_edge: float | None
+    test_edge: float | None
+    verdict: str
 
 
 @dataclass
@@ -208,7 +230,9 @@ class RobustnessAudit:
     exit_diagnostics: list[GroupDiagnostic]
     gate_diagnostics: list[GroupDiagnostic]
     selection_attribution: list[SelectionAttribution]
-    verdict: str
+    entry_challengers: list[EntryChallengerAudit] = field(default_factory=list)
+    merge_recommendation: str = ""
+    verdict: str = ""
 
 
 @dataclass
@@ -300,7 +324,22 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
                 f"- 封死涨停无法买入：{stats.entries_blocked_limit_up} 次；停牌无法买入：{stats.entries_blocked_suspension} 次",
                 f"- 个股信号主题缺少可交易ETF：{stats.entries_blocked_no_theme_vehicle} 次",
                 f"- 封死跌停导致延迟退出：{stats.exits_delayed_limit_down} 个交易日；停牌导致延迟退出：{stats.exits_delayed_suspension} 个交易日",
+                f"- 红闸交易日：{stats.red_days} 天；红闸日跳过的主线槽位（机会成本代理）：{stats.entries_blocked_red}",
             ]
+        )
+    lines.extend(
+        [
+            "",
+            "## 入场挑战者（相对核心同跑）",
+            "",
+            f"- 合入建议：**{report.robustness.merge_recommendation}**",
+        ]
+    )
+    for item in report.robustness.entry_challengers:
+        lines.append(
+            f"- `{item.variant}`：全期边 {_percent(item.all_period_edge)} / "
+            f"验证边 {_percent(item.validation_edge)} / 留出边 {_percent(item.test_edge)}；"
+            f"**{item.verdict}**"
         )
     lines.extend(
         [
@@ -635,6 +674,79 @@ def _etf_proxy_config(theme_config: dict[str, Any]) -> dict[str, Any]:
     return proxy
 
 
+def _pearson(xs: list[float], ys: list[float]) -> float | None:
+    if len(xs) < 5 or len(xs) != len(ys):
+        return None
+    mean_x = fmean(xs)
+    mean_y = fmean(ys)
+    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    den_x = sum((x - mean_x) ** 2 for x in xs) ** 0.5
+    den_y = sum((y - mean_y) ** 2 for y in ys) ** 0.5
+    if den_x <= 1e-12 or den_y <= 1e-12:
+        return None
+    return num / (den_x * den_y)
+
+
+def _theme_daily_returns(
+    theme_cfg: dict[str, Any],
+    klines: dict[str, KlineSeries],
+    calendar: list[int],
+    end_index: int,
+    lookback: int = 20,
+) -> list[float]:
+    start_index = max(1, end_index - lookback + 1)
+    members = [
+        symbol
+        for symbol in theme_scoring_symbols(theme_cfg)
+        if symbol in klines and symbol.endswith((".SH", ".SZ", ".BJ"))
+    ]
+    if not members:
+        return []
+    returns: list[float] = []
+    for index in range(start_index, end_index + 1):
+        day = calendar[index]
+        prev = calendar[index - 1]
+        day_returns: list[float] = []
+        for symbol in members:
+            series = klines[symbol]
+            price = _price_at(series, day, "close")
+            previous = _price_at(series, prev, "close")
+            if price and previous and previous > 0:
+                day_returns.append(price / previous - 1)
+        if day_returns:
+            returns.append(fmean(day_returns))
+    return returns
+
+
+def _theme_corr_too_high(
+    theme_name: str,
+    held_themes: set[str],
+    theme_config: dict[str, Any],
+    klines: dict[str, KlineSeries],
+    calendar: list[int],
+    end_index: int,
+    max_corr: float,
+) -> bool:
+    if not held_themes:
+        return False
+    config_by_theme = {str(item["name"]): item for item in theme_config.get("themes", [])}
+    candidate_cfg = config_by_theme.get(theme_name)
+    if candidate_cfg is None:
+        return False
+    candidate_returns = _theme_daily_returns(candidate_cfg, klines, calendar, end_index)
+    if len(candidate_returns) < 5:
+        return False
+    for held in held_themes:
+        held_cfg = config_by_theme.get(held)
+        if held_cfg is None:
+            continue
+        held_returns = _theme_daily_returns(held_cfg, klines, calendar, end_index)
+        corr = _pearson(candidate_returns[-len(held_returns) :], held_returns[-len(candidate_returns) :])
+        if corr is not None and corr > max_corr:
+            return True
+    return False
+
+
 def _candidate(
     theme_config: dict[str, Any],
     themes: list[Any],
@@ -645,9 +757,16 @@ def _candidate(
     excluded_themes: set[str] | None = None,
     eligible_themes: set[str] | None = None,
     signal_profile: str = "base",
+    entry_flags: EntryChallengerFlags | None = None,
+    market_ret_5d: float | None = None,
+    fundamental_status: dict[str, str] | None = None,
+    theme_corr_blocked: set[str] | None = None,
 ) -> tuple[SymbolSnapshot, str, str | None] | None:
     excluded_symbols = excluded_symbols or set()
     excluded_themes = excluded_themes or set()
+    entry_flags = entry_flags or EntryChallengerFlags()
+    fundamental_status = fundamental_status or {}
+    theme_corr_blocked = theme_corr_blocked or set()
     thresholds = SIGNAL_PROFILES[signal_profile]
     config_by_theme = {str(item["name"]): item for item in theme_config.get("themes", [])}
     for theme in themes[:3]:
@@ -656,6 +775,16 @@ def _candidate(
         if theme.name in excluded_themes:
             continue
         if eligible_themes is not None and theme.name not in eligible_themes:
+            continue
+        if entry_flags.crowding_veto and theme_crowding_blocks_entry(getattr(theme, "price_phase", None)):
+            continue
+        if entry_flags.diffusion_gate and theme_diffusion_blocks_entry(theme):
+            continue
+        if entry_flags.min_rel_strength_5d is not None:
+            rel = theme_rel_strength_5d(theme, market_ret_5d)
+            if rel is None or rel < entry_flags.min_rel_strength_5d:
+                continue
+        if theme.name in theme_corr_blocked:
             continue
         status = cross_status.get(theme.name)
         if cross_market_mode == "confirm" and status in {"A股领先", "A港共同走弱"}:
@@ -678,6 +807,10 @@ def _candidate(
                 and item.high_proximity_20d is not None
                 and item.high_proximity_20d > thresholds["min_high_proximity"]
             ):
+                if entry_flags.fundamental_filter == "block_drag":
+                    status_name = fundamental_status.get(item.symbol)
+                    if status_name == "基本面拖累":
+                        continue
                 ranked.append(item)
         if ranked:
             ranked.sort(key=lambda item: item.score, reverse=True)
@@ -881,11 +1014,15 @@ def simulate_variant(
     max_positions: int,
     signal_profile: str,
     warmup_days: int,
-    gate_cache: dict[int, str],
+    gate_cache: dict[int, TradingGate],
     breadth_symbols: set[str],
     theme_cache: dict[tuple[str, int], set[str]],
     theme_exit_days: int | None = 2,
+    entry_flags: EntryChallengerFlags | None = None,
+    raw_fundamentals: dict[str, list[dict[str, object]]] | None = None,
 ) -> tuple[list[StrategyTrade], SimulationStats]:
+    entry_flags = entry_flags or EntryChallengerFlags()
+    raw_fundamentals = raw_fundamentals or {}
     strategy_config = _etf_proxy_config(theme_config) if signal_mode == "etf_proxy" else theme_config
     config_by_theme = {str(item["name"]): item for item in theme_config.get("themes", [])}
     calendar = _calendar(a_klines)
@@ -895,7 +1032,7 @@ def simulate_variant(
     strategy_klines = {symbol: series for symbol, series in a_klines.items() if symbol in strategy_symbols}
     gate_klines = {symbol: series for symbol, series in a_klines.items() if symbol in gate_symbols}
 
-    def gate_level(timestamp: int) -> str:
+    def gate_at(timestamp: int) -> TradingGate:
         cached = gate_cache.get(timestamp)
         if cached is not None:
             return cached
@@ -903,9 +1040,9 @@ def simulate_variant(
         gate_snapshots = _snapshots(current, a_instruments, theme_symbol_map(theme_config))
         pulses = build_market_pulses(theme_config, gate_snapshots)
         structure = build_market_structure(theme_config, current)
-        level = build_trading_gate(theme_config, gate_snapshots, pulses, structure).level
-        gate_cache[timestamp] = level
-        return level
+        gate = build_trading_gate(theme_config, gate_snapshots, pulses, structure)
+        gate_cache[timestamp] = gate
+        return gate
 
     def active_themes(timestamp: int) -> set[str]:
         key = (signal_mode, timestamp)
@@ -922,16 +1059,27 @@ def simulate_variant(
     trades: list[StrategyTrade] = []
     execution_stats = SimulationStats()
     planned_positions: list[tuple[int, str, str, str]] = []
+    fund_day_cache: dict[str, dict[str, str]] = {}
     index = warmup_days
     while index < len(calendar) - hold_days - 1:
         cutoff = calendar[index]
         current_klines = _market_slice(strategy_klines, cutoff)
         snapshots = _snapshots(current_klines, a_instruments, symbol_to_themes)
         themes = build_theme_snapshots(strategy_config, snapshots)
-        entry_gate = gate_level(cutoff)
+        gate = gate_at(cutoff)
+        entry_gate = gate.level
         if entry_gate == "red":
+            execution_stats.red_days += 1
+            for theme in themes[:3]:
+                if theme.status in {"主线成立", "主线候选"}:
+                    execution_stats.entries_blocked_red += 1
             index += 1
             continue
+        if entry_flags.red_unlock_mode == "first_non_red":
+            previous_gate = gate_at(calendar[index - 1]).level if index > 0 else "green"
+            if previous_gate != "red":
+                index += 1
+                continue
 
         hk_current = _market_slice(hk_klines, cutoff)
         cross = build_cross_market_report(strategy_config, hk_current, hk_instruments, themes, snapshots)
@@ -943,6 +1091,34 @@ def simulate_variant(
         excluded_themes = {item[2] for item in planned_positions}
         active_execution_symbols = {item[3] for item in planned_positions}
         slots = max(0, max_positions - len(planned_positions))
+        signal_date = cn_market_date_from_ms(cutoff) or ""
+        fundamental_status: dict[str, str] = {}
+        if entry_flags.fundamental_filter != "off" and raw_fundamentals:
+            cached = fund_day_cache.get(signal_date)
+            if cached is None:
+                prices = {symbol: item.last_close for symbol, item in snapshots.items()}
+                report = build_fundamental_report(
+                    raw_fundamentals,
+                    prices,
+                    sorted(strategy_symbols),
+                    as_of=signal_date or None,
+                )
+                cached = {item.symbol: item.status for item in report.snapshots}
+                fund_day_cache[signal_date] = cached
+            fundamental_status = cached
+        theme_corr_blocked: set[str] = set()
+        if entry_flags.max_theme_corr is not None and excluded_themes:
+            for theme in themes[:3]:
+                if _theme_corr_too_high(
+                    theme.name,
+                    excluded_themes,
+                    strategy_config,
+                    strategy_klines,
+                    calendar,
+                    index,
+                    entry_flags.max_theme_corr,
+                ):
+                    theme_corr_blocked.add(theme.name)
         for _ in range(slots):
             selected = _candidate(
                 strategy_config,
@@ -954,6 +1130,10 @@ def simulate_variant(
                 excluded_themes,
                 confirmed_themes,
                 signal_profile,
+                entry_flags=entry_flags,
+                market_ret_5d=gate.median_stock_return_5d,
+                fundamental_status=fundamental_status,
+                theme_corr_blocked=theme_corr_blocked,
             )
             if selected is None:
                 break
@@ -1409,9 +1589,11 @@ def run_strategy_backtest(
     warmup_days: int = 140,
     breadth_symbols: set[str] | None = None,
     cost_model: TradingCostModel | None = None,
+    raw_fundamentals: dict[str, list[dict[str, object]]] | None = None,
 ) -> StrategyBacktestReport:
     breadth_symbols = breadth_symbols or set()
     cost_model = cost_model or TradingCostModel()
+    raw_fundamentals = raw_fundamentals or {}
     calendar = _calendar(a_klines)
     usable_dates = calendar[warmup_days:]
     train_end = usable_dates[int(len(usable_dates) * 0.60)]
@@ -1420,8 +1602,47 @@ def run_strategy_backtest(
     validation_end_date = cn_market_date_from_ms(validation_end) or ""
 
     variants: list[BacktestVariant] = []
-    gate_cache: dict[int, str] = {}
+    gate_cache: dict[int, TradingGate] = {}
     theme_cache: dict[tuple[str, int], set[str]] = {}
+
+    def _append_variant(
+        name: str,
+        trades: list[StrategyTrade],
+        execution_stats: SimulationStats,
+        *,
+        hold_days: int = 15,
+        max_positions: int = 2,
+        cross_market_mode: str = "off",
+        signal_mode: str = "stock_basket",
+        signal_profile: str = "base",
+        theme_exit_days: int | None = 2,
+        entry_flags: EntryChallengerFlags | None = None,
+        stop: float | None = None,
+        fraction: float | None = None,
+    ) -> None:
+        train = [trade for trade in trades if trade.signal_date <= train_end_date]
+        validation = [trade for trade in trades if train_end_date < trade.signal_date <= validation_end_date]
+        test = [trade for trade in trades if trade.signal_date > validation_end_date]
+        variants.append(
+            BacktestVariant(
+                name=name,
+                hold_days=hold_days,
+                max_positions=max_positions,
+                cross_market_mode=cross_market_mode,
+                signal_mode=signal_mode,
+                signal_profile=signal_profile,
+                position_fraction=fraction if fraction is not None else position_fraction,
+                stop_loss=stop if stop is not None else stop_loss,
+                all_period=_metrics(trades, a_klines),
+                train=_metrics(train, a_klines),
+                validation=_metrics(validation, a_klines),
+                test=_metrics(test, a_klines),
+                trades=trades,
+                execution_stats=execution_stats,
+                theme_exit_days=theme_exit_days,
+                entry_flags=entry_flags or EntryChallengerFlags(),
+            )
+        )
     for signal_mode in ("stock_basket", "etf_proxy"):
         for max_positions in (1, 2, 3):
             for hold_days in (10, 15, 20):
@@ -1736,18 +1957,61 @@ def run_strategy_backtest(
             )
         )
 
+    entry_challenger_specs: list[tuple[str, EntryChallengerFlags]] = [
+        ("crowding_veto", EntryChallengerFlags(crowding_veto=True)),
+        ("diffusion_confirm", EntryChallengerFlags(diffusion_gate=True)),
+        ("rs_gt_0", EntryChallengerFlags(min_rel_strength_5d=0.0)),
+        ("fund_block_drag", EntryChallengerFlags(fundamental_filter="block_drag")),
+        ("red_unlock_first_green", EntryChallengerFlags(red_unlock_mode="first_non_red")),
+        ("corr_cap", EntryChallengerFlags(max_theme_corr=0.70)),
+    ]
+    for label, flags in entry_challenger_specs:
+        trades, execution_stats = simulate_variant(
+            theme_config,
+            a_klines,
+            a_instruments,
+            hk_klines,
+            hk_instruments,
+            15,
+            "off",
+            "stock_basket",
+            cost_model,
+            stop_loss,
+            position_fraction,
+            2,
+            "base",
+            warmup_days,
+            gate_cache,
+            breadth_symbols,
+            theme_cache,
+            entry_flags=flags,
+            raw_fundamentals=raw_fundamentals,
+        )
+        _append_variant(
+            f"stock_basket_positions_2_hold_15_off_{label}",
+            trades,
+            execution_stats,
+            entry_flags=flags,
+        )
+
+    def _is_core_like(item: BacktestVariant) -> bool:
+        return (
+            item.signal_mode == "stock_basket"
+            and item.max_positions == 2
+            and item.cross_market_mode == "off"
+            and item.signal_profile == "base"
+            and item.position_fraction == position_fraction
+            and item.stop_loss == stop_loss
+            and item.theme_exit_days == 2
+            and not item.entry_flags.is_active()
+        )
+
     stable_increment_holds = 0
     for hold_days in (10, 15, 20):
         baseline = next(
             item
             for item in variants
-            if item.signal_mode == "stock_basket"
-            and item.max_positions == 2
-            and item.hold_days == hold_days
-            and item.cross_market_mode == "off"
-            and item.signal_profile == "base"
-            and item.position_fraction == position_fraction
-            and item.stop_loss == stop_loss
+            if _is_core_like(item) and item.hold_days == hold_days
         )
         confirmed = next(
             item
@@ -1759,23 +2023,15 @@ def run_strategy_backtest(
             and item.signal_profile == "base"
             and item.position_fraction == position_fraction
             and item.stop_loss == stop_loss
+            and item.theme_exit_days == 2
+            and not item.entry_flags.is_active()
         )
         if (
             (confirmed.validation.cumulative_return or 0) > max(baseline.validation.cumulative_return or 0, 0)
             and (confirmed.test.cumulative_return or 0) > max(baseline.test.cumulative_return or 0, 0)
         ):
             stable_increment_holds += 1
-    default_variant = next(
-        item
-        for item in variants
-        if item.signal_mode == "stock_basket"
-        and item.max_positions == 2
-        and item.hold_days == 15
-        and item.cross_market_mode == "off"
-        and item.signal_profile == "base"
-        and item.position_fraction == position_fraction
-        and item.stop_loss == stop_loss
-    )
+    default_variant = next(item for item in variants if item.name == "stock_basket_positions_2_hold_15_off")
     confirmed_core = next(
         item
         for item in variants
@@ -1786,6 +2042,7 @@ def run_strategy_backtest(
         and item.signal_profile == "base"
         and item.position_fraction == position_fraction
         and item.stop_loss == stop_loss
+        and not item.entry_flags.is_active()
     )
     etf_proxy_variant = next(
         item
@@ -1855,6 +2112,7 @@ def run_strategy_backtest(
             and item.position_fraction == position_fraction
             and item.stop_loss == stop_loss
             and item.theme_exit_days in {2, 3, None}
+            and not item.entry_flags.is_active()
         ]
         for signal_mode in ("stock_basket", "stock_signal_theme_vehicle")
     }
@@ -1879,6 +2137,7 @@ def run_strategy_backtest(
         and item.position_fraction == position_fraction
         and item.stop_loss == stop_loss
         and item.theme_exit_days == 3
+        and not item.entry_flags.is_active()
     )
     exit_challenger_holds = [
         item
@@ -1891,6 +2150,7 @@ def run_strategy_backtest(
         and item.position_fraction == position_fraction
         and item.stop_loss == stop_loss
         and item.theme_exit_days == 3
+        and not item.entry_flags.is_active()
     ]
     exit_challenger_stops = [
         item
@@ -1903,6 +2163,7 @@ def run_strategy_backtest(
         and item.position_fraction == position_fraction
         and item.stop_loss in {0.06, stop_loss, 0.10}
         and item.theme_exit_days == 3
+        and not item.entry_flags.is_active()
     ]
     exit_challenger_folds = _time_folds(
         exit_challenger.trades,
@@ -1950,6 +2211,7 @@ def run_strategy_backtest(
         and item.signal_profile == "base"
         and item.position_fraction == position_fraction
         and item.stop_loss == stop_loss
+        and not item.entry_flags.is_active()
     ]
     positive_position_capacities = sum(
         (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
@@ -1964,6 +2226,7 @@ def run_strategy_backtest(
         and item.cross_market_mode == "off"
         and item.position_fraction == position_fraction
         and item.stop_loss == stop_loss
+        and not item.entry_flags.is_active()
     ]
     positive_signal_profiles = sum(
         (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
@@ -1978,6 +2241,7 @@ def run_strategy_backtest(
         and item.cross_market_mode == "off"
         and item.signal_profile == "base"
         and item.stop_loss == stop_loss
+        and not item.entry_flags.is_active()
     ]
     positive_position_sizes = sum(
         (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
@@ -1992,6 +2256,7 @@ def run_strategy_backtest(
         and item.cross_market_mode == "off"
         and item.signal_profile == "base"
         and item.position_fraction == position_fraction
+        and not item.entry_flags.is_active()
     ]
     positive_stop_losses = sum(
         (item.validation.cumulative_return or 0) > 0 and (item.test.cumulative_return or 0) > 0
@@ -2007,6 +2272,7 @@ def run_strategy_backtest(
         and item.max_positions in {1, 2, 3}
         and item.hold_days in {10, 15, 20}
         and item.cross_market_mode in {"off", "confirm"}
+        and not item.entry_flags.is_active()
     ]
     walk_forward = _walk_forward_audit(
         walk_forward_candidates,
@@ -2026,6 +2292,43 @@ def run_strategy_backtest(
     )
     strategy_return = default_variant.all_period.cumulative_return or 0
     exposure_matched_benchmark_return = _exposure_matched_benchmark_return(default_variant.trades, benchmark)
+    entry_challenger_audits: list[EntryChallengerAudit] = []
+    for label, _flags in entry_challenger_specs:
+        challenger = next(
+            (item for item in variants if item.name == f"stock_basket_positions_2_hold_15_off_{label}"),
+            None,
+        )
+        if challenger is None:
+            continue
+        all_edge = (challenger.all_period.cumulative_return or 0) - (default_variant.all_period.cumulative_return or 0)
+        val_edge = (challenger.validation.cumulative_return or 0) - (default_variant.validation.cumulative_return or 0)
+        test_edge = (challenger.test.cumulative_return or 0) - (default_variant.test.cumulative_return or 0)
+        passed = challenger_edge_pass(
+            challenger.all_period.cumulative_return,
+            challenger.validation.cumulative_return,
+            challenger.test.cumulative_return,
+            challenger.test.max_drawdown,
+            default_variant.all_period.cumulative_return,
+            default_variant.validation.cumulative_return,
+            default_variant.test.cumulative_return,
+            default_variant.test.max_drawdown,
+        )
+        entry_challenger_audits.append(
+            EntryChallengerAudit(
+                label=label,
+                variant=challenger.name,
+                all_period_edge=all_edge,
+                validation_edge=val_edge,
+                test_edge=test_edge,
+                verdict=challenger_verdict(passed, label),
+            )
+        )
+    passed_labels = [item.label for item in entry_challenger_audits if "可作为生产默认候选" in item.verdict]
+    merge_recommendation = (
+        "观测能力默认可合；入场挑战者建议升默认："
+        + ("、".join(passed_labels) if passed_labels else "无")
+        + "；其余挑战者以 default=off 保留研究开关。"
+    )
     robustness_pass = bool(
         positive_folds >= 3
         and excess_positive_folds >= 2
@@ -2104,6 +2407,8 @@ def run_strategy_backtest(
             train_end_date,
             validation_end_date,
         ),
+        entry_challengers=entry_challenger_audits,
+        merge_recommendation=merge_recommendation,
         verdict=("核心规则通过第一轮反过拟合审计" if robustness_pass else "核心规则未通过反过拟合审计，继续研究"),
     )
     confirmed_core_folds = _time_folds(confirmed_core.trades, calendar, benchmark, a_klines, warmup_days)
@@ -2163,9 +2468,10 @@ def run_strategy_backtest(
             "主线连续两日确认后才入场；市场闸门转红时禁止新仓，已有仓位继续由主线失效位、8%硬失效位和到期规则管理。",
             "A股交易逐笔计入券商佣金及最低5元、证管费、经手费、过户费、卖出印花税和双边滑点；ETF按基金费率且不收印花税。",
             "封死涨停或停牌时不买入并取消该计划；封死跌停或停牌时不假设能够卖出，顺延到首个可成交交易日。",
-            "主题个股成分和市场广度样本来自当前可见股票池，仍有退市股票缺失造成的幸存者偏差。",
+            "主题个股成分和市场广度样本来自当前可见股票池（成份非 point-in-time），仍有退市股票缺失造成的幸存者偏差；北向资金尚未接入，本轮不做假变体。",
             "历史风险警示名称不完整，ST状态无法逐日恢复；能够从当日名称识别时按主板5%限制处理，否则按所属板块普通涨跌幅处理。",
-            "未使用历史财务公告和历史政策新闻，回测只检验价格主线与A/H确认增量。",
+            "核心网格仍以价格主线与A/H确认为主；fund_block_drag 挑战者在提供财务原始指标时按公告日做 PIT 过滤基本面拖累。",
+            "入场挑战者（拥挤否决/扩散门/相对强弱/基本面/红闸首日解锁/主题相关上限）默认关闭，仅同跑审计，过线后才考虑升生产默认。",
             "主线内选股归因使用每个主题配置中首个具备完整同期行情的ETF，并按个股完全相同的进出日期、仓位和ETF交易成本计算；无ETF主题不纳入可比交易。",
             "个股先行信号+主题ETF执行是独立挑战者：主线和个股只负责产生触发，实际成交、止损和退出均使用主题ETF自身行情；即使过线也只进入模拟观察。",
             "退出状态机额外审计连续2日、连续3日和不按主题排名退出三档；不按主题排名退出仍保留8%硬失效位与固定持有到期，审计结果不会自动修改生产默认值。",

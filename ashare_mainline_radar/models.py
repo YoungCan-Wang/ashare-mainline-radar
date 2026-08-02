@@ -523,6 +523,16 @@ class CrossMarketReport:
 
 
 @dataclass
+class ThemeAttributionSuggestion:
+    symbol: str
+    name: str
+    suggested_theme: str
+    confidence: float
+    method: str
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
 class RadarReport:
     generated_at: str
     data_as_of: str | None
@@ -552,6 +562,7 @@ class RadarReport:
         default_factory=lambda: ThemeLifecycleReport(signals=[], history_days=0)
     )
     cross_market: CrossMarketReport = field(default_factory=lambda: CrossMarketReport(themes=[], ah_pairs=[]))
+    theme_attributions: list[ThemeAttributionSuggestion] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
