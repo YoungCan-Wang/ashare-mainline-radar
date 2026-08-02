@@ -22,7 +22,7 @@ from .market_context import build_market_pulses
 from .market_structure import build_market_structure
 from .models import KlineSeries, SymbolSnapshot, cn_market_date_from_ms
 from .risk_gate import build_trading_gate
-from .strategy_rules import SIGNAL_PROFILES
+from .strategy_rules import SIGNAL_PROFILES, theme_crowding_blocks_entry
 
 
 @dataclass
@@ -103,6 +103,7 @@ class BacktestVariant:
     trades: list[StrategyTrade] = field(default_factory=list)
     execution_stats: SimulationStats = field(default_factory=SimulationStats)
     theme_exit_days: int | None = 2
+    crowding_veto: bool = True
 
 
 @dataclass
@@ -163,6 +164,12 @@ class SelectionAttribution:
 @dataclass
 class RobustnessAudit:
     default_variant: str
+    no_crowding_variant: str
+    no_crowding_all_period: BacktestMetrics
+    no_crowding_validation: BacktestMetrics
+    no_crowding_test: BacktestMetrics
+    crowding_veto_all_period_edge: float | None
+    crowding_veto_verdict: str
     positive_folds: int
     excess_positive_folds: int
     total_folds: int
@@ -307,7 +314,13 @@ def render_strategy_backtest(report: StrategyBacktestReport) -> str:
             "",
             "## 反过拟合审计",
             "",
-            f"- 核心方案：`{report.robustness.default_variant}`",
+            f"- 核心方案：`{report.robustness.default_variant}`（默认启用山顶高拥挤开仓否决）",
+            f"- 拥挤否决对照：`{report.robustness.no_crowding_variant}`；"
+            f"全期 {_percent(report.robustness.no_crowding_all_period.cumulative_return)} / "
+            f"验证 {_percent(report.robustness.no_crowding_validation.cumulative_return)} / "
+            f"留出 {_percent(report.robustness.no_crowding_test.cumulative_return)}；"
+            f"相对核心全期超额 {_percent(report.robustness.crowding_veto_all_period_edge)}",
+            f"- 拥挤否决结论：**{report.robustness.crowding_veto_verdict}**",
             f"- 时间折为正：{report.robustness.positive_folds}/{report.robustness.total_folds}",
             f"- 跑赢沪深300ETF的时间折：{report.robustness.excess_positive_folds}/{report.robustness.total_folds}",
             f"- 双倍成本全期收益：{_percent(report.robustness.doubled_cost_metrics.cumulative_return)}",
@@ -645,6 +658,7 @@ def _candidate(
     excluded_themes: set[str] | None = None,
     eligible_themes: set[str] | None = None,
     signal_profile: str = "base",
+    crowding_veto: bool = True,
 ) -> tuple[SymbolSnapshot, str, str | None] | None:
     excluded_symbols = excluded_symbols or set()
     excluded_themes = excluded_themes or set()
@@ -656,6 +670,8 @@ def _candidate(
         if theme.name in excluded_themes:
             continue
         if eligible_themes is not None and theme.name not in eligible_themes:
+            continue
+        if crowding_veto and theme_crowding_blocks_entry(getattr(theme, "price_phase", None)):
             continue
         status = cross_status.get(theme.name)
         if cross_market_mode == "confirm" and status in {"A股领先", "A港共同走弱"}:
@@ -885,6 +901,7 @@ def simulate_variant(
     breadth_symbols: set[str],
     theme_cache: dict[tuple[str, int], set[str]],
     theme_exit_days: int | None = 2,
+    crowding_veto: bool = True,
 ) -> tuple[list[StrategyTrade], SimulationStats]:
     strategy_config = _etf_proxy_config(theme_config) if signal_mode == "etf_proxy" else theme_config
     config_by_theme = {str(item["name"]): item for item in theme_config.get("themes", [])}
@@ -954,6 +971,7 @@ def simulate_variant(
                 excluded_themes,
                 confirmed_themes,
                 signal_profile,
+                crowding_veto=crowding_veto,
             )
             if selected is None:
                 break
@@ -1467,8 +1485,53 @@ def run_strategy_backtest(
                             test=_metrics(test, a_klines),
                             trades=trades,
                             execution_stats=execution_stats,
+                            crowding_veto=True,
                         )
                     )
+
+    # Same-run A/B: core sizing without crowding veto (previous default entry filter).
+    trades, execution_stats = simulate_variant(
+        theme_config,
+        a_klines,
+        a_instruments,
+        hk_klines,
+        hk_instruments,
+        15,
+        "off",
+        "stock_basket",
+        cost_model,
+        stop_loss,
+        position_fraction,
+        2,
+        "base",
+        warmup_days,
+        gate_cache,
+        breadth_symbols,
+        theme_cache,
+        crowding_veto=False,
+    )
+    train = [trade for trade in trades if trade.signal_date <= train_end_date]
+    validation = [trade for trade in trades if train_end_date < trade.signal_date <= validation_end_date]
+    test = [trade for trade in trades if trade.signal_date > validation_end_date]
+    variants.append(
+        BacktestVariant(
+            name="stock_basket_positions_2_hold_15_off_no_crowding_veto",
+            hold_days=15,
+            max_positions=2,
+            cross_market_mode="off",
+            signal_mode="stock_basket",
+            signal_profile="base",
+            position_fraction=position_fraction,
+            stop_loss=stop_loss,
+            all_period=_metrics(trades, a_klines),
+            train=_metrics(train, a_klines),
+            validation=_metrics(validation, a_klines),
+            test=_metrics(test, a_klines),
+            trades=trades,
+            execution_stats=execution_stats,
+            crowding_veto=False,
+        )
+    )
 
     for hold_days in (10, 15, 20):
         trades, execution_stats = simulate_variant(
@@ -1768,13 +1831,12 @@ def run_strategy_backtest(
     default_variant = next(
         item
         for item in variants
-        if item.signal_mode == "stock_basket"
-        and item.max_positions == 2
-        and item.hold_days == 15
-        and item.cross_market_mode == "off"
-        and item.signal_profile == "base"
-        and item.position_fraction == position_fraction
-        and item.stop_loss == stop_loss
+        if item.name == "stock_basket_positions_2_hold_15_off"
+    )
+    no_crowding_control = next(
+        item
+        for item in variants
+        if item.name == "stock_basket_positions_2_hold_15_off_no_crowding_veto"
     )
     confirmed_core = next(
         item
@@ -1786,6 +1848,9 @@ def run_strategy_backtest(
         and item.signal_profile == "base"
         and item.position_fraction == position_fraction
         and item.stop_loss == stop_loss
+        and item.crowding_veto
+        and item.theme_exit_days == 2
+        and "theme_exit" not in item.name
     )
     etf_proxy_variant = next(
         item
@@ -1797,6 +1862,9 @@ def run_strategy_backtest(
         and item.signal_profile == "base"
         and item.position_fraction == position_fraction
         and item.stop_loss == stop_loss
+        and item.crowding_veto
+        and item.theme_exit_days == 2
+        and "theme_exit" not in item.name
     )
     signal_vehicle_variants = [
         item
@@ -2026,6 +2094,22 @@ def run_strategy_backtest(
     )
     strategy_return = default_variant.all_period.cumulative_return or 0
     exposure_matched_benchmark_return = _exposure_matched_benchmark_return(default_variant.trades, benchmark)
+    crowding_edge = (default_variant.all_period.cumulative_return or 0) - (
+        no_crowding_control.all_period.cumulative_return or 0
+    )
+    crowding_val_edge = (default_variant.validation.cumulative_return or 0) - (
+        no_crowding_control.validation.cumulative_return or 0
+    )
+    crowding_test_edge = (default_variant.test.cumulative_return or 0) - (
+        no_crowding_control.test.cumulative_return or 0
+    )
+    crowding_veto_pass = bool(
+        crowding_edge > 0
+        and crowding_val_edge >= -0.005
+        and crowding_test_edge > 0
+        and (default_variant.test.max_drawdown or -1)
+        >= (no_crowding_control.test.max_drawdown or -1) - 0.01
+    )
     robustness_pass = bool(
         positive_folds >= 3
         and excess_positive_folds >= 2
@@ -2043,6 +2127,16 @@ def run_strategy_backtest(
     )
     robustness = RobustnessAudit(
         default_variant=default_variant.name,
+        no_crowding_variant=no_crowding_control.name,
+        no_crowding_all_period=no_crowding_control.all_period,
+        no_crowding_validation=no_crowding_control.validation,
+        no_crowding_test=no_crowding_control.test,
+        crowding_veto_all_period_edge=crowding_edge,
+        crowding_veto_verdict=(
+            "拥挤否决相对无否决对照为正，可作为生产默认"
+            if crowding_veto_pass
+            else "拥挤否决未相对对照形成稳定优势，保持研究或回退"
+        ),
         positive_folds=positive_folds,
         excess_positive_folds=excess_positive_folds,
         total_folds=len(default_folds),
@@ -2161,6 +2255,7 @@ def run_strategy_backtest(
             "滚动参数选择每一步只使用此前时间折，且训练交易必须在选择截止日前完成，避免跨边界读取未来退出结果。",
             "回测同时检查最多一仓、两仓和三仓；首笔只使用计划仓位的1/3，橙色闸门再减半，并审计20%、25%和33%三档计划风险预算。",
             "主线连续两日确认后才入场；市场闸门转红时禁止新仓，已有仓位继续由主线失效位、8%硬失效位和到期规则管理。",
+            "默认对山顶高拥挤主题硬否决新开仓（业绩支撑后缀除外），并保留无否决对照方案做同次回测对比。",
             "A股交易逐笔计入券商佣金及最低5元、证管费、经手费、过户费、卖出印花税和双边滑点；ETF按基金费率且不收印花税。",
             "封死涨停或停牌时不买入并取消该计划；封死跌停或停牌时不假设能够卖出，顺延到首个可成交交易日。",
             "主题个股成分和市场广度样本来自当前可见股票池，仍有退市股票缺失造成的幸存者偏差。",

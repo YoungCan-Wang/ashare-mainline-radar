@@ -12,6 +12,7 @@ from .models import (
     ThemeSnapshot,
     TradingGate,
 )
+from .strategy_rules import theme_crowding_blocks_entry
 
 
 def _fmt_price(value: float) -> str:
@@ -99,8 +100,10 @@ def _decision(
         return "主升加速，禁止追高；基本面未覆盖"
     if candidate.fundamental_status == "未覆盖" and not _is_fund(candidate):
         return "基本面未覆盖，等待财务确认"
-    if theme_phase == "山顶高拥挤·兑现不足":
-        return "高位拥挤且兑现不足，等待降温"
+    if theme_crowding_blocks_entry(theme_phase):
+        if theme_phase.endswith("兑现不足"):
+            return "高位拥挤且兑现不足，等待降温"
+        return "高位拥挤，停止新仓"
     if theme_phase == "山谷待反转":
         return "低位待反转确认"
     if lifecycle:

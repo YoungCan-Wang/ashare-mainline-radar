@@ -98,6 +98,17 @@ def test_red_gate_suppresses_new_buy_but_keeps_waiting_candidates() -> None:
     assert report.by_theme[0].plans[0].symbol == "002747.SZ"
 
 
+def test_crowded_theme_stays_in_waiting_instead_of_primary() -> None:
+    candidate = _candidate()
+    theme = _active_theme()
+    theme.price_phase = "山顶高拥挤"
+
+    report = build_next_buy_report([candidate], [theme], [])
+
+    assert report.primary is None
+    assert report.by_theme[0].plans[0].decision == "高位拥挤，停止新仓"
+
+
 def test_expectation_risk_stays_in_waiting_instead_of_primary() -> None:
     candidate = StrongStockCandidate(
         symbol="002747.SZ",

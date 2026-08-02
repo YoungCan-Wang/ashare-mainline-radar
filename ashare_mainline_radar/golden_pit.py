@@ -12,6 +12,7 @@ from .models import (
     TradingGate,
     safe_change,
 )
+from .strategy_rules import theme_crowding_blocks_entry
 
 
 def _avg(values: list[float]) -> float | None:
@@ -207,7 +208,8 @@ def build_golden_pit_report(
     active = {
         theme.name: theme
         for theme in themes[:3]
-        if theme.status in {"主线成立", "主线候选"} and not theme.price_phase.startswith("山顶高拥挤")
+        if theme.status in {"主线成立", "主线候选"}
+        and not theme_crowding_blocks_entry(theme.price_phase)
     }
     broad_symbols = ("000001.SH", "399001.SZ", "399006.SZ")
     broad = [snapshots[symbol] for symbol in broad_symbols if symbol in snapshots]

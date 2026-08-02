@@ -3,10 +3,11 @@ from inspect import signature
 
 import pytest
 
-from ashare_mainline_radar.models import KlineSeries, SymbolSnapshot
+from ashare_mainline_radar.models import KlineSeries, SymbolSnapshot, ThemeSnapshot
 from ashare_mainline_radar.strategy_backtest import (
     BacktestMetrics,
     StrategyTrade,
+    _candidate,
     _exposure_matched_benchmark_return,
     _find_entry,
     _group_diagnostics,
@@ -258,3 +259,50 @@ def test_production_simulation_keeps_two_day_theme_exit_default() -> None:
     parameter = signature(simulate_variant).parameters["theme_exit_days"]
 
     assert parameter.default == 2
+
+
+def test_production_simulation_enables_crowding_veto_by_default() -> None:
+    parameter = signature(simulate_variant).parameters["crowding_veto"]
+
+    assert parameter.default is True
+
+
+def test_candidate_skips_crowded_theme_when_veto_enabled() -> None:
+    theme = ThemeSnapshot(
+        name="机器人",
+        score=92,
+        status="主线成立",
+        members=3,
+        breadth_5d=0.8,
+        breadth_20d=0.7,
+        avg_ret_5d=0.08,
+        avg_ret_20d=0.2,
+        amount_heat=1.3,
+        catalyst_count=0,
+        leaders=[],
+        price_phase="山顶高拥挤",
+    )
+    snapshot = SymbolSnapshot(
+        symbol="002747.SZ",
+        name="埃斯顿",
+        themes=["机器人"],
+        last_close=20,
+        ret_1d=0.01,
+        ret_5d=0.05,
+        ret_20d=0.12,
+        amount_ma5=1,
+        amount_ma20=1,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.01,
+        drawdown_20d=-0.02,
+        score=90,
+        status="突破观察",
+    )
+    config = {"themes": [{"name": "机器人", "symbols": ["002747.SZ"]}]}
+
+    blocked = _candidate(config, [theme], {snapshot.symbol: snapshot}, {}, "off", crowding_veto=True)
+    allowed = _candidate(config, [theme], {snapshot.symbol: snapshot}, {}, "off", crowding_veto=False)
+
+    assert blocked is None
+    assert allowed is not None
+    assert allowed[0].symbol == "002747.SZ"
