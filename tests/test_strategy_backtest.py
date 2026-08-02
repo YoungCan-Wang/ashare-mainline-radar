@@ -3,10 +3,11 @@ from inspect import signature
 
 import pytest
 
-from ashare_mainline_radar.models import KlineSeries, SymbolSnapshot
+from ashare_mainline_radar.models import KlineSeries, SymbolSnapshot, ThemeSnapshot
 from ashare_mainline_radar.strategy_backtest import (
     BacktestMetrics,
     StrategyTrade,
+    _candidate,
     _exposure_matched_benchmark_return,
     _find_entry,
     _group_diagnostics,
@@ -17,6 +18,7 @@ from ashare_mainline_radar.strategy_backtest import (
     sample_breadth_symbols,
     simulate_variant,
 )
+from ashare_mainline_radar.strategy_rules import EntryChallengerFlags
 
 
 def _trade(portfolio_return: float) -> StrategyTrade:
@@ -258,3 +260,79 @@ def test_production_simulation_keeps_two_day_theme_exit_default() -> None:
     parameter = signature(simulate_variant).parameters["theme_exit_days"]
 
     assert parameter.default == 2
+
+
+def test_production_entry_challengers_default_off() -> None:
+    parameter = signature(simulate_variant).parameters["entry_flags"]
+
+    assert parameter.default is None
+    assert not EntryChallengerFlags().is_active()
+
+
+def test_candidate_crowding_veto_and_diffusion_gate() -> None:
+    theme = ThemeSnapshot(
+        name="机器人",
+        score=92,
+        status="主线成立",
+        members=3,
+        breadth_5d=0.8,
+        breadth_20d=0.7,
+        avg_ret_5d=0.08,
+        avg_ret_20d=0.2,
+        amount_heat=1.3,
+        catalyst_count=0,
+        leaders=[],
+        price_phase="山顶高拥挤",
+    )
+    snapshot = SymbolSnapshot(
+        symbol="002747.SZ",
+        name="埃斯顿",
+        themes=["机器人"],
+        last_close=20,
+        ret_1d=0.01,
+        ret_5d=0.05,
+        ret_20d=0.12,
+        amount_ma5=1,
+        amount_ma20=1,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.01,
+        drawdown_20d=-0.02,
+        score=90,
+        status="突破观察",
+    )
+    config = {"themes": [{"name": "机器人", "symbols": ["002747.SZ"], "candidate_symbols": ["002747.SZ"]}]}
+
+    blocked = _candidate(
+        config,
+        [theme],
+        {snapshot.symbol: snapshot},
+        {},
+        "off",
+        entry_flags=EntryChallengerFlags(crowding_veto=True),
+    )
+    allowed = _candidate(config, [theme], {snapshot.symbol: snapshot}, {}, "off")
+    assert blocked is None
+    assert allowed is not None
+
+    startup = ThemeSnapshot(
+        name="机器人",
+        score=70,
+        status="主线候选",
+        members=3,
+        breadth_5d=0.62,
+        breadth_20d=0.4,
+        avg_ret_5d=0.02,
+        avg_ret_20d=0.01,
+        amount_heat=1.05,
+        catalyst_count=0,
+        leaders=[],
+    )
+    diffusion_blocked = _candidate(
+        config,
+        [startup],
+        {snapshot.symbol: snapshot},
+        {},
+        "off",
+        entry_flags=EntryChallengerFlags(diffusion_gate=True),
+    )
+    assert diffusion_blocked is None

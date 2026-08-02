@@ -12,6 +12,7 @@ from .fundamentals import apply_fundamental_overlay, apply_theme_fundamental_ove
 from .golden_pit import build_golden_pit_report
 from .intelligence import collect_intelligence_with_status, intel_match_index
 from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
+from .theme_attribution import suggest_unmapped_attributions
 from .market_context import build_market_pulses
 from .market_structure import build_market_structure
 from .models import (
@@ -400,10 +401,17 @@ class MainlineRadar:
 
         market_symbols = [str(item["symbol"]) for item in self.theme_config.get("market_watchlist", [])]
         market_watchlist = [snapshots[symbol] for symbol in market_symbols if symbol in snapshots]
+        theme_attributions = suggest_unmapped_attributions(leader_tape, self.theme_config, themes)
         warnings = [
             "本报告只用于研究和交易准备，不构成投资建议。",
             "v0.1 的主题归因主要来自配置文件，未配置题材可能只出现在全市场强势带里。",
+            "主题篮子成份来自当前 curated 配置，不是历史 point-in-time 成员快照；排序分母随配置变更。",
+            "北向/港股通资金流尚未接入，本轮仅作能力债项，不进入评分。",
         ]
+        if theme_attributions:
+            warnings.append(
+                f"全市场强势带中有 {len(theme_attributions)} 只未映射标的给出了主题归属建议，供人工复核，不自动改写评分篮子。"
+            )
         if self.client.api_key:
             warnings.append("当前使用 TickFlow 完整 API；实时/分钟线能力仍取决于账号权限和本报告配置。")
         else:
@@ -439,4 +447,5 @@ class MainlineRadar:
             monthly_bases=monthly_bases,
             theme_lifecycle=theme_lifecycle,
             cross_market=cross_market,
+            theme_attributions=theme_attributions,
         )
