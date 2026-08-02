@@ -552,21 +552,6 @@ def render_markdown(report: RadarReport) -> str:
     lines.extend(_leader_table(report.leader_tape[:20]))
     lines.append("")
 
-    if report.theme_attributions:
-        lines.append("## 未映射强势股主题归属建议")
-        lines.append("")
-        lines.append("| 代码 | 名称 | 建议主题 | 置信度 | 方法 | 证据 |")
-        lines.append("| --- | --- | --- | ---: | --- | --- |")
-        for item in report.theme_attributions[:12]:
-            evidence = "；".join(item.evidence[:2]) if item.evidence else ""
-            lines.append(
-                f"| {item.symbol} | {item.name} | {item.suggested_theme} | "
-                f"{item.confidence:.2f} | {item.method} | {evidence} |"
-            )
-        lines.append("")
-        lines.append("以上建议仅供人工复核，不会自动改写 `theme_baskets.json` 或开仓漏斗。")
-        lines.append("")
-
     if report.market_watchlist:
         lines.append("## 宽基/外围观察")
         lines.append("")
