@@ -179,7 +179,7 @@ python3 scripts/run_daily.py --mode universe --max-symbols 0
 - `buyable_now` 需要回踩结构成立，并给出买入区、确认价、止损、失效条件和闸门允许动作；单边火箭（过程回撤 <8%）与 ST/*ST 不进入可买。
 - 北交所上市脉冲（K 线不足）只标 `bj_ipo_speculative` 投机观察。
 - `trading_gate` 为红色时全部只观察；橙色时仅允许更小的试错仓，并优先回踩而非追突破。
-- 可买计划写入 storage / paper-trade 账本，但不使用“主题退出前三”规则，改为依赖止损与持有期。
+- 仅写入日报 artifact（`mainline_report.json` / Markdown / 飞书卡片）；不进入 `radar_symbol_selections`、报价跟踪 fanout（扇出刷新）或 paper-trade（纸面模拟交易）账本，可按 TickFlow + 日跑结果随时重算。
 
 `monthly_bases.candidates` 用于寻找月线级别的长期蓄势平台：
 

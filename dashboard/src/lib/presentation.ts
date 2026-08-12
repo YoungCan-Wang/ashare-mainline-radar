@@ -1,8 +1,7 @@
-import type { RadarRole, SymbolRow } from "../types";
+import type { SymbolRow } from "../types";
 
-export const ROLE_LABELS: Readonly<Record<RadarRole, string>> = {
+export const ROLE_LABELS: Readonly<Record<string, string>> = {
   next_buy: "建仓",
-  unmapped_pullback: "未映射回踩",
   strong_stock: "强势",
   golden_pit: "黄金坑",
   accumulation: "低位资金",

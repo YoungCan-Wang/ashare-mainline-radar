@@ -37,6 +37,8 @@ from ashare_mainline_radar.models import (
     ThemeLifecycleSignal,
     ThemeSnapshot,
     TradingGate,
+    UnmappedPullbackCandidate,
+    UnmappedPullbackReport,
 )
 
 
@@ -137,6 +139,58 @@ def test_build_feishu_text_minimal_report() -> None:
     )
     assert "涨跌停行为观察" in contents
     assert "首板封住" in contents
+
+    report.unmapped_pullback = UnmappedPullbackReport(
+        candidates=[
+            UnmappedPullbackCandidate(
+                symbol="600000.SH",
+                name="未映射样例",
+                theme="未映射强势",
+                style_tag="pullback_reclaim",
+                buyable_now=True,
+                decision="未映射回踩确认，可小仓试错",
+                priority_score=81.0,
+                last_close=12.0,
+                entry_plan="回踩确认",
+                invalidation="跌破止损",
+                position_note="试错仓",
+                gate_action="允许寻找买点",
+                entry_zone_low=11.4,
+                entry_zone_high=11.8,
+                confirm_price=12.1,
+                stop_price=11.0,
+            )
+        ],
+        buyable_now=[
+            UnmappedPullbackCandidate(
+                symbol="600000.SH",
+                name="未映射样例",
+                theme="未映射强势",
+                style_tag="pullback_reclaim",
+                buyable_now=True,
+                decision="未映射回踩确认，可小仓试错",
+                priority_score=81.0,
+                last_close=12.0,
+                entry_plan="回踩确认",
+                invalidation="跌破止损",
+                position_note="试错仓",
+                gate_action="允许寻找买点",
+                entry_zone_low=11.4,
+                entry_zone_high=11.8,
+                confirm_price=12.1,
+                stop_price=11.0,
+            )
+        ],
+        scanned=1,
+    )
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    assert "未映射相对强度回踩" in contents
+    assert "600000.SH" in contents
+    text = build_feishu_text(report)
+    assert "未映射相对强度回踩" in text
 
     report.monthly_bases = MonthlyBaseReport(
         candidates=[
