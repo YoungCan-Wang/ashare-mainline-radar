@@ -11,7 +11,7 @@ from .models import RadarReport
 from .paper_strategies import PAPER_STRATEGIES, PRODUCTION_PAPER_STRATEGY
 from .supabase_rest import fetch_rows, upsert_rows
 
-SCHEMA_VERSION = "radar-storage-v3"
+SCHEMA_VERSION = "radar-storage-v4"
 ROLE_ORDER = (
     "next_buy",
     "strong_stock",
@@ -22,9 +22,19 @@ ROLE_ORDER = (
     "leader_tape",
     "market_watchlist",
 )
-# Persist only theme/next_buy and related actionable roles. unmapped_pullback stays
-# in the daily report artifact (JSON/MD/Feishu) and is not tracked in Supabase.
-ACTIONABLE_ROLES = ROLE_ORDER[:6]
+# Persist only a small ranked actionable set that drives paper trades / quote tracking.
+# expectation_gap full scans, leader_tape, market_watchlist, and unmapped_pullback stay
+# in daily report artifacts (JSON/MD/Feishu) and can be regenerated from TickFlow.
+ACTIONABLE_ROLES = ROLE_ORDER[:5]
+ARTIFACT_ONLY_ROLES = ("expectation_gap", "leader_tape", "market_watchlist", "unmapped_pullback")
+# Hard per-role caps after ranking by priority_score/score (descending).
+ROLE_PERSISTENCE_CAPS: dict[str, int] = {
+    "next_buy": 12,
+    "strong_stock": 12,
+    "golden_pit": 10,
+    "accumulation": 12,
+    "monthly_base": 12,
+}
 
 
 @dataclass(frozen=True)
@@ -76,6 +86,40 @@ def _candidate_sections(report: dict[str, Any]) -> list[tuple[str, list[dict[str
         ("leader_tape", _list(report.get("leader_tape"))),
         ("market_watchlist", _list(report.get("market_watchlist"))),
     ]
+
+
+def _sections_for_roles(
+    report: dict[str, Any], roles: tuple[str, ...]
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    wanted = set(roles)
+    return [(role, candidates) for role, candidates in _candidate_sections(report) if role in wanted]
+
+
+def _candidate_rank(candidate: dict[str, Any]) -> float:
+    score = _first(candidate, ("priority_score", "score"))
+    return float(score) if score is not None else 0.0
+
+
+def _ranked_capped_sections(
+    report: dict[str, Any], roles: tuple[str, ...]
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Rank each role's candidates by score and enforce hard persistence caps."""
+    sections: list[tuple[str, list[dict[str, Any]]]] = []
+    for role, candidates in _sections_for_roles(report, roles):
+        best_by_symbol: dict[str, dict[str, Any]] = {}
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or not candidate.get("symbol"):
+                continue
+            symbol = str(candidate["symbol"])
+            current = best_by_symbol.get(symbol)
+            if current is None or _candidate_rank(candidate) > _candidate_rank(current):
+                best_by_symbol[symbol] = candidate
+        ranked = sorted(best_by_symbol.values(), key=_candidate_rank, reverse=True)
+        cap = ROLE_PERSISTENCE_CAPS.get(role)
+        if cap is not None:
+            ranked = ranked[:cap]
+        sections.append((role, ranked))
+    return sections
 
 
 def _paper_trade_records(
@@ -261,50 +305,52 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
         if isinstance(item, dict) and item.get("symbol")
     }
     symbols: dict[str, dict[str, Any]] = {}
-    for role, candidates in _candidate_sections(data):
+
+    def _merge_candidate(role: str, candidate: dict[str, Any]) -> None:
+        symbol = str(candidate["symbol"])
+        row = symbols.setdefault(
+            symbol,
+            {
+                "run_key": run_key,
+                "market_date": market_date,
+                "symbol": symbol,
+                "exchange": symbol.rsplit(".", 1)[-1] if "." in symbol else None,
+                "name": candidate.get("name") or symbol,
+                "primary_theme": None,
+                "themes": [],
+                "roles": [],
+                "action_state": None,
+                "priority_score": None,
+                "last_close": None,
+                "market_metrics": {},
+                "signal_payload": {},
+                "fundamental_payload": {},
+                "target_payload": {},
+                "trade_plan": {},
+                "updated_at": generated_at,
+            },
+        )
+        if role not in row["roles"]:
+            row["roles"].append(role)
+        row["signal_payload"][role] = candidate
+        for theme in _themes(candidate):
+            if theme not in row["themes"]:
+                row["themes"].append(theme)
+        row["primary_theme"] = row["primary_theme"] or _first(candidate, ("theme", "primary_theme"))
+        row["action_state"] = row["action_state"] or _first(
+            candidate, ("decision", "action", "status", "stage")
+        )
+        candidate_score = _first(candidate, ("priority_score", "score"))
+        if candidate_score is not None:
+            current_score = row["priority_score"]
+            row["priority_score"] = max(float(candidate_score), float(current_score or candidate_score))
+        row["last_close"] = row["last_close"] or candidate.get("last_close")
+        row["market_metrics"].update(_market_metrics(candidate))
+        row["trade_plan"].update(_trade_plan(candidate))
+
+    for role, candidates in _ranked_capped_sections(data, ACTIONABLE_ROLES):
         for candidate in candidates:
-            if not isinstance(candidate, dict) or not candidate.get("symbol"):
-                continue
-            symbol = str(candidate["symbol"])
-            row = symbols.setdefault(
-                symbol,
-                {
-                    "run_key": run_key,
-                    "market_date": market_date,
-                    "symbol": symbol,
-                    "exchange": symbol.rsplit(".", 1)[-1] if "." in symbol else None,
-                    "name": candidate.get("name") or symbol,
-                    "primary_theme": None,
-                    "themes": [],
-                    "roles": [],
-                    "action_state": None,
-                    "priority_score": None,
-                    "last_close": None,
-                    "market_metrics": {},
-                    "signal_payload": {},
-                    "fundamental_payload": {},
-                    "target_payload": {},
-                    "trade_plan": {},
-                    "updated_at": generated_at,
-                },
-            )
-            if role not in row["roles"]:
-                row["roles"].append(role)
-            row["signal_payload"][role] = candidate
-            for theme in _themes(candidate):
-                if theme not in row["themes"]:
-                    row["themes"].append(theme)
-            row["primary_theme"] = row["primary_theme"] or _first(candidate, ("theme", "primary_theme"))
-            row["action_state"] = row["action_state"] or _first(
-                candidate, ("decision", "action", "status", "stage")
-            )
-            candidate_score = _first(candidate, ("priority_score", "score"))
-            if candidate_score is not None:
-                current_score = row["priority_score"]
-                row["priority_score"] = max(float(candidate_score), float(current_score or candidate_score))
-            row["last_close"] = row["last_close"] or candidate.get("last_close")
-            row["market_metrics"].update(_market_metrics(candidate))
-            row["trade_plan"].update(_trade_plan(candidate))
+            _merge_candidate(role, candidate)
 
     for symbol, row in symbols.items():
         row["roles"] = sorted(row["roles"], key=ROLE_ORDER.index)
@@ -337,6 +383,8 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
         "schema_version": SCHEMA_VERSION,
         "tracking_policy": {
             "selection_roles": list(ACTIONABLE_ROLES),
+            "role_caps": dict(ROLE_PERSISTENCE_CAPS),
+            "artifact_only_roles": list(ARTIFACT_ONLY_ROLES),
             "first_selected_at_source": "symbol_snapshot.updated_at",
             "first_selected_price_source": "symbol_snapshot.last_close",
             "live_quote_source": "radar_symbol_quotes",

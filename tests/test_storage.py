@@ -1,6 +1,12 @@
 import json
+from urllib.error import HTTPError
 
-from ashare_mainline_radar.storage import build_storage_bundle, persist_report
+from ashare_mainline_radar.storage import (
+    ACTIONABLE_ROLES,
+    ROLE_PERSISTENCE_CAPS,
+    build_storage_bundle,
+    persist_report,
+)
 
 
 def _report() -> dict:
@@ -54,9 +60,41 @@ def _report() -> dict:
         "golden_pits": {"candidates": []},
         "accumulation": {"candidates": []},
         "monthly_bases": {"candidates": []},
-        "expectation_gaps": {"signals": []},
-        "leader_tape": [],
-        "market_watchlist": [],
+        "expectation_gaps": {
+            "signals": [
+                {
+                    "symbol": "300122.SZ",
+                    "name": "智飞生物",
+                    "status": "业绩价格共振",
+                    "score": 85.0,
+                    "announce_date": "2026-07-10",
+                },
+                {
+                    "symbol": "600519.SH",
+                    "name": "预期差仅扫描样例",
+                    "status": "预期差未确认",
+                    "score": 50.0,
+                    "announce_date": "2026-07-01",
+                },
+            ]
+        },
+        "leader_tape": [
+            {
+                "symbol": "000001.SZ",
+                "name": "领涨磁带样例",
+                "theme": "银行",
+                "last_close": 11.0,
+                "ret_5d": 0.08,
+            }
+        ],
+        "market_watchlist": [
+            {
+                "symbol": "510300.SH",
+                "name": "沪深300ETF",
+                "theme": "市场观察",
+                "last_close": 4.0,
+            }
+        ],
         "unmapped_pullback": {
             "candidates": [
                 {
@@ -127,7 +165,23 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     assert symbol["trade_plan"]["entry_plan"] == "回踩不破后分批"
     assert symbol["fundamental_payload"]["status"] == "基本面兑现"
     assert symbol["target_payload"]["target_high"] == 45.0
+    assert "expectation_gap" not in symbol["signal_payload"]
     assert "600000.SH" not in by_symbol
+    assert "600519.SH" not in by_symbol
+    assert "000001.SZ" not in by_symbol
+    assert "510300.SH" not in by_symbol
+    assert ACTIONABLE_ROLES == (
+        "next_buy",
+        "strong_stock",
+        "golden_pit",
+        "accumulation",
+        "monthly_base",
+    )
+    assert bundle["tracking_policy"]["selection_roles"] == list(ACTIONABLE_ROLES)
+    assert bundle["tracking_policy"]["role_caps"] == ROLE_PERSISTENCE_CAPS
+    assert "expectation_gap" in bundle["tracking_policy"]["artifact_only_roles"]
+    assert "leader_tape" in bundle["tracking_policy"]["artifact_only_roles"]
+    assert "market_watchlist" in bundle["tracking_policy"]["artifact_only_roles"]
     assert "unmapped_pullback" not in bundle["tracking_policy"]["selection_roles"]
     assert len(bundle["trade_plans"]) == 2
     next_buy_plans = [item for item in bundle["trade_plans"] if item["symbol"] == "300122.SZ"]
@@ -140,6 +194,68 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     assert bundle["trade_events"][0]["event_type"] == "created"
 
 
+def test_storage_skips_expectation_gap_and_other_artifact_only_lists() -> None:
+    report = _report()
+    report["expectation_gaps"]["signals"].extend(
+        {
+            "symbol": f"60{idx:04d}.SH",
+            "name": f"bulk-{idx}",
+            "status": "预期差未确认",
+            "score": 90.0 - idx,
+        }
+        for idx in range(200)
+    )
+    report["leader_tape"] = [
+        {"symbol": f"00{idx:04d}.SZ", "name": f"tape-{idx}", "last_close": 10.0} for idx in range(25)
+    ]
+    report["market_watchlist"] = [
+        {"symbol": f"51{idx:04d}.SH", "name": f"watch-{idx}", "last_close": 1.0} for idx in range(13)
+    ]
+
+    bundle = build_storage_bundle(report)
+    symbols = {item["symbol"] for item in bundle["symbols"]}
+    roles = {role for item in bundle["symbols"] for role in item["roles"]}
+
+    assert symbols == {"300122.SZ"}
+    assert "expectation_gap" not in roles
+    assert "leader_tape" not in roles
+    assert "market_watchlist" not in roles
+    assert not any(item.startswith("00") for item in symbols)
+    assert not any(item.startswith("51") for item in symbols)
+
+
+def test_storage_caps_actionable_roles_after_ranking() -> None:
+    report = _report()
+    report["strong_stocks"]["candidates"] = [
+        {
+            "symbol": f"300{idx:03d}.SZ",
+            "name": f"strong-{idx}",
+            "theme": "创新药",
+            "last_close": 20.0 + idx,
+            "score": float(idx),
+            "status": "趋势延续",
+        }
+        for idx in range(30)
+    ]
+    report["next_buy"] = {
+        "primary": None,
+        "alternatives": [],
+        "by_theme": [],
+    }
+
+    bundle = build_storage_bundle(report)
+    strong_symbols = [
+        item["symbol"]
+        for item in bundle["symbols"]
+        if "strong_stock" in item["roles"]
+    ]
+
+    assert len(strong_symbols) == ROLE_PERSISTENCE_CAPS["strong_stock"]
+    assert strong_symbols[0] == "300029.SZ"
+    assert "300000.SZ" not in strong_symbols
+    assert all("expectation_gap" not in item["roles"] for item in bundle["symbols"])
+
+
 def test_artifact_backend_writes_portable_bundle_and_status(tmp_path) -> None:
     status = persist_report(_report(), tmp_path, backend="artifact")
 
@@ -147,7 +263,7 @@ def test_artifact_backend_writes_portable_bundle_and_status(tmp_path) -> None:
     assert status.symbol_records == 1
     bundle = json.loads((tmp_path / "storage_bundle.json").read_text(encoding="utf-8"))
     persisted_status = json.loads((tmp_path / "storage_status.json").read_text(encoding="utf-8"))
-    assert bundle["schema_version"] == "radar-storage-v3"
+    assert bundle["schema_version"] == "radar-storage-v4"
     assert bundle["tracking_policy"]["first_selected_price_source"] == "symbol_snapshot.last_close"
     assert persisted_status["backend"] == "artifact"
 
@@ -186,6 +302,48 @@ def test_publishable_key_uses_scoped_ingest_header(tmp_path) -> None:
     assert requests[0][0].get_header("Apikey") == "sb_publishable_test"
     assert requests[0][0].get_header("X-radar-ingest-key") == "private-ingest-key"
     assert requests[0][0].get_header("Authorization") is None
+
+
+def test_supabase_http_error_body_is_captured_in_storage_status(tmp_path) -> None:
+    class Response:
+        status = 204
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return b"[]"
+
+    def opener(request, timeout):
+        if request.full_url.startswith("https://example.supabase.co/rest/v1/radar_symbol_snapshots"):
+            raise HTTPError(
+                request.full_url,
+                400,
+                "Bad Request",
+                hdrs=None,
+                fp=__import__("io").BytesIO(b'{"code":"PGRST102","message":"Empty or invalid json"}'),
+            )
+        return Response()
+
+    status = persist_report(
+        _report(),
+        tmp_path,
+        backend="supabase",
+        supabase_url="https://example.supabase.co",
+        supabase_publishable_key="sb_publishable_test",
+        radar_ingest_key="private-ingest-key",
+        opener=opener,
+    )
+
+    persisted_status = json.loads((tmp_path / "storage_status.json").read_text(encoding="utf-8"))
+    assert status.status == "failed"
+    assert persisted_status["status"] == "failed"
+    assert "HTTP 400" in persisted_status["message"]
+    assert "Empty or invalid json" in persisted_status["message"]
+    assert persisted_status["symbol_records"] == 1
 
 
 def test_existing_production_plan_does_not_block_shadow_plan(tmp_path) -> None:
