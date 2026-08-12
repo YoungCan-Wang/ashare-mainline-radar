@@ -1,5 +1,6 @@
 export type RadarRole =
   | "next_buy"
+  | "unmapped_pullback"
   | "strong_stock"
   | "golden_pit"
   | "accumulation"
@@ -47,7 +48,7 @@ export interface RadarRun {
   mode?: string;
   scanned_symbols?: number;
   top_theme?: string;
-  gate_level?: "green" | "yellow" | "red" | string;
+  gate_level?: "green" | "yellow" | "orange" | "red" | string;
   gate_state?: string;
   gate_score?: number;
   summary?: {
@@ -85,6 +86,9 @@ export interface TradePlan {
   invalidation?: string;
   position_note?: string;
   action?: string;
+  gate_action?: string;
+  style_tag?: string;
+  buyable_now?: boolean;
   entry_mode?: string;
   entry_zone_low?: number;
   entry_zone_high?: number;
@@ -179,6 +183,12 @@ export interface SymbolRow {
   market_metrics?: MarketMetrics;
   signal_payload?: {
     strong_stock?: StrongStockSignal;
+    unmapped_pullback?: {
+      style_tag?: string;
+      buyable_now?: boolean;
+      gate_action?: string;
+      reasons?: string[];
+    };
   };
 }
 

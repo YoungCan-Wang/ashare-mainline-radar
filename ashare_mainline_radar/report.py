@@ -18,6 +18,7 @@ from .models import (
     ThemeBuyGroup,
     ThemeLifecycleSignal,
     ThemeSnapshot,
+    UnmappedPullbackCandidate,
     pct,
 )
 
@@ -104,6 +105,21 @@ def _next_buy_row(rank: int, item: NextBuyPlan) -> str:
     return (
         f"| {rank} | {item.name} `{item.symbol}` | {item.theme} | {item.decision} | "
         f"{item.priority_score:.1f} | {_fmt(item.last_close)} | {item.entry_plan} | {item.invalidation} |"
+    )
+
+
+def _unmapped_pullback_row(rank: int, item: UnmappedPullbackCandidate) -> str:
+    buyable = "可买" if item.buyable_now else "观察"
+    zone = (
+        f"{_fmt(item.entry_zone_low)}-{_fmt(item.entry_zone_high)}"
+        if item.entry_zone_low is not None and item.entry_zone_high is not None
+        else "n/a"
+    )
+    why = "；".join(item.reasons[:3]) if item.reasons else "-"
+    return (
+        f"| {rank} | {item.name} `{item.symbol}` | {item.style_tag} | {buyable} | {item.decision} | "
+        f"{item.priority_score:.1f} | {zone} | {_fmt(item.confirm_price)} | {_fmt(item.stop_price)} | "
+        f"{item.gate_action} | {why} |"
     )
 
 
@@ -248,6 +264,35 @@ def render_markdown(report: RadarReport) -> str:
         lines.append("- 当前没有同时通过相对强度、趋势、量能和高点距离约束的未映射候选。")
     lines.append("")
     for note in report.unmapped_strength.notes:
+        lines.append(f"- {note}")
+    lines.append("")
+
+    lines.append("## 未映射相对强度回踩候选")
+    lines.append("")
+    pullback = report.unmapped_pullback
+    lines.append(
+        f"扫描未映射/宽基相对强度 {pullback.scanned} 只；"
+        f"其中可买 {len(pullback.buyable_now)} 只，其余为观察。优先回踩再站稳，不追单边火箭。"
+    )
+    lines.append("")
+    if pullback.candidates:
+        lines.append(
+            "| 排名 | 标的 | 风格 | 状态 | 决策 | 优先级 | 买入区 | 确认价 | 止损 | 闸门动作 | 入选理由 |"
+        )
+        lines.append("| ---: | --- | --- | --- | --- | ---: | --- | ---: | ---: | --- | --- |")
+        for rank, item in enumerate(pullback.candidates[:12], start=1):
+            lines.append(_unmapped_pullback_row(rank, item))
+        lines.append("")
+        for item in pullback.buyable_now[:5]:
+            lines.append(
+                f"- `{item.symbol}` {item.name}：{item.entry_plan}｜失效：{item.invalidation}｜"
+                f"{item.position_note}"
+            )
+        lines.append("")
+    else:
+        lines.append("- 当前没有可评估的未映射回踩候选。")
+        lines.append("")
+    for note in pullback.notes:
         lines.append(f"- {note}")
     lines.append("")
 

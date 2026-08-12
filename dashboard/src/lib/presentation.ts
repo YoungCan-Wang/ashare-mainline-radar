@@ -2,6 +2,7 @@ import type { RadarRole, SymbolRow } from "../types";
 
 export const ROLE_LABELS: Readonly<Record<RadarRole, string>> = {
   next_buy: "建仓",
+  unmapped_pullback: "未映射回踩",
   strong_stock: "强势",
   golden_pit: "黄金坑",
   accumulation: "低位资金",
@@ -17,15 +18,25 @@ export function planSummary(row: SymbolRow): string {
 }
 
 export function gateLabel(level: string | undefined): string {
-  return { green: "允许参与", yellow: "控制仓位", red: "暂停新仓" }[level ?? ""] ?? "闸门待确认";
+  return {
+    green: "允许参与",
+    yellow: "控制仓位",
+    orange: "控制仓位",
+    red: "暂停新仓",
+  }[level ?? ""] ?? "闸门待确认";
 }
 
 export function gateColor(level: string | undefined): string {
-  return { green: "var(--gate-green)", yellow: "var(--gate-amber)", red: "var(--gate-red)" }[level ?? ""] ?? "var(--text)";
+  return {
+    green: "var(--gate-green)",
+    yellow: "var(--gate-amber)",
+    orange: "var(--gate-amber)",
+    red: "var(--gate-red)",
+  }[level ?? ""] ?? "var(--text)";
 }
 
 export function gateTone(level: string | undefined): string {
-  return { green: "green", yellow: "yellow", red: "red" }[level ?? ""] ?? "neutral";
+  return { green: "green", yellow: "yellow", orange: "yellow", red: "red" }[level ?? ""] ?? "neutral";
 }
 
 export function themeTone(stage: string | undefined, status: string | undefined): string {

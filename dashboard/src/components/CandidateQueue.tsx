@@ -18,6 +18,7 @@ interface SortState {
 const ROLE_DEFINITIONS: ReadonlyArray<{ id: RoleFilter; label: string }> = [
   { id: "all", label: "全部" },
   { id: "next_buy", label: "建仓候选" },
+  { id: "unmapped_pullback", label: "未映射回踩" },
   { id: "strong_stock", label: "持有观察" },
   { id: "waiting", label: "等待确认" },
   { id: "golden_pit", label: "黄金坑" },
