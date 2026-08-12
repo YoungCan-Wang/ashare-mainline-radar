@@ -88,6 +88,17 @@ def test_fundamental_report_allows_empty_degraded_input() -> None:
     assert report.requested_symbols == 1
 
 
+def test_missing_fundamentals_explicitly_downgrade_candidate() -> None:
+    candidate = _candidate("MISS.SZ", 80)
+    strong = StrongStockReport(selected_themes=["机器人"], hold_days=5, candidates=[candidate])
+    report = build_fundamental_report({}, {}, ["MISS.SZ"])
+
+    apply_fundamental_overlay(strong, AccumulationReport(candidates=[]), report, 10, 10)
+
+    assert candidate.score == 75
+    assert any("未覆盖" in reason for reason in candidate.reasons)
+
+
 def test_negative_roe_cannot_be_classified_as_fundamental_delivery() -> None:
     raw = {
         "LOSS.SZ": [

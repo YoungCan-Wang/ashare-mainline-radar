@@ -17,7 +17,7 @@ from .execution import (
     is_sealed_limit_down,
     is_sealed_limit_up,
 )
-from .market import build_theme_snapshots, compute_symbol_snapshot
+from .market import build_theme_snapshots, compute_symbol_snapshot, normalize_symbol_scores
 from .market_context import build_market_pulses
 from .market_structure import build_market_structure
 from .models import KlineSeries, SymbolSnapshot, cn_market_date_from_ms
@@ -444,6 +444,7 @@ def _slice_series(series: KlineSeries, cutoff: int, lookback: int = 220) -> Klin
         close=series.close[start:end],
         volume=series.volume[start:end],
         amount=series.amount[start:end],
+        prev_close=series.prev_close[start:end],
     )
 
 
@@ -466,6 +467,7 @@ def _snapshots(
         snapshot = compute_symbol_snapshot(symbol, series, instruments.get(symbol), symbol_to_themes.get(symbol, []))
         if snapshot:
             result[symbol] = snapshot
+    normalize_symbol_scores(result)
     return result
 
 
@@ -883,7 +885,7 @@ def simulate_variant(
     warmup_days: int,
     gate_cache: dict[int, str],
     breadth_symbols: set[str],
-    theme_cache: dict[tuple[str, int], set[str]],
+    theme_cache: dict[tuple[str, int], tuple[dict[str, SymbolSnapshot], list[Any], dict[str, str]]],
     theme_exit_days: int | None = 2,
 ) -> tuple[list[StrategyTrade], SimulationStats]:
     strategy_config = _etf_proxy_config(theme_config) if signal_mode == "etf_proxy" else theme_config
@@ -907,7 +909,7 @@ def simulate_variant(
         gate_cache[timestamp] = level
         return level
 
-    def active_themes(timestamp: int) -> set[str]:
+    def market_state(timestamp: int) -> tuple[dict[str, SymbolSnapshot], list[Any], dict[str, str]]:
         key = (signal_mode, timestamp)
         cached = theme_cache.get(key)
         if cached is not None:
@@ -915,9 +917,22 @@ def simulate_variant(
         current = _market_slice(strategy_klines, timestamp)
         current_snapshots = _snapshots(current, a_instruments, symbol_to_themes)
         current_themes = build_theme_snapshots(strategy_config, current_snapshots)
-        active = {theme.name for theme in current_themes[:3] if theme.status in {"主线成立", "主线候选"}}
-        theme_cache[key] = active
-        return active
+        hk_current = _market_slice(hk_klines, timestamp)
+        cross = build_cross_market_report(
+            strategy_config,
+            hk_current,
+            hk_instruments,
+            current_themes,
+            current_snapshots,
+        )
+        cross_status = {item.theme: item.status for item in cross.themes}
+        state = (current_snapshots, current_themes, cross_status)
+        theme_cache[key] = state
+        return state
+
+    def active_themes(timestamp: int) -> set[str]:
+        _, current_themes, _ = market_state(timestamp)
+        return {theme.name for theme in current_themes[:3] if theme.status in {"主线成立", "主线候选"}}
 
     trades: list[StrategyTrade] = []
     execution_stats = SimulationStats()
@@ -925,17 +940,12 @@ def simulate_variant(
     index = warmup_days
     while index < len(calendar) - hold_days - 1:
         cutoff = calendar[index]
-        current_klines = _market_slice(strategy_klines, cutoff)
-        snapshots = _snapshots(current_klines, a_instruments, symbol_to_themes)
-        themes = build_theme_snapshots(strategy_config, snapshots)
+        snapshots, themes, cross_status = market_state(cutoff)
         entry_gate = gate_level(cutoff)
         if entry_gate == "red":
             index += 1
             continue
 
-        hk_current = _market_slice(hk_klines, cutoff)
-        cross = build_cross_market_report(strategy_config, hk_current, hk_instruments, themes, snapshots)
-        cross_status = {item.theme: item.status for item in cross.themes}
         confirmed_themes = active_themes(cutoff) & active_themes(calendar[index - 1])
         entry_index = index + 1
         planned_positions = [item for item in planned_positions if item[0] > entry_index]
@@ -1421,7 +1431,9 @@ def run_strategy_backtest(
 
     variants: list[BacktestVariant] = []
     gate_cache: dict[int, str] = {}
-    theme_cache: dict[tuple[str, int], set[str]] = {}
+    theme_cache: dict[
+        tuple[str, int], tuple[dict[str, SymbolSnapshot], list[Any], dict[str, str]]
+    ] = {}
     for signal_mode in ("stock_basket", "etf_proxy"):
         for max_positions in (1, 2, 3):
             for hold_days in (10, 15, 20):

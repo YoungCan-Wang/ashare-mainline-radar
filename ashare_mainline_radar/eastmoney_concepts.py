@@ -33,6 +33,7 @@ def _preset(
     boards: list[dict[str, str]],
     per_board_cap: int = 4,
     max_symbols: int = 12,
+    vehicle_name_keywords: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -41,6 +42,7 @@ def _preset(
         "policy_keywords": policy_keywords,
         "seed_symbols": seed_symbols,
         "vehicles": vehicles,
+        "vehicle_name_keywords": vehicle_name_keywords or [],
         "boards": boards,
         "per_board_cap": per_board_cap,
         "max_symbols": max_symbols,
@@ -129,31 +131,52 @@ THEME_PRESETS: dict[str, dict[str, Any]] = {
             {"code": "BK1029", "name": "汽车整车", "kind": "concept"},
         ],
     ),
-    "电力电网": _preset(
-        "电力电网",
+    "电网设备": _preset(
+        "电网设备",
         valuation_style="cyclical",
-        keywords=["电力", "电网", "特高压", "变压器", "电力设备", "绿电", "用电"],
-        policy_keywords=["新型电力系统", "特高压", "电网改造", "电力保供", "能源安全", "智能电网"],
+        keywords=["电网", "特高压", "变压器", "电力设备", "配电网", "智能电网"],
+        policy_keywords=["新型电力系统", "特高压", "电网改造", "配电网", "智能电网"],
         seed_symbols=[
             "600406.SH",
             "600089.SH",
             "601179.SH",
             "000400.SZ",
-            "600875.SH",
             "002028.SZ",
             "600312.SH",
             "603606.SH",
             "600131.SH",
-            "002202.SZ",
-            "600577.SH",
             "601727.SH",
         ],
-        vehicles=["159611.SZ", "561560.SH"],
+        vehicles=[],
         boards=[
             {"code": "BK0918", "name": "特高压", "kind": "concept"},
             {"code": "BK1647", "name": "电网概念", "kind": "concept"},
-            {"code": "BK1024", "name": "绿色电力", "kind": "concept"},
             {"code": "BK0581", "name": "智能电网", "kind": "concept"},
+        ],
+    ),
+    "电力运营": _preset(
+        "电力运营",
+        valuation_style="income",
+        keywords=["电力运营", "发电", "水电", "火电", "核电", "绿电"],
+        policy_keywords=["电力保供", "电力市场化", "煤电", "绿色电力", "能源安全"],
+        seed_symbols=[
+            "600900.SH",
+            "600011.SH",
+            "600886.SH",
+            "600027.SH",
+            "601985.SH",
+            "003816.SZ",
+            "600795.SH",
+            "600642.SH",
+            "600674.SH",
+            "600025.SH",
+            "000543.SZ",
+            "000027.SZ",
+        ],
+        vehicles=["159611.SZ", "561560.SH"],
+        vehicle_name_keywords=["电力"],
+        boards=[
+            {"code": "BK1024", "name": "绿色电力", "kind": "concept"},
         ],
     ),
     "信创软件": _preset(
@@ -324,7 +347,8 @@ THEME_PRESETS: dict[str, dict[str, Any]] = {
             "300396.SZ",
             "002901.SZ",
         ],
-        vehicles=["159883.SZ", "562800.SH"],
+        vehicles=["159883.SZ"],
+        vehicle_name_keywords=["医疗器械"],
         boards=[
             {"code": "BK0668", "name": "医疗器械概念", "kind": "concept"},
             {"code": "BK1605", "name": "医疗设备", "kind": "industry"},
@@ -542,6 +566,7 @@ def offline_theme_from_preset(preset_name: str, *, as_of: str | None = None) -> 
         "policy_keywords": list(preset["policy_keywords"]),
         "symbols": seeds,
         "vehicles": list(preset.get("vehicles", [])),
+        "vehicle_name_keywords": list(preset.get("vehicle_name_keywords", [])),
         "source": f"eastmoney boards: {', '.join(board_labels)}; curated {source_date}",
     }
 
@@ -581,6 +606,7 @@ def build_theme_from_preset(
         "policy_keywords": list(preset["policy_keywords"]),
         "symbols": symbols,
         "vehicles": list(preset.get("vehicles", [])),
+        "vehicle_name_keywords": list(preset.get("vehicle_name_keywords", [])),
         "source": f"eastmoney boards: {', '.join(board_labels)}; curated {source_date}",
     }
 

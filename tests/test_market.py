@@ -1,5 +1,9 @@
-from ashare_mainline_radar.market import build_theme_snapshots, compute_symbol_snapshot
-from ashare_mainline_radar.models import KlineSeries
+from ashare_mainline_radar.market import (
+    build_theme_snapshots,
+    compute_symbol_snapshot,
+    normalize_symbol_scores,
+)
+from ashare_mainline_radar.models import KlineSeries, SymbolSnapshot
 
 
 def _series(symbol: str, start: float, step: float, amount_base: float = 100.0) -> KlineSeries:
@@ -80,3 +84,52 @@ def test_theme_scoring_symbols_keep_broad_candidates_out_of_breadth() -> None:
 
     assert themes[0].members == 2
     assert themes[0].breadth_20d == 1
+
+
+def _snapshot(symbol: str, score: float, ret_20d: float) -> SymbolSnapshot:
+    return SymbolSnapshot(
+        symbol=symbol,
+        name=symbol,
+        themes=[],
+        last_close=10,
+        ret_1d=0.01,
+        ret_5d=0.04,
+        ret_20d=ret_20d,
+        amount_ma5=120,
+        amount_ma20=100,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.02,
+        drawdown_20d=-0.02,
+        score=score,
+        status="突破观察",
+    )
+
+
+def test_symbol_scores_include_cross_sectional_percentile_without_saturating() -> None:
+    snapshots = {
+        "000001.SZ": _snapshot("000001.SZ", 100, 0.2),
+        "000002.SZ": _snapshot("000002.SZ", 80, 0.1),
+        "000003.SZ": _snapshot("000003.SZ", 60, 0.05),
+    }
+
+    normalize_symbol_scores(snapshots)
+
+    assert snapshots["000001.SZ"].relative_percentile == 100
+    assert snapshots["000001.SZ"].score < 100
+    assert snapshots["000003.SZ"].relative_percentile == 0
+
+
+def test_theme_score_penalizes_single_leader_concentration() -> None:
+    concentrated = {
+        "000001.SZ": _snapshot("000001.SZ", 90, 0.80),
+        "000002.SZ": _snapshot("000002.SZ", 80, 0.02),
+        "000003.SZ": _snapshot("000003.SZ", 80, 0.02),
+        "000004.SZ": _snapshot("000004.SZ", 80, 0.02),
+    }
+    themes = build_theme_snapshots(
+        {"themes": [{"name": "集中主题", "symbols": list(concentrated), "vehicles": []}]},
+        concentrated,
+    )
+
+    assert themes[0].leader_concentration is not None and themes[0].leader_concentration > 0.9
+    assert any("集中度扣分" in item for item in themes[0].evidence)

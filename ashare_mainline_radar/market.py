@@ -23,6 +23,52 @@ def _score_change(value: float | None, scale: float, neutral: float = 0.0) -> fl
     return _clip((value - neutral) / scale, -1.0, 1.5)
 
 
+def _percentile_ranks(values: list[float]) -> list[float]:
+    """Return tie-aware 0-100 percentile ranks without external dependencies."""
+    if not values:
+        return []
+    if len(values) == 1:
+        return [50.0]
+    ordered = sorted(enumerate(values), key=lambda item: item[1])
+    ranks = [0.0] * len(values)
+    cursor = 0
+    while cursor < len(ordered):
+        end = cursor + 1
+        while end < len(ordered) and ordered[end][1] == ordered[cursor][1]:
+            end += 1
+        average_position = (cursor + end - 1) / 2
+        percentile = average_position / (len(values) - 1) * 100
+        for index, _ in ordered[cursor:end]:
+            ranks[index] = percentile
+        cursor = end
+    return ranks
+
+
+def normalize_symbol_scores(snapshots: dict[str, SymbolSnapshot]) -> None:
+    """Blend absolute momentum with the live A-share cross-section.
+
+    Absolute thresholds retain interpretability while the percentile component
+    prevents a hot tape from turning most leaders into indistinguishable 100s.
+    """
+    eligible = [
+        item
+        for item in snapshots.values()
+        if item.symbol.endswith((".SH", ".SZ", ".BJ"))
+        and not any(token in item.name.upper() for token in ("ETF", "LOF", "REIT", "指数", "基金", "转债"))
+    ]
+    ranking_values = [
+        item.score
+        + (item.ret_20d or 0.0) * 0.01
+        + (item.ret_5d or 0.0) * 0.001
+        + (item.amount_ratio or 0.0) * 0.00001
+        for item in eligible
+    ]
+    ranks = _percentile_ranks(ranking_values)
+    for item, percentile in zip(eligible, ranks):
+        item.relative_percentile = round(percentile, 2)
+        item.score = round(_clip(item.score * 0.70 + percentile * 0.28, 0.0, 99.5), 2)
+
+
 def classify_symbol(
     ret_5d: float | None, ret_20d: float | None, amount_ratio: float | None, high_proximity: float | None
 ) -> str:
@@ -177,7 +223,14 @@ def build_theme_snapshots(
         score += min(6.0, catalyst_count * 1.2)
         score += min(8.0, policy_score * 0.08)
         score += _clip((mean([leader.score for leader in leaders[:3]]) - 60.0) / 10.0, -4.0, 6.0) if leaders else 0.0
-        score = round(_clip(score, 0.0, 100.0), 2)
+        score = round(_clip(score, 0.0, 99.5), 2)
+
+        positive_returns = [member.ret_20d for member in members if member.ret_20d is not None and member.ret_20d > 0]
+        leader_concentration = None
+        if positive_returns:
+            total_positive_return = sum(positive_returns)
+            if total_positive_return > 0:
+                leader_concentration = max(positive_returns) / total_positive_return
 
         evidence = [
             f"20日上涨成员 {len(positive_20d)}/{len(members)}",
@@ -225,8 +278,30 @@ def build_theme_snapshots(
                 avg_ret_60d=avg_ret_60d,
                 avg_range_position_60d=avg_range_position_60d,
                 valuation_style=str(theme.get("valuation_style", "balanced")),
+                leader_concentration=leader_concentration,
             )
         )
+
+    relative_ranks = _percentile_ranks([item.score for item in result])
+    for theme, percentile in zip(result, relative_ranks):
+        theme.relative_percentile = round(percentile, 2)
+        concentration_penalty = 0.0
+        if theme.members >= 4 and theme.leader_concentration is not None:
+            concentration_penalty = _clip((theme.leader_concentration - 0.35) * 20.0, 0.0, 8.0)
+        theme.score = round(_clip(theme.score * 0.90 + percentile * 0.10 - concentration_penalty, 0.0, 99.5), 2)
+        theme.status = classify_theme(theme.score, theme.breadth_20d, theme.amount_heat)
+        theme.price_phase, theme.crowding_score = _price_phase(
+            theme.status,
+            theme.avg_ret_60d,
+            theme.avg_range_position_60d,
+            theme.breadth_20d,
+            theme.amount_heat,
+        )
+        theme.evidence.append(f"横截面强度分位 {percentile:.0f}%")
+        if theme.leader_concentration is not None:
+            theme.evidence.append(f"最强成员占正收益贡献 {theme.leader_concentration * 100:.0f}%")
+        if concentration_penalty:
+            theme.evidence.append(f"单一龙头集中度扣分 {concentration_penalty:.1f}")
     return sorted(result, key=lambda item: item.score, reverse=True)
 
 

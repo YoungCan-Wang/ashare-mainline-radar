@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import theme_scoring_symbols, theme_symbol_map
-from .market import build_theme_snapshots, compute_symbol_snapshot
+from .market import build_theme_snapshots, compute_symbol_snapshot, normalize_symbol_scores
 from .models import (
     KlineSeries,
     SymbolSnapshot,
@@ -205,6 +205,7 @@ def _slice_series(series: KlineSeries, cutoff: int) -> KlineSeries | None:
         close=series.close[:end],
         volume=series.volume[:end],
         amount=series.amount[:end],
+        prev_close=series.prev_close[:end],
     )
 
 
@@ -246,6 +247,7 @@ def build_theme_lifecycle_report(
             )
             if snapshot:
                 snapshots[symbol] = snapshot
+        normalize_symbol_scores(snapshots)
         date = cn_market_date_from_ms(cutoff)
         if date is None:
             continue

@@ -27,12 +27,12 @@ def _series(dates: list[str]) -> KlineSeries:
 
 
 def test_point_in_time_kline_clip_excludes_future_days() -> None:
-    clipped = _clip_klines_as_of(
-        _series(["2026-06-26", "2026-06-29", "2026-06-30"]),
-        _parse_as_of("2026-06-29"),
-    )
+    series = _series(["2026-06-26", "2026-06-29", "2026-06-30"])
+    series.prev_close = [9.0, 10.0, 11.0]
+    clipped = _clip_klines_as_of(series, _parse_as_of("2026-06-29"))
 
     assert len(clipped.close) == 2
+    assert clipped.prev_close == [9.0, 10.0]
     assert cn_market_date_from_ms(clipped.last_timestamp) == "2026-06-29"
 
 

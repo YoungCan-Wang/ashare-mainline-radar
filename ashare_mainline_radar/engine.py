@@ -5,13 +5,26 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 from .accumulation import build_accumulation_report
-from .config import configured_symbols, theme_keywords, theme_policy_keywords, theme_symbol_map
+from .config import (
+    configured_symbols,
+    sanitize_theme_config_instruments,
+    theme_keywords,
+    theme_policy_keywords,
+    theme_symbol_map,
+)
 from .cross_market import build_cross_market_report, cross_market_symbols
+from .discovery import build_unmapped_strength_report
 from .expectations import apply_expectation_overlay, build_expectation_gap_report
 from .fundamentals import apply_fundamental_overlay, apply_theme_fundamental_overlay, build_fundamental_report
 from .golden_pit import build_golden_pit_report
 from .intelligence import collect_intelligence_with_status, intel_match_index
-from .market import build_leader_tape, build_theme_snapshots, catalyst_counts, compute_symbol_snapshot
+from .market import (
+    build_leader_tape,
+    build_theme_snapshots,
+    catalyst_counts,
+    compute_symbol_snapshot,
+    normalize_symbol_scores,
+)
 from .market_context import build_market_pulses
 from .market_structure import build_market_structure
 from .models import (
@@ -60,7 +73,7 @@ def _deterministic_cap(symbols: list[str], max_symbols: int, required: list[str]
 
 
 def _company_symbol(symbol: str, instrument: dict[str, Any] | None) -> bool:
-    if not (symbol.endswith(".SH") or symbol.endswith(".SZ")):
+    if not symbol.endswith((".SH", ".SZ", ".BJ")):
         return False
     name = str((instrument or {}).get("name") or "").upper()
     return not any(token in name for token in ("ETF", "LOF", "REIT", "指数", "基金", "转债"))
@@ -107,6 +120,7 @@ def _clip_klines_as_of(
         close=selected(series.close),
         volume=selected(series.volume),
         amount=selected(series.amount),
+        prev_close=selected(series.prev_close),
     )
 
 
@@ -167,11 +181,15 @@ class MainlineRadar:
     ) -> RadarReport:
         as_of_date = _parse_as_of(as_of)
         universe_id, symbols = self._symbols_for_mode(mode, max_symbols)
-        symbol_to_themes = theme_symbol_map(self.theme_config)
         keywords = theme_keywords(self.theme_config)
         policy_keywords = theme_policy_keywords(self.theme_config)
 
         instruments = self.client.get_instruments(symbols)
+        runtime_theme_config, theme_config_warnings = sanitize_theme_config_instruments(
+            self.theme_config,
+            instruments,
+        )
+        symbol_to_themes = theme_symbol_map(runtime_theme_config)
         klines = self.client.get_klines_batch(symbols, period=period, count=lookback_days, adjust=adjust)
         klines = {symbol: _clip_klines_as_of(series, as_of_date) for symbol, series in klines.items()}
         klines = {symbol: series for symbol, series in klines.items() if series.usable}
@@ -238,6 +256,13 @@ class MainlineRadar:
                 items=len(hk_klines),
                 message=hk_message,
             ),
+            DataSourceStatus(
+                name="Theme vehicle validation",
+                kind="configuration",
+                status="degraded" if theme_config_warnings else "ok",
+                items=sum(len(theme.get("vehicles", [])) for theme in runtime_theme_config.get("themes", [])),
+                message="; ".join(theme_config_warnings[:3]) if theme_config_warnings else "all configured vehicles matched live names",
+            ),
         ]
         last_timestamps = [series.last_timestamp for series in klines.values() if series.last_timestamp is not None]
         data_as_of = None
@@ -254,6 +279,8 @@ class MainlineRadar:
             )
             if snapshot:
                 snapshots[symbol] = snapshot
+        normalize_symbol_scores(snapshots)
+        unmapped_strength = build_unmapped_strength_report(snapshots, instruments, mode)
 
         intel_items, intel_statuses = collect_intelligence_with_status(self.intel_config, keywords)
         unfiltered_intel_count = len(intel_items)
@@ -273,30 +300,30 @@ class MainlineRadar:
         non_policy_intel_items = [item for item in intel_items if not is_policy_item(item)]
         catalyst_count_by_theme = catalyst_counts(intel_match_index(non_policy_intel_items))
         themes = build_theme_snapshots(
-            self.theme_config,
+            runtime_theme_config,
             snapshots,
             catalyst_count_by_theme,
             policy_counts_by_theme=policy_counts_by_theme(intel_items, policy_keywords),
             policy_scores_by_theme=policy_scores_by_theme(intel_items, policy_keywords),
         )
         cross_market = build_cross_market_report(
-            self.theme_config,
+            runtime_theme_config,
             hk_klines,
             hk_instruments,
             themes,
             snapshots,
         )
         theme_lifecycle = build_theme_lifecycle_report(
-            theme_config=self.theme_config,
+            theme_config=runtime_theme_config,
             klines=klines,
             instruments=instruments,
             current_themes=themes,
         )
         policy_signals = build_policy_signal_report(intel_items, themes, policy_keywords)
         leader_tape = build_leader_tape(snapshots, limit=leader_limit)
-        market_pulses = build_market_pulses(self.theme_config, snapshots)
-        market_structure = build_market_structure(self.theme_config, klines)
-        trading_gate = build_trading_gate(self.theme_config, snapshots, market_pulses, market_structure)
+        market_pulses = build_market_pulses(runtime_theme_config, snapshots)
+        market_structure = build_market_structure(runtime_theme_config, klines)
+        trading_gate = build_trading_gate(runtime_theme_config, snapshots, market_pulses, market_structure)
         apply_theme_independence(theme_lifecycle, themes, trading_gate)
         monthly_bases = build_monthly_base_report(
             monthly_klines=monthly_klines,
@@ -306,7 +333,7 @@ class MainlineRadar:
             gate=trading_gate,
         )
         strong_stocks = build_strong_stock_report(
-            theme_config=self.theme_config,
+            theme_config=runtime_theme_config,
             snapshots=snapshots,
             klines=klines,
             themes=themes,
@@ -398,11 +425,12 @@ class MainlineRadar:
             themes=themes,
         )
 
-        market_symbols = [str(item["symbol"]) for item in self.theme_config.get("market_watchlist", [])]
+        market_symbols = [str(item["symbol"]) for item in runtime_theme_config.get("market_watchlist", [])]
         market_watchlist = [snapshots[symbol] for symbol in market_symbols if symbol in snapshots]
         warnings = [
             "本报告只用于研究和交易准备，不构成投资建议。",
-            "v0.1 的主题归因主要来自配置文件，未配置题材可能只出现在全市场强势带里。",
+            "预设主题与全市场未映射强势方向并行展示；自动发现项需人工确认归因后才能升级为可交易主线。",
+            *theme_config_warnings,
         ]
         if self.client.api_key:
             warnings.append("当前使用 TickFlow 完整 API；实时/分钟线能力仍取决于账号权限和本报告配置。")
@@ -439,4 +467,5 @@ class MainlineRadar:
             monthly_bases=monthly_bases,
             theme_lifecycle=theme_lifecycle,
             cross_market=cross_market,
+            unmapped_strength=unmapped_strength,
         )

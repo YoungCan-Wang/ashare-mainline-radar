@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,44 @@ def resolve_project_path(path: str | Path, base: Path = PROJECT_ROOT) -> Path:
     if candidate.is_absolute():
         return candidate
     return base / candidate
+
+
+def sanitize_theme_config_instruments(
+    theme_config: dict[str, Any],
+    instruments: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    """Remove definitively mis-mapped theme vehicles using live instrument names.
+
+    Theme members are curated manually, so an ETF ticker reuse or a typo can
+    contaminate both breadth and momentum.  Validation is opt-in per theme via
+    ``vehicle_name_keywords`` and deliberately keeps vehicles whose metadata is
+    unavailable; only a confirmed name mismatch is excluded.
+    """
+
+    sanitized = deepcopy(theme_config)
+    warnings: list[str] = []
+    for theme in sanitized.get("themes", []):
+        expected = [str(keyword).strip().lower() for keyword in theme.get("vehicle_name_keywords", []) if keyword]
+        if not expected:
+            continue
+        valid_vehicles: list[str] = []
+        for raw_symbol in theme.get("vehicles", []):
+            symbol = str(raw_symbol)
+            instrument = instruments.get(symbol)
+            if not instrument:
+                valid_vehicles.append(symbol)
+                warnings.append(f"{theme['name']} 载体 {symbol} 缺少标的元数据，暂时保留并降级校验")
+                continue
+            name = str(instrument.get("name") or symbol)
+            normalized_name = name.lower()
+            if any(keyword in normalized_name for keyword in expected):
+                valid_vehicles.append(symbol)
+                continue
+            warnings.append(
+                f"{theme['name']} 载体 {symbol}（{name}）与预期关键词不符，已从本次主题评分和候选中剔除"
+            )
+        theme["vehicles"] = valid_vehicles
+    return sanitized, warnings
 
 
 def theme_symbol_map(theme_config: dict[str, Any]) -> dict[str, list[str]]:

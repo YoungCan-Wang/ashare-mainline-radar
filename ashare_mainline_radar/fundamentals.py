@@ -197,6 +197,8 @@ def apply_fundamental_overlay(
     for candidate in strong_stocks.candidates:
         item = by_symbol.get(candidate.symbol)
         if item is None:
+            candidate.score = round(_clip(candidate.score - 5.0, 0.0, 100.0), 2)
+            candidate.reasons.append("核心财务指标未覆盖，候选强度下调5分并仅作等待确认")
             continue
         candidate.fundamental_score = item.score
         candidate.fundamental_status = item.status
@@ -212,6 +214,8 @@ def apply_fundamental_overlay(
     for candidate in accumulation.candidates:
         item = by_symbol.get(candidate.symbol)
         if item is None:
+            candidate.score = round(_clip(candidate.score - 4.0, 0.0, 100.0), 2)
+            candidate.reasons.append("核心财务指标未覆盖，低位候选下调4分")
             continue
         candidate.fundamental_score = item.score
         candidate.fundamental_status = item.status

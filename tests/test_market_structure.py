@@ -42,4 +42,5 @@ def test_single_break_reclaimed_is_watch_not_confirmed_breakdown() -> None:
     structure = build_market_structure(_config(), klines)
 
     assert structure.status != "破位确认"
+    assert structure.status != "破位观察"
     assert structure.confirmed_breakdown_ratio == 0

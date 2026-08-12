@@ -147,9 +147,11 @@ def _snapshot_passes_current_strength(snapshot: SymbolSnapshot) -> bool:
 def _candidate_score(snapshot: SymbolSnapshot, theme: ThemeSnapshot, backtest: BacktestSummary) -> float:
     score = snapshot.score * 0.62 + theme.score * 0.23
     if backtest.win_rate is not None:
-        score += backtest.win_rate * 8.0
+        sample_weight = min(1.0, backtest.signals / 5.0)
+        score += (backtest.win_rate - 0.5) * 16.0 * sample_weight + 4.0
     if backtest.avg_return is not None:
-        score += max(-5.0, min(8.0, backtest.avg_return / 0.06 * 8.0))
+        sample_weight = min(1.0, backtest.signals / 5.0)
+        score += max(-5.0, min(8.0, backtest.avg_return / 0.06 * 8.0)) * sample_weight
     if backtest.signals >= 3:
         score += 3.0
     return round(max(0.0, min(100.0, score)), 2)

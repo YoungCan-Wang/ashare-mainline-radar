@@ -59,7 +59,7 @@ def _index_signal(series: KlineSeries) -> dict[str, bool | float] | None:
         rolling = _rolling_ma(close, idx, 20)
         below_ma20.append(bool(rolling is not None and close[idx] < rolling))
     confirmed_breakdown = all(below_ma20)
-    false_break_watch = not below_ma20[-1] and any(below_ma20[:-1])
+    false_break_reclaim = not below_ma20[-1] and any(below_ma20[:-1])
     return {
         "above_ma5": close[-1] > ma5,
         "above_ma20": close[-1] > ma20,
@@ -67,7 +67,7 @@ def _index_signal(series: KlineSeries) -> dict[str, bool | float] | None:
         "volume_confirmation": volume_confirmation,
         "higher_structure": higher_structure,
         "confirmed_breakdown": confirmed_breakdown,
-        "false_break_watch": false_break_watch,
+        "false_break_reclaim": false_break_reclaim,
         "amount_ratio": amount_ratio,
     }
 
@@ -99,24 +99,25 @@ def build_market_structure(theme_config: dict[str, Any], klines: dict[str, Kline
     volume = _ratio([bool(item["volume_confirmation"]) for item in signals])
     higher = _ratio([bool(item["higher_structure"]) for item in signals])
     breakdown = _ratio([bool(item["confirmed_breakdown"]) for item in signals])
-    false_break = _ratio([bool(item["false_break_watch"]) for item in signals])
+    false_break = _ratio([bool(item["false_break_reclaim"]) for item in signals])
     score = 20.0
     score += 15.0 * (above_ma5 or 0.0)
     score += 20.0 * (above_ma20 or 0.0)
     score += 18.0 * (alignment or 0.0)
     score += 17.0 * (volume or 0.0)
     score += 15.0 * (higher or 0.0)
+    score += 8.0 * (false_break or 0.0)
     score -= 25.0 * (breakdown or 0.0)
     score = round(max(0.0, min(100.0, score)), 2)
 
     if breakdown is not None and breakdown >= 2 / 3:
         status = "破位确认"
-    elif false_break is not None and false_break >= 1 / 3:
-        status = "破位观察"
     elif volume is not None and higher is not None and alignment is not None and volume >= 2 / 3 and higher >= 2 / 3 and alignment >= 2 / 3:
         status = "右侧确认"
     elif above_ma20 is not None and alignment is not None and higher is not None and above_ma20 >= 2 / 3 and alignment >= 2 / 3 and higher >= 2 / 3:
         status = "上升趋势"
+    elif false_break is not None and above_ma20 is not None and false_break >= 2 / 3 and above_ma20 >= 2 / 3:
+        status = "假跌破收复"
     elif above_ma5 is not None and above_ma20 is not None and above_ma5 <= 1 / 3 and above_ma20 <= 1 / 3:
         status = "底部未确认"
     else:
@@ -129,6 +130,7 @@ def build_market_structure(theme_config: dict[str, Any], klines: dict[str, Kline
         f"持续量价确认指数 {volume * 100:.0f}%" if volume is not None else "成交数据不足",
         f"高点/低点同步抬高指数 {higher * 100:.0f}%" if higher is not None else "结构数据不足",
         f"连续3日跌破20日线指数 {breakdown * 100:.0f}%" if breakdown is not None else "破位数据不足",
+        f"跌破后收复20日线指数 {false_break * 100:.0f}%" if false_break is not None else "收复数据不足",
     ]
     return MarketStructure(
         status=status,

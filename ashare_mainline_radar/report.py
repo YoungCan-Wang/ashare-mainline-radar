@@ -57,6 +57,7 @@ def _theme_row(rank: int, theme: ThemeSnapshot) -> str:
         f"| {rank} | {theme.name} | {theme.status} | {theme.score:.1f} | {theme.members} | "
         f"{pct(theme.avg_ret_5d)} | {pct(theme.avg_ret_20d)} | {_ratio(theme.amount_heat)} | "
         f"{pct(theme.breadth_20d)} | {theme.price_phase} | {_fmt(theme.crowding_score, 1)} | "
+        f"{_fmt(theme.relative_percentile, 0)}% | {pct(theme.leader_concentration)} | "
         f"{theme.catalyst_count} | {theme.policy_catalyst_count} | {theme.policy_score:.1f} | {vehicles} |"
     )
 
@@ -228,13 +229,26 @@ def render_markdown(report: RadarReport) -> str:
     lines.append("## 主线排序")
     lines.append("")
     lines.append(
-        "| 排名 | 主线 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 价格阶段 | 拥挤代理 | 新闻/研报催化 | 政策条数 | 政策分 | 参与载体 |"
+        "| 排名 | 主线 | 状态 | 强度 | 成员 | 5日均涨幅 | 20日均涨幅 | 成交热度 | 20日广度 | 价格阶段 | 拥挤代理 | 横截面分位 | 龙头集中度 | 新闻/研报催化 | 政策条数 | 政策分 | 参与载体 |"
     )
     lines.append(
-        "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |"
+        "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
     )
     for rank, theme in enumerate(report.themes[:12], start=1):
         lines.append(_theme_row(rank, theme))
+    lines.append("")
+
+    lines.append("## 未映射强势发现")
+    lines.append("")
+    lines.append(f"本次检查未映射公司 {report.unmapped_strength.scanned_unmapped} 只；这里只做发现，不自动升级成主线。")
+    lines.append("")
+    if report.unmapped_strength.candidates:
+        lines.extend(_leader_table(report.unmapped_strength.candidates))
+    else:
+        lines.append("- 当前没有同时通过相对强度、趋势、量能和高点距离约束的未映射候选。")
+    lines.append("")
+    for note in report.unmapped_strength.notes:
+        lines.append(f"- {note}")
     lines.append("")
 
     lines.append("## 主线生命周期预警")

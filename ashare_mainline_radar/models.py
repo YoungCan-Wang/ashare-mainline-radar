@@ -40,6 +40,7 @@ class KlineSeries:
     close: list[float]
     volume: list[float]
     amount: list[float]
+    prev_close: list[float] = field(default_factory=list)
 
     @classmethod
     def from_compact(cls, symbol: str, payload: dict[str, Any]) -> KlineSeries:
@@ -52,6 +53,7 @@ class KlineSeries:
             close=[float(x) for x in payload.get("close") or []],
             volume=[float(x) for x in payload.get("volume") or []],
             amount=[float(x) for x in payload.get("amount") or []],
+            prev_close=[float(x) for x in payload.get("prev_close") or []],
         )
 
     @property
@@ -81,6 +83,7 @@ class SymbolSnapshot:
     status: str
     ret_60d: float | None = None
     range_position_60d: float | None = None
+    relative_percentile: float | None = None
 
 
 @dataclass
@@ -447,6 +450,15 @@ class ThemeSnapshot:
     fundamental_coverage: float | None = None
     fundamental_confirmed_ratio: float | None = None
     valuation_style: str = "balanced"
+    relative_percentile: float | None = None
+    leader_concentration: float | None = None
+
+
+@dataclass
+class UnmappedStrengthReport:
+    candidates: list[SymbolSnapshot]
+    scanned_unmapped: int
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -552,6 +564,9 @@ class RadarReport:
         default_factory=lambda: ThemeLifecycleReport(signals=[], history_days=0)
     )
     cross_market: CrossMarketReport = field(default_factory=lambda: CrossMarketReport(themes=[], ah_pairs=[]))
+    unmapped_strength: UnmappedStrengthReport = field(
+        default_factory=lambda: UnmappedStrengthReport(candidates=[], scanned_unmapped=0)
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

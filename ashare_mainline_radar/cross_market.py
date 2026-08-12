@@ -50,6 +50,7 @@ def _with_liquidity_proxy(series: KlineSeries) -> KlineSeries:
         close=series.close,
         volume=series.volume,
         amount=series.volume,
+        prev_close=series.prev_close,
     )
 
 
