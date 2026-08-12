@@ -21,7 +21,6 @@ export const SummaryStrip = memo(function SummaryStrip({ run, themes, symbols }:
   const topTheme = themes[0];
   const marketStructure = run.summary?.market_structure;
   const nextBuyCount = symbols.filter((row) => row.roles?.includes("next_buy")).length;
-  const unmappedPullbackCount = symbols.filter((row) => row.roles?.includes("unmapped_pullback")).length;
   const goldenPitCount = symbols.filter((row) => row.roles?.includes("golden_pit")).length;
   const gateHeroClass = GATE_HERO_CLASS[run.gate_level ?? ""] ?? "gate-neutral";
   const gateReason = run.summary?.gate_reasons?.[0];
@@ -56,7 +55,7 @@ export const SummaryStrip = memo(function SummaryStrip({ run, themes, symbols }:
         <span className="summary-label">作战标的</span>
         <strong className="summary-value">{symbols.length} 只</strong>
         <span className="summary-meta">
-          建仓 {nextBuyCount} · 未映射回踩 {unmappedPullbackCount} · 黄金坑 {goldenPitCount}
+          建仓 {nextBuyCount} · 黄金坑 {goldenPitCount}
         </span>
       </div>
     </section>

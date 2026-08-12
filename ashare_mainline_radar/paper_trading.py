@@ -337,7 +337,7 @@ def refresh_paper_trades(
             if plan.get("theme_exit_days") is not None
             else PRODUCTION_PAPER_STRATEGY.theme_exit_days
         )
-        uses_theme_exit = theme_exit_days > 0 and str(plan.get("source_role") or "") != "unmapped_pullback"
+        uses_theme_exit = theme_exit_days > 0
         if str(plan.get("last_evaluated_date") or "") != latest_date:
             if uses_theme_exit:
                 inactive_days = 0 if str(plan["theme"]) in active_themes else int(plan.get("inactive_theme_days") or 0) + 1

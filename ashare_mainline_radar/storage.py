@@ -14,7 +14,6 @@ from .supabase_rest import fetch_rows, upsert_rows
 SCHEMA_VERSION = "radar-storage-v3"
 ROLE_ORDER = (
     "next_buy",
-    "unmapped_pullback",
     "strong_stock",
     "golden_pit",
     "accumulation",
@@ -23,7 +22,9 @@ ROLE_ORDER = (
     "leader_tape",
     "market_watchlist",
 )
-ACTIONABLE_ROLES = ROLE_ORDER[:7]
+# Persist only theme/next_buy and related actionable roles. unmapped_pullback stays
+# in the daily report artifact (JSON/MD/Feishu) and is not tracked in Supabase.
+ACTIONABLE_ROLES = ROLE_ORDER[:6]
 
 
 @dataclass(frozen=True)
@@ -65,18 +66,8 @@ def _candidate_sections(report: dict[str, Any]) -> list[tuple[str, list[dict[str
     for group in _list(next_buy.get("by_theme")):
         next_candidates.extend(item for item in _list(_dict(group).get("plans")) if isinstance(item, dict))
 
-    unmapped_pullback = _dict(report.get("unmapped_pullback"))
-    unmapped_candidates = [
-        item
-        for item in [
-            *_list(unmapped_pullback.get("buyable_now")),
-            *_list(unmapped_pullback.get("candidates")),
-        ]
-        if isinstance(item, dict)
-    ]
     return [
         ("next_buy", next_candidates),
-        ("unmapped_pullback", unmapped_candidates),
         ("strong_stock", _list(_dict(report.get("strong_stocks")).get("candidates"))),
         ("golden_pit", _list(_dict(report.get("golden_pits")).get("candidates"))),
         ("accumulation", _list(_dict(report.get("accumulation")).get("candidates"))),
@@ -92,9 +83,6 @@ def _paper_trade_records(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     next_buy = _dict(report.get("next_buy"))
     candidates = [next_buy.get("primary"), *_list(next_buy.get("alternatives"))]
-    for item in _list(_dict(report.get("unmapped_pullback")).get("buyable_now")):
-        if isinstance(item, dict):
-            candidates.append(item)
     plans: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     required = (
@@ -116,8 +104,6 @@ def _paper_trade_records(
         if symbol in seen_symbols:
             continue
         seen_symbols.add(symbol)
-        is_unmapped = str(candidate.get("theme")) == "未映射强势"
-        source_role = "unmapped_pullback" if is_unmapped else "next_buy"
         for strategy in PAPER_STRATEGIES:
             plan_key = f"{market_date}:{symbol}:{strategy.version}"
             plans.append(
@@ -141,9 +127,9 @@ def _paper_trade_records(
                     "initial_position_fraction": candidate.get("initial_position_fraction") or (1 / 12),
                     "strategy_version": strategy.version,
                     "strategy_label": strategy.label,
-                    "theme_exit_days": 0 if is_unmapped else strategy.theme_exit_days,
+                    "theme_exit_days": strategy.theme_exit_days,
                     "is_shadow": strategy.is_shadow,
-                    "source_role": source_role,
+                    "source_role": "next_buy",
                     "created_at": generated_at,
                     "updated_at": generated_at,
                 }
@@ -161,8 +147,7 @@ def _paper_trade_records(
                         "decision": candidate.get("decision"),
                         "entry_plan": candidate.get("entry_plan"),
                         "strategy_label": strategy.label,
-                        "source_role": source_role,
-                        "style_tag": candidate.get("style_tag"),
+                        "source_role": "next_buy",
                     },
                     "created_at": generated_at,
                 }
@@ -195,9 +180,6 @@ def _trade_plan(candidate: dict[str, Any]) -> dict[str, Any]:
         "invalidation",
         "position_note",
         "action",
-        "gate_action",
-        "style_tag",
-        "buyable_now",
         "lifecycle_stage",
         "independence_status",
         "execution_status",

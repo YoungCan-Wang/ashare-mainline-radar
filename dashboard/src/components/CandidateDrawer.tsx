@@ -84,8 +84,6 @@ export function CandidateDrawer({ candidate, onClose }: CandidateDrawerProps) {
               <h3>交易计划</h3>
               <dl className="detail-list">
                 <div className="detail-row"><dt>所属主线</dt><dd>{candidate?.primary_theme ?? candidate?.themes?.join("、") ?? "未映射"}</dd></div>
-                <div className="detail-row"><dt>风格标签</dt><dd>{plan?.style_tag ?? candidate?.signal_payload?.unmapped_pullback?.style_tag ?? "--"}</dd></div>
-                <div className="detail-row"><dt>闸门动作</dt><dd>{plan?.gate_action ?? "--"}</dd></div>
                 <div className="detail-row"><dt>首次入选</dt><dd>{formatDateTime(candidate?.first_selected_at)} · {formatPrice(candidate?.first_selected_price)}</dd></div>
                 <div className="detail-row"><dt>模拟状态</dt><dd>{paperStatus}</dd></div>
                 <div className="detail-row"><dt>冻结影子</dt><dd>{shadowStatus}{shadowPlan?.status === "open" || shadowPlan?.status === "closed" ? ` · ${formatSignedPercent(shadowPlan.net_return)}` : ""}</dd></div>

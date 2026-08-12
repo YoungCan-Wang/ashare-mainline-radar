@@ -119,6 +119,15 @@ def build_feishu_text(report: RadarReport) -> str:
                     f"- {group.theme}｜{group.theme_status}｜{group.lifecycle_stage}｜"
                     f"{group.independence_status}｜{names}"
                 )
+    if report.unmapped_pullback.candidates:
+        lines.append("")
+        lines.append("未映射相对强度回踩（研究准备）：")
+        for item in (report.unmapped_pullback.buyable_now or report.unmapped_pullback.candidates)[:3]:
+            status = "可买" if item.buyable_now else "观察"
+            lines.append(
+                f"- {item.name} {item.symbol}｜{status}｜{item.style_tag}｜{item.decision}｜"
+                f"优先级 {item.priority_score:.1f}"
+            )
     target_estimates = report.target_prices.estimates if report.target_prices else []
     if target_estimates:
         lines.append("")
@@ -297,6 +306,10 @@ def report_hold_days(candidate: StrongStockCandidate | None) -> int:
 
 def _div(content: str) -> dict[str, Any]:
     return {"tag": "markdown", "content": content}
+
+
+def _fmt_price(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2f}"
 
 
 def _gate_section(report: RadarReport) -> dict[str, Any]:
@@ -488,6 +501,26 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
             )
     else:
         elements.append(_div("暂无等待候选。"))
+
+    unmapped = report.unmapped_pullback
+    if unmapped.candidates:
+        lines = [
+            "<font color='grey'>**未映射相对强度回踩**</font>（研究准备，可从日报 JSON/MD 复核；不写入跟踪库）",
+            f"扫描 {unmapped.scanned} 只｜可买 {len(unmapped.buyable_now)}｜观察 {max(0, len(unmapped.candidates) - len(unmapped.buyable_now))}",
+        ]
+        for item in (unmapped.buyable_now or unmapped.candidates)[:3]:
+            zone = (
+                f"{item.entry_zone_low:.2f}-{item.entry_zone_high:.2f}"
+                if item.entry_zone_low is not None and item.entry_zone_high is not None
+                else "n/a"
+            )
+            status = "可买" if item.buyable_now else "观察"
+            lines.append(
+                f"**{item.name} `{item.symbol}`**｜{status}｜{item.style_tag}｜优先级 {item.priority_score:.0f}\n"
+                f"{item.decision}｜买入区 {zone}｜确认 {_fmt_price(item.confirm_price)}｜止损 {_fmt_price(item.stop_price)}\n"
+                f"{item.gate_action}"
+            )
+        elements.extend([{"tag": "hr"}, _div("\n\n".join(lines))])
 
     golden_pits = report.golden_pits.candidates[:3]
     if golden_pits:

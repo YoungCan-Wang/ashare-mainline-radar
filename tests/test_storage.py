@@ -68,20 +68,10 @@ def _report() -> dict:
                     "decision": "未映射回踩确认，可小仓试错",
                     "priority_score": 81.0,
                     "last_close": 12.0,
-                    "entry_plan": "回踩区确认后首笔",
-                    "invalidation": "跌破止损",
-                    "position_note": "试错仓",
-                    "gate_action": "允许寻找买点",
-                    "execution_status": "watching",
-                    "entry_mode": "pullback_close_reclaim",
                     "entry_zone_low": 11.4,
                     "entry_zone_high": 11.8,
                     "confirm_price": 12.1,
                     "stop_price": 11.0,
-                    "valid_for_days": 5,
-                    "max_hold_days": 15,
-                    "max_position_fraction": 0.12,
-                    "initial_position_fraction": 0.04,
                 }
             ],
             "buyable_now": [
@@ -89,25 +79,12 @@ def _report() -> dict:
                     "symbol": "600000.SH",
                     "name": "未映射回踩样例",
                     "theme": "未映射强势",
-                    "style_tag": "pullback_reclaim",
                     "buyable_now": True,
-                    "decision": "未映射回踩确认，可小仓试错",
-                    "priority_score": 81.0,
                     "last_close": 12.0,
-                    "entry_plan": "回踩区确认后首笔",
-                    "invalidation": "跌破止损",
-                    "position_note": "试错仓",
-                    "gate_action": "允许寻找买点",
-                    "execution_status": "watching",
-                    "entry_mode": "pullback_close_reclaim",
                     "entry_zone_low": 11.4,
                     "entry_zone_high": 11.8,
                     "confirm_price": 12.1,
                     "stop_price": 11.0,
-                    "valid_for_days": 5,
-                    "max_hold_days": 15,
-                    "max_position_fraction": 0.12,
-                    "initial_position_fraction": 0.04,
                 }
             ],
             "scanned": 1,
@@ -142,7 +119,7 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     assert bundle["run"]["run_key"] == "cn:2026-07-17:universe:CN_Equity_A"
     assert bundle["themes"][0]["lifecycle_stage"] == "主升加速"
     assert bundle["run"]["summary"]["price_limit_watch"]["closed_limit_up"] == 2
-    assert len(bundle["symbols"]) == 2
+    assert len(bundle["symbols"]) == 1
     by_symbol = {item["symbol"]: item for item in bundle["symbols"]}
     symbol = by_symbol["300122.SZ"]
     assert symbol["roles"] == ["next_buy", "strong_stock"]
@@ -150,19 +127,16 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     assert symbol["trade_plan"]["entry_plan"] == "回踩不破后分批"
     assert symbol["fundamental_payload"]["status"] == "基本面兑现"
     assert symbol["target_payload"]["target_high"] == 45.0
-    unmapped = by_symbol["600000.SH"]
-    assert unmapped["roles"] == ["unmapped_pullback"]
-    assert unmapped["trade_plan"]["style_tag"] == "pullback_reclaim"
-    assert unmapped["trade_plan"]["gate_action"] == "允许寻找买点"
-    assert len(bundle["trade_plans"]) == 4
+    assert "600000.SH" not in by_symbol
+    assert "unmapped_pullback" not in bundle["tracking_policy"]["selection_roles"]
+    assert len(bundle["trade_plans"]) == 2
     next_buy_plans = [item for item in bundle["trade_plans"] if item["symbol"] == "300122.SZ"]
-    unmapped_plans = [item for item in bundle["trade_plans"] if item["symbol"] == "600000.SH"]
     assert next_buy_plans[0]["plan_key"] == "2026-07-17:300122.SZ:mainline-v1-theme-exit-2d"
     assert next_buy_plans[0]["theme_exit_days"] == 2
+    assert next_buy_plans[0]["source_role"] == "next_buy"
     assert next_buy_plans[1]["is_shadow"] is True
     assert next_buy_plans[1]["theme_exit_days"] == 3
-    assert unmapped_plans[0]["theme_exit_days"] == 0
-    assert unmapped_plans[0]["source_role"] == "unmapped_pullback"
+    assert all(item["source_role"] != "unmapped_pullback" for item in bundle["trade_plans"])
     assert bundle["trade_events"][0]["event_type"] == "created"
 
 
@@ -170,7 +144,7 @@ def test_artifact_backend_writes_portable_bundle_and_status(tmp_path) -> None:
     status = persist_report(_report(), tmp_path, backend="artifact")
 
     assert status.status == "deferred"
-    assert status.symbol_records == 2
+    assert status.symbol_records == 1
     bundle = json.loads((tmp_path / "storage_bundle.json").read_text(encoding="utf-8"))
     persisted_status = json.loads((tmp_path / "storage_status.json").read_text(encoding="utf-8"))
     assert bundle["schema_version"] == "radar-storage-v3"
@@ -270,7 +244,8 @@ def test_existing_production_plan_does_not_block_shadow_plan(tmp_path) -> None:
     assert ("300122.SZ", "mainline-v2-theme-exit-3d-frozen-20260718") in {
         (plan["symbol"], plan["strategy_version"]) for plan in plans
     }
-    assert any(plan["symbol"] == "600000.SH" and plan["source_role"] == "unmapped_pullback" for plan in plans)
+    assert all(plan["symbol"] != "600000.SH" for plan in plans)
+    assert all(plan.get("source_role") != "unmapped_pullback" for plan in plans)
 
     event_request = next(
         request
