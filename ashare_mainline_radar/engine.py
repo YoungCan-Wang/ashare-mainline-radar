@@ -51,6 +51,7 @@ from .strong_stocks import build_strong_stock_report
 from .target_prices import build_target_price_report
 from .theme_lifecycle import apply_theme_independence, build_theme_lifecycle_report
 from .tickflow import TickFlowClient, TickFlowError
+from .unmapped_pullback import build_unmapped_pullback_report, pullback_symbols_for_fundamentals
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -358,6 +359,7 @@ class MainlineRadar:
             [item.symbol for item in strong_stocks.candidates]
             + [item.symbol for item in accumulation.candidates]
             + [item.symbol for item in preliminary_golden_pits.candidates]
+            + pullback_symbols_for_fundamentals(unmapped_strength, snapshots, instruments)
             + [
                 symbol
                 for symbol in symbol_to_themes
@@ -419,6 +421,14 @@ class MainlineRadar:
             trading_gate,
             theme_lifecycle=theme_lifecycle,
         )
+        unmapped_pullback = build_unmapped_pullback_report(
+            snapshots=snapshots,
+            klines=klines,
+            instruments=instruments,
+            trading_gate=trading_gate,
+            unmapped_strength=unmapped_strength,
+            fundamentals=fundamentals,
+        )
         target_prices = build_target_price_report(
             strong_stocks=strong_stocks,
             accumulation=accumulation,
@@ -470,5 +480,6 @@ class MainlineRadar:
             theme_lifecycle=theme_lifecycle,
             cross_market=cross_market,
             unmapped_strength=unmapped_strength,
+            unmapped_pullback=unmapped_pullback,
             price_limit_watch=price_limit_watch,
         )

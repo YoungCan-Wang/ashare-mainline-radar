@@ -332,15 +332,27 @@ def refresh_paper_trades(
         if not series or not series.timestamp:
             continue
         latest_date = _dates(series)[-1]
+        theme_exit_days = int(
+            plan["theme_exit_days"]
+            if plan.get("theme_exit_days") is not None
+            else PRODUCTION_PAPER_STRATEGY.theme_exit_days
+        )
+        uses_theme_exit = theme_exit_days > 0 and str(plan.get("source_role") or "") != "unmapped_pullback"
         if str(plan.get("last_evaluated_date") or "") != latest_date:
-            theme_exit_days = int(plan.get("theme_exit_days") or PRODUCTION_PAPER_STRATEGY.theme_exit_days)
-            inactive_days = 0 if str(plan["theme"]) in active_themes else int(plan.get("inactive_theme_days") or 0) + 1
+            if uses_theme_exit:
+                inactive_days = 0 if str(plan["theme"]) in active_themes else int(plan.get("inactive_theme_days") or 0) + 1
+            else:
+                inactive_days = 0
             plan.update(inactive_theme_days=inactive_days, last_evaluated_date=latest_date)
-            if plan["status"] == "open" and inactive_days >= theme_exit_days and not plan.get("exit_signal_date"):
+            if (
+                uses_theme_exit
+                and plan["status"] == "open"
+                and inactive_days >= theme_exit_days
+                and not plan.get("exit_signal_date")
+            ):
                 plan["exit_signal_date"] = latest_date
         if plan["status"] in {"watching", "triggered"}:
-            theme_exit_days = int(plan.get("theme_exit_days") or PRODUCTION_PAPER_STRATEGY.theme_exit_days)
-            if int(plan.get("inactive_theme_days") or 0) >= theme_exit_days:
+            if uses_theme_exit and int(plan.get("inactive_theme_days") or 0) >= theme_exit_days:
                 exit_days_text = "两" if theme_exit_days == 2 else str(theme_exit_days)
                 plan.update(status="cancelled", exit_reason=f"主线连续{exit_days_text}日退出前三，入场计划取消")
                 plan_events = [_event(plan, "cancelled", latest_date, None, reason="theme_inactive")]

@@ -461,6 +461,52 @@ class UnmappedStrengthReport:
     notes: list[str] = field(default_factory=list)
 
 
+@dataclass
+class UnmappedPullbackCandidate:
+    symbol: str
+    name: str
+    theme: str
+    style_tag: str
+    buyable_now: bool
+    decision: str
+    priority_score: float
+    last_close: float
+    entry_plan: str
+    invalidation: str
+    position_note: str
+    gate_action: str
+    ret_5d: float | None = None
+    ret_20d: float | None = None
+    amount_ratio: float | None = None
+    high_proximity_20d: float | None = None
+    relative_percentile: float | None = None
+    advance_from_base: float | None = None
+    max_pullback: float | None = None
+    pullback_depth: float | None = None
+    fundamental_status: str = "未覆盖"
+    fundamental_score: float | None = None
+    reasons: list[str] = field(default_factory=list)
+    risk_notes: list[str] = field(default_factory=list)
+    execution_status: str = "watching"
+    entry_mode: str = "pullback_close_reclaim"
+    entry_zone_low: float | None = None
+    entry_zone_high: float | None = None
+    confirm_price: float | None = None
+    stop_price: float | None = None
+    valid_for_days: int = 5
+    max_hold_days: int = 15
+    max_position_fraction: float = 0.12
+    initial_position_fraction: float = 0.04
+
+
+@dataclass
+class UnmappedPullbackReport:
+    candidates: list[UnmappedPullbackCandidate]
+    buyable_now: list[UnmappedPullbackCandidate] = field(default_factory=list)
+    scanned: int = 0
+    notes: list[str] = field(default_factory=list)
+
+
 @dataclass(frozen=True)
 class PriceLimitSignal:
     symbol: str
@@ -597,6 +643,9 @@ class RadarReport:
     cross_market: CrossMarketReport = field(default_factory=lambda: CrossMarketReport(themes=[], ah_pairs=[]))
     unmapped_strength: UnmappedStrengthReport = field(
         default_factory=lambda: UnmappedStrengthReport(candidates=[], scanned_unmapped=0)
+    )
+    unmapped_pullback: UnmappedPullbackReport = field(
+        default_factory=lambda: UnmappedPullbackReport(candidates=[])
     )
     price_limit_watch: PriceLimitWatchReport = field(
         default_factory=lambda: PriceLimitWatchReport(
