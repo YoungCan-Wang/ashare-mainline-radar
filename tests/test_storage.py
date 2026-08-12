@@ -1,7 +1,12 @@
 import json
 from urllib.error import HTTPError
 
-from ashare_mainline_radar.storage import ACTIONABLE_ROLES, build_storage_bundle, persist_report
+from ashare_mainline_radar.storage import (
+    ACTIONABLE_ROLES,
+    ROLE_PERSISTENCE_CAPS,
+    build_storage_bundle,
+    persist_report,
+)
 
 
 def _report() -> dict:
@@ -155,12 +160,12 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     assert len(bundle["symbols"]) == 1
     by_symbol = {item["symbol"]: item for item in bundle["symbols"]}
     symbol = by_symbol["300122.SZ"]
-    assert symbol["roles"] == ["next_buy", "strong_stock", "expectation_gap"]
+    assert symbol["roles"] == ["next_buy", "strong_stock"]
     assert symbol["priority_score"] == 94.0
     assert symbol["trade_plan"]["entry_plan"] == "回踩不破后分批"
     assert symbol["fundamental_payload"]["status"] == "基本面兑现"
     assert symbol["target_payload"]["target_high"] == 45.0
-    assert symbol["signal_payload"]["expectation_gap"]["status"] == "业绩价格共振"
+    assert "expectation_gap" not in symbol["signal_payload"]
     assert "600000.SH" not in by_symbol
     assert "600519.SH" not in by_symbol
     assert "000001.SZ" not in by_symbol
@@ -173,7 +178,8 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
         "monthly_base",
     )
     assert bundle["tracking_policy"]["selection_roles"] == list(ACTIONABLE_ROLES)
-    assert "expectation_gap" in bundle["tracking_policy"]["overlay_roles"]
+    assert bundle["tracking_policy"]["role_caps"] == ROLE_PERSISTENCE_CAPS
+    assert "expectation_gap" in bundle["tracking_policy"]["artifact_only_roles"]
     assert "leader_tape" in bundle["tracking_policy"]["artifact_only_roles"]
     assert "market_watchlist" in bundle["tracking_policy"]["artifact_only_roles"]
     assert "unmapped_pullback" not in bundle["tracking_policy"]["selection_roles"]
@@ -188,14 +194,14 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     assert bundle["trade_events"][0]["event_type"] == "created"
 
 
-def test_storage_skips_non_actionable_bulk_lists() -> None:
+def test_storage_skips_expectation_gap_and_other_artifact_only_lists() -> None:
     report = _report()
     report["expectation_gaps"]["signals"].extend(
         {
             "symbol": f"60{idx:04d}.SH",
             "name": f"bulk-{idx}",
             "status": "预期差未确认",
-            "score": 50.0,
+            "score": 90.0 - idx,
         }
         for idx in range(200)
     )
@@ -208,11 +214,46 @@ def test_storage_skips_non_actionable_bulk_lists() -> None:
 
     bundle = build_storage_bundle(report)
     symbols = {item["symbol"] for item in bundle["symbols"]}
+    roles = {role for item in bundle["symbols"] for role in item["roles"]}
 
     assert symbols == {"300122.SZ"}
-    assert all(not item.startswith("60") or item == "300122.SZ" for item in symbols)
+    assert "expectation_gap" not in roles
+    assert "leader_tape" not in roles
+    assert "market_watchlist" not in roles
     assert not any(item.startswith("00") for item in symbols)
     assert not any(item.startswith("51") for item in symbols)
+
+
+def test_storage_caps_actionable_roles_after_ranking() -> None:
+    report = _report()
+    report["strong_stocks"]["candidates"] = [
+        {
+            "symbol": f"300{idx:03d}.SZ",
+            "name": f"strong-{idx}",
+            "theme": "创新药",
+            "last_close": 20.0 + idx,
+            "score": float(idx),
+            "status": "趋势延续",
+        }
+        for idx in range(30)
+    ]
+    report["next_buy"] = {
+        "primary": None,
+        "alternatives": [],
+        "by_theme": [],
+    }
+
+    bundle = build_storage_bundle(report)
+    strong_symbols = [
+        item["symbol"]
+        for item in bundle["symbols"]
+        if "strong_stock" in item["roles"]
+    ]
+
+    assert len(strong_symbols) == ROLE_PERSISTENCE_CAPS["strong_stock"]
+    assert strong_symbols[0] == "300029.SZ"
+    assert "300000.SZ" not in strong_symbols
+    assert all("expectation_gap" not in item["roles"] for item in bundle["symbols"])
 
 
 def test_artifact_backend_writes_portable_bundle_and_status(tmp_path) -> None:

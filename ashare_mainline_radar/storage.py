@@ -22,13 +22,19 @@ ROLE_ORDER = (
     "leader_tape",
     "market_watchlist",
 )
-# Persist only theme/next_buy and related actionable roles that drive paper trades /
-# quote tracking. Broad dumps (leader_tape, market_watchlist) and the full
-# expectation_gap scan stay in daily report artifacts and can be regenerated.
+# Persist only a small ranked actionable set that drives paper trades / quote tracking.
+# expectation_gap full scans, leader_tape, market_watchlist, and unmapped_pullback stay
+# in daily report artifacts (JSON/MD/Feishu) and can be regenerated from TickFlow.
 ACTIONABLE_ROLES = ROLE_ORDER[:5]
-# Attach onto already-selected symbols only; never seed hundreds of DB rows.
-OVERLAY_ROLES = ("expectation_gap",)
-ARTIFACT_ONLY_ROLES = ("leader_tape", "market_watchlist", "unmapped_pullback")
+ARTIFACT_ONLY_ROLES = ("expectation_gap", "leader_tape", "market_watchlist", "unmapped_pullback")
+# Hard per-role caps after ranking by priority_score/score (descending).
+ROLE_PERSISTENCE_CAPS: dict[str, int] = {
+    "next_buy": 12,
+    "strong_stock": 12,
+    "golden_pit": 10,
+    "accumulation": 12,
+    "monthly_base": 12,
+}
 
 
 @dataclass(frozen=True)
@@ -87,6 +93,33 @@ def _sections_for_roles(
 ) -> list[tuple[str, list[dict[str, Any]]]]:
     wanted = set(roles)
     return [(role, candidates) for role, candidates in _candidate_sections(report) if role in wanted]
+
+
+def _candidate_rank(candidate: dict[str, Any]) -> float:
+    score = _first(candidate, ("priority_score", "score"))
+    return float(score) if score is not None else 0.0
+
+
+def _ranked_capped_sections(
+    report: dict[str, Any], roles: tuple[str, ...]
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Rank each role's candidates by score and enforce hard persistence caps."""
+    sections: list[tuple[str, list[dict[str, Any]]]] = []
+    for role, candidates in _sections_for_roles(report, roles):
+        best_by_symbol: dict[str, dict[str, Any]] = {}
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or not candidate.get("symbol"):
+                continue
+            symbol = str(candidate["symbol"])
+            current = best_by_symbol.get(symbol)
+            if current is None or _candidate_rank(candidate) > _candidate_rank(current):
+                best_by_symbol[symbol] = candidate
+        ranked = sorted(best_by_symbol.values(), key=_candidate_rank, reverse=True)
+        cap = ROLE_PERSISTENCE_CAPS.get(role)
+        if cap is not None:
+            ranked = ranked[:cap]
+        sections.append((role, ranked))
+    return sections
 
 
 def _paper_trade_records(
@@ -273,10 +306,8 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
     }
     symbols: dict[str, dict[str, Any]] = {}
 
-    def _merge_candidate(role: str, candidate: dict[str, Any], *, seed: bool) -> None:
+    def _merge_candidate(role: str, candidate: dict[str, Any]) -> None:
         symbol = str(candidate["symbol"])
-        if not seed and symbol not in symbols:
-            return
         row = symbols.setdefault(
             symbol,
             {
@@ -317,15 +348,9 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
         row["market_metrics"].update(_market_metrics(candidate))
         row["trade_plan"].update(_trade_plan(candidate))
 
-    for role, candidates in _sections_for_roles(data, ACTIONABLE_ROLES):
+    for role, candidates in _ranked_capped_sections(data, ACTIONABLE_ROLES):
         for candidate in candidates:
-            if isinstance(candidate, dict) and candidate.get("symbol"):
-                _merge_candidate(role, candidate, seed=True)
-
-    for role, candidates in _sections_for_roles(data, OVERLAY_ROLES):
-        for candidate in candidates:
-            if isinstance(candidate, dict) and candidate.get("symbol"):
-                _merge_candidate(role, candidate, seed=False)
+            _merge_candidate(role, candidate)
 
     for symbol, row in symbols.items():
         row["roles"] = sorted(row["roles"], key=ROLE_ORDER.index)
@@ -358,7 +383,7 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
         "schema_version": SCHEMA_VERSION,
         "tracking_policy": {
             "selection_roles": list(ACTIONABLE_ROLES),
-            "overlay_roles": list(OVERLAY_ROLES),
+            "role_caps": dict(ROLE_PERSISTENCE_CAPS),
             "artifact_only_roles": list(ARTIFACT_ONLY_ROLES),
             "first_selected_at_source": "symbol_snapshot.updated_at",
             "first_selected_price_source": "symbol_snapshot.last_close",

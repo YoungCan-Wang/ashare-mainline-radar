@@ -1,6 +1,5 @@
--- Free-tier DB: the full expectation_gap scan is regenerated from TickFlow + daily
--- report artifacts. Keep expectation_gap as an overlay on already-selected symbols
--- in app code, but do not expand quote/selection tracking for that role alone.
+-- Free-tier DB: expectation_gap stays in daily report artifacts only (ranked in
+-- JSON/MD/Feishu). Do not expand quote/selection tracking for that role.
 create or replace function public.sync_radar_symbol_tracking()
 returns trigger
 language plpgsql
