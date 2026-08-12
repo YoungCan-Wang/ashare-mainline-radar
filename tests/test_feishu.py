@@ -27,6 +27,8 @@ from ashare_mainline_radar.models import (
     NextBuyReport,
     PolicySignalReport,
     RadarReport,
+    PriceLimitSignal,
+    PriceLimitWatchReport,
     StrongStockCandidate,
     StrongStockReport,
     TargetPriceEstimate,
@@ -102,6 +104,39 @@ def test_build_feishu_text_minimal_report() -> None:
     assert "可尝试建仓" in contents
     assert "已有仓位可继续持有" in contents
     assert "10-20个交易日" in contents
+
+    report.price_limit_watch = PriceLimitWatchReport(
+        as_of="2026-06-26",
+        limit_up_touches=2,
+        closed_limit_up=1,
+        first_board_closed=1,
+        one_price_limit_up=0,
+        broken_boards=1,
+        ceiling_to_floor=0,
+        limit_down_touches=1,
+        closed_limit_down=0,
+        one_price_limit_down=0,
+        broken_floors=1,
+        floor_to_ceiling=0,
+        signals=[
+            PriceLimitSignal(
+                symbol="000001.SZ",
+                name="测试股份",
+                signal_type="首板封住",
+                action="后验观察",
+                close=11,
+                board_rate=0.1,
+                prior_streak=0,
+                themes=["测试主题"],
+            )
+        ],
+    )
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    assert "涨跌停行为观察" in contents
+    assert "首板封住" in contents
 
     report.monthly_bases = MonthlyBaseReport(
         candidates=[

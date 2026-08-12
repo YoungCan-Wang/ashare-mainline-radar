@@ -68,6 +68,21 @@ def build_feishu_text(report: RadarReport) -> str:
                 f"- {signal.theme}｜{signal.status}｜{rank}｜港股5日广度 {pct(signal.hk_breadth_5d)}｜"
                 f"港股5日 {pct(signal.hk_avg_ret_5d)}"
             )
+    watch = report.price_limit_watch
+    if watch.limit_up_touches or watch.limit_down_touches:
+        lines.append("")
+        lines.append("涨跌停行为观察（收盘后）：")
+        lines.append(
+            f"涨停触及 {watch.limit_up_touches}｜封板 {watch.closed_limit_up}｜首板 {watch.first_board_closed}｜"
+            f"一字 {watch.one_price_limit_up}｜炸板 {watch.broken_boards}｜天地板 {watch.ceiling_to_floor}"
+        )
+        lines.append(
+            f"跌停触及 {watch.limit_down_touches}｜封跌停 {watch.closed_limit_down}｜"
+            f"一字 {watch.one_price_limit_down}｜"
+            f"跌停打开 {watch.broken_floors}｜地天板 {watch.floor_to_ceiling}"
+        )
+        for signal in watch.signals[:5]:
+            lines.append(f"- {signal.signal_type}｜{signal.name} {signal.symbol}｜{signal.action}")
     if report.policy_signals and report.policy_signals.signals:
         lines.append("")
         lines.append("政策催化 TOP3：")
@@ -414,6 +429,22 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
             )
             cross_lines.append(f"A/H同公司动量：{pair_text}")
         elements.extend([{"tag": "hr"}, _div("\n\n".join(cross_lines))])
+    watch = report.price_limit_watch
+    if watch.limit_up_touches or watch.limit_down_touches:
+        watch_lines = [
+            "<font color='blue'>**涨跌停行为观察**</font>（收盘后后验，不自动下单）",
+            f"涨停触及 {watch.limit_up_touches}｜封板 {watch.closed_limit_up}｜首板 {watch.first_board_closed}｜"
+            f"一字 {watch.one_price_limit_up}｜炸板 {watch.broken_boards}｜天地板 {watch.ceiling_to_floor}",
+            f"跌停触及 {watch.limit_down_touches}｜封跌停 {watch.closed_limit_down}｜"
+            f"一字 {watch.one_price_limit_down}｜"
+            f"跌停打开 {watch.broken_floors}｜地天板 {watch.floor_to_ceiling}",
+        ]
+        for signal in watch.signals[:6]:
+            themes = "、".join(signal.themes) if signal.themes else "未映射"
+            watch_lines.append(
+                f"**{signal.signal_type}｜{signal.name} `{signal.symbol}`**｜{themes}\n{signal.action}"
+            )
+        elements.extend([{"tag": "hr"}, _div("\n\n".join(watch_lines))])
     elements.extend(
         [
             {"tag": "hr"},

@@ -5,6 +5,7 @@ import { CandidateDrawer } from "./components/CandidateDrawer";
 import { CandidateQueue } from "./components/CandidateQueue";
 import { CollapsibleSection } from "./components/CollapsibleSection";
 import { SummaryStrip } from "./components/SummaryStrip";
+import { PriceLimitWatch } from "./components/PriceLimitWatch";
 import { ThemeRanking } from "./components/ThemeRanking";
 import { ThemeTrendChart } from "./components/ThemeTrendChart";
 import { TopBar } from "./components/TopBar";
@@ -18,6 +19,7 @@ export function DashboardApp() {
   const [selectedCandidate, setSelectedCandidate] = useState<SymbolRow | null>(null);
   const [themeFilter, setThemeFilter] = useState("all");
   const [insightOpen, setInsightOpen] = useState(true);
+  const [priceLimitOpen, setPriceLimitOpen] = useState(true);
 
   const data = query.data;
   const activeRunKey = selectedRunKey ?? data?.current_run_key ?? data?.runs[0]?.run_key;
@@ -70,6 +72,15 @@ export function DashboardApp() {
             <ThemeRanking run={activeRun} themes={activeThemes} selectedTheme={themeFilter} onSelectTheme={setThemeFilter} />
             <ThemeTrendChart runs={data.runs} allThemes={data.themes} selectedThemes={activeThemes} />
           </div>
+        </CollapsibleSection>
+        <CollapsibleSection
+          className="price-limit-section"
+          title="涨跌停行为观察"
+          subtitle="收盘后识别首板、炸板、天地板、跌停打开与封跌停；仅观察，不自动下单"
+          open={priceLimitOpen}
+          onToggle={() => setPriceLimitOpen((value) => !value)}
+        >
+          <PriceLimitWatch watch={activeRun.summary?.price_limit_watch} />
         </CollapsibleSection>
         <CandidateQueue
           key={activeRunKey}

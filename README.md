@@ -50,6 +50,8 @@ python3 scripts/run_daily.py --mode curated --lookback-days 180
 - `reports/latest/storage_bundle.json`：按运行、主线、标的拆分的 v2 可迁移快照，并声明首次入选的角色、时间和价格口径。
 - `reports/latest/storage_status.json`：本次持久化状态，不包含数据库密钥。
 
+日报的 Markdown、JSON、飞书卡片和仪表盘会同时展示当日“涨跌停行为观察”，包括首板封住、炸板、天地板、跌停打开、封跌停和地天板。该栏目只使用收盘后日K做后验观察，不会自动创建交易计划。
+
 如果要扫描全市场：
 
 ```bash
@@ -351,5 +353,5 @@ python3 scripts/run_daily.py --mode curated --output-dir reports/latest
 
 - 继续扩展东财/申万主题预设，并让全市场扫描自动归因到题材。
 - 加 ETF/指数和外围市场联动确认。
-- 加研报 PDF 解析与 LLM 摘要，但只处理你有权限的文件。
+- 可选增加研报 PDF 解析与 LLM 摘要，但只处理你有权限的文件；当前日报未调用任何 LLM，也没有配置模型。
 - 加实盘观察清单：入场触发、仓位上限、失效条件、复盘记录。

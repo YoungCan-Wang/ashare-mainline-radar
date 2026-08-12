@@ -461,6 +461,37 @@ class UnmappedStrengthReport:
     notes: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class PriceLimitSignal:
+    symbol: str
+    name: str
+    signal_type: str
+    action: str
+    close: float
+    board_rate: float
+    prior_streak: int
+    themes: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PriceLimitWatchReport:
+    as_of: str | None
+    limit_up_touches: int
+    closed_limit_up: int
+    first_board_closed: int
+    one_price_limit_up: int
+    broken_boards: int
+    ceiling_to_floor: int
+    limit_down_touches: int
+    closed_limit_down: int
+    one_price_limit_down: int
+    broken_floors: int
+    floor_to_ceiling: int
+    signals: list[PriceLimitSignal] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
 @dataclass
 class ThemeLifecycleSignal:
     theme: str
@@ -566,6 +597,22 @@ class RadarReport:
     cross_market: CrossMarketReport = field(default_factory=lambda: CrossMarketReport(themes=[], ah_pairs=[]))
     unmapped_strength: UnmappedStrengthReport = field(
         default_factory=lambda: UnmappedStrengthReport(candidates=[], scanned_unmapped=0)
+    )
+    price_limit_watch: PriceLimitWatchReport = field(
+        default_factory=lambda: PriceLimitWatchReport(
+            as_of=None,
+            limit_up_touches=0,
+            closed_limit_up=0,
+            first_board_closed=0,
+            one_price_limit_up=0,
+            broken_boards=0,
+            ceiling_to_floor=0,
+            limit_down_touches=0,
+            closed_limit_down=0,
+            one_price_limit_down=0,
+            broken_floors=0,
+            floor_to_ceiling=0,
+        )
     )
 
     def to_dict(self) -> dict[str, Any]:

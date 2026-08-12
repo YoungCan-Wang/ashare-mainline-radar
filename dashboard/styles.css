@@ -397,6 +397,61 @@ select {
   margin-bottom: 18px;
 }
 
+.price-limit-section {
+  margin-bottom: 18px;
+}
+
+.price-limit-watch {
+  padding: 0 14px 14px;
+}
+
+.price-limit-stats {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(92px, 1fr));
+  gap: 8px;
+  padding: 14px 0;
+}
+
+.price-limit-stats > div {
+  display: flex;
+  min-height: 64px;
+  padding: 10px;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.price-limit-stats span,
+.watch-disclaimer,
+.empty-watch {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.price-limit-stats strong {
+  margin-top: 5px;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-disclaimer {
+  margin: 12px 0 0;
+}
+
+.empty-watch {
+  padding: 18px 0;
+}
+
+@media (max-width: 1180px) {
+  .price-limit-stats { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .price-limit-stats { grid-template-columns: repeat(2, 1fr); }
+}
+
 .collapsible-header {
   display: flex;
   width: 100%;

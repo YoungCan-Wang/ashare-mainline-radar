@@ -13,6 +13,33 @@ export interface MarketStructure {
   score?: number;
 }
 
+export interface PriceLimitSignal {
+  symbol: string;
+  name: string;
+  signal_type: string;
+  action: string;
+  close?: number;
+  board_rate?: number;
+  themes?: string[];
+}
+
+export interface PriceLimitWatchSummary {
+  as_of?: string;
+  limit_up_touches?: number;
+  closed_limit_up?: number;
+  first_board_closed?: number;
+  one_price_limit_up?: number;
+  broken_boards?: number;
+  ceiling_to_floor?: number;
+  limit_down_touches?: number;
+  closed_limit_down?: number;
+  one_price_limit_down?: number;
+  broken_floors?: number;
+  floor_to_ceiling?: number;
+  signals?: PriceLimitSignal[];
+  notes?: string[];
+}
+
 export interface RadarRun {
   run_key: string;
   market_date?: string;
@@ -26,6 +53,7 @@ export interface RadarRun {
   summary?: {
     market_structure?: MarketStructure;
     gate_reasons?: string[];
+    price_limit_watch?: PriceLimitWatchSummary;
   };
 }
 

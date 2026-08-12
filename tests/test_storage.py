@@ -61,6 +61,21 @@ def _report() -> dict:
         "target_prices": {"estimates": [{"symbol": "300122.SZ", "target_low": 40.0, "target_high": 45.0}]},
         "warnings": [],
         "cross_market": {},
+        "price_limit_watch": {
+            "as_of": "2026-07-17",
+            "limit_up_touches": 3,
+            "closed_limit_up": 2,
+            "first_board_closed": 1,
+            "one_price_limit_up": 0,
+            "broken_boards": 1,
+            "ceiling_to_floor": 0,
+            "limit_down_touches": 1,
+            "closed_limit_down": 1,
+            "one_price_limit_down": 0,
+            "broken_floors": 0,
+            "floor_to_ceiling": 0,
+            "signals": [],
+        },
         "source_statuses": [],
     }
 
@@ -70,6 +85,7 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
 
     assert bundle["run"]["run_key"] == "cn:2026-07-17:universe:CN_Equity_A"
     assert bundle["themes"][0]["lifecycle_stage"] == "主升加速"
+    assert bundle["run"]["summary"]["price_limit_watch"]["closed_limit_up"] == 2
     assert len(bundle["symbols"]) == 1
     symbol = bundle["symbols"][0]
     assert symbol["roles"] == ["next_buy", "strong_stock"]

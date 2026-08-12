@@ -320,6 +320,7 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
             "gate_reasons": gate.get("reasons") or [],
             "warnings": data.get("warnings") or [],
             "cross_market": data.get("cross_market") or {},
+            "price_limit_watch": data.get("price_limit_watch") or {},
             "source_statuses": data.get("source_statuses") or [],
         },
         "updated_at": generated_at,

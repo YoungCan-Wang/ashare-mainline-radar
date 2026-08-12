@@ -45,6 +45,7 @@ from .policy import (
     policy_counts_by_theme,
     policy_scores_by_theme,
 )
+from .price_limit_watch import build_price_limit_watch
 from .risk_gate import build_trading_gate
 from .strong_stocks import build_strong_stock_report
 from .target_prices import build_target_price_report
@@ -281,6 +282,7 @@ class MainlineRadar:
                 snapshots[symbol] = snapshot
         normalize_symbol_scores(snapshots)
         unmapped_strength = build_unmapped_strength_report(snapshots, instruments, mode)
+        price_limit_watch = build_price_limit_watch(runtime_theme_config, klines, instruments)
 
         intel_items, intel_statuses = collect_intelligence_with_status(self.intel_config, keywords)
         unfiltered_intel_count = len(intel_items)
@@ -468,4 +470,5 @@ class MainlineRadar:
             theme_lifecycle=theme_lifecycle,
             cross_market=cross_market,
             unmapped_strength=unmapped_strength,
+            price_limit_watch=price_limit_watch,
         )

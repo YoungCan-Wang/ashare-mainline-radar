@@ -251,6 +251,36 @@ def render_markdown(report: RadarReport) -> str:
         lines.append(f"- {note}")
     lines.append("")
 
+    watch = report.price_limit_watch
+    lines.append("## 涨跌停行为观察")
+    lines.append("")
+    lines.append(
+        f"涨停触及 {watch.limit_up_touches}｜收盘封板 {watch.closed_limit_up}｜"
+        f"首板封住 {watch.first_board_closed}｜一字涨停 {watch.one_price_limit_up}｜"
+        f"炸板 {watch.broken_boards}｜天地板 {watch.ceiling_to_floor}"
+    )
+    lines.append(
+        f"跌停触及 {watch.limit_down_touches}｜收盘封跌停 {watch.closed_limit_down}｜"
+        f"一字跌停 {watch.one_price_limit_down}｜"
+        f"跌停打开 {watch.broken_floors}｜地天板 {watch.floor_to_ceiling}"
+    )
+    lines.append("")
+    if watch.signals:
+        lines.append("| 类型 | 标的 | 主题 | 收盘 | 涨跌停幅度 | 行为解释 |")
+        lines.append("| --- | --- | --- | ---: | ---: | --- |")
+        for signal in watch.signals:
+            themes = "、".join(signal.themes) if signal.themes else "未映射"
+            lines.append(
+                f"| {signal.signal_type} | {signal.name} `{signal.symbol}` | {themes} | "
+                f"{signal.close:.2f} | {signal.board_rate * 100:.0f}% | {signal.action} |"
+            )
+    else:
+        lines.append("- 当日未识别到涨跌停行为，或标的日K尚未更新到同一交易日。")
+    lines.append("")
+    for note in watch.notes:
+        lines.append(f"- {note}")
+    lines.append("")
+
     lines.append("## 主线生命周期预警")
     lines.append("")
     lines.append("该状态由最近日K回放生成；风险闸门只约束参与动作，不会隐藏板块启动或回踩。")
