@@ -173,7 +173,6 @@ def _paper_trade_records(
                     "strategy_label": strategy.label,
                     "theme_exit_days": strategy.theme_exit_days,
                     "is_shadow": strategy.is_shadow,
-                    "source_role": "next_buy",
                     "created_at": generated_at,
                     "updated_at": generated_at,
                 }
@@ -191,7 +190,6 @@ def _paper_trade_records(
                         "decision": candidate.get("decision"),
                         "entry_plan": candidate.get("entry_plan"),
                         "strategy_label": strategy.label,
-                        "source_role": "next_buy",
                     },
                     "created_at": generated_at,
                 }

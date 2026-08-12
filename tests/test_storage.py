@@ -187,10 +187,11 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     next_buy_plans = [item for item in bundle["trade_plans"] if item["symbol"] == "300122.SZ"]
     assert next_buy_plans[0]["plan_key"] == "2026-07-17:300122.SZ:mainline-v1-theme-exit-2d"
     assert next_buy_plans[0]["theme_exit_days"] == 2
-    assert next_buy_plans[0]["source_role"] == "next_buy"
     assert next_buy_plans[1]["is_shadow"] is True
     assert next_buy_plans[1]["theme_exit_days"] == 3
-    assert all(item["source_role"] != "unmapped_pullback" for item in bundle["trade_plans"])
+    # Prod schema has no source_role column (PostgREST PGRST204 if present).
+    assert all("source_role" not in item for item in bundle["trade_plans"])
+    assert all("source_role" not in item.get("payload", {}) for item in bundle["trade_events"])
     assert bundle["trade_events"][0]["event_type"] == "created"
 
 
@@ -403,7 +404,7 @@ def test_existing_production_plan_does_not_block_shadow_plan(tmp_path) -> None:
         (plan["symbol"], plan["strategy_version"]) for plan in plans
     }
     assert all(plan["symbol"] != "600000.SH" for plan in plans)
-    assert all(plan.get("source_role") != "unmapped_pullback" for plan in plans)
+    assert all("source_role" not in plan for plan in plans)
 
     event_request = next(
         request
@@ -414,3 +415,5 @@ def test_existing_production_plan_does_not_block_shadow_plan(tmp_path) -> None:
     assert ("300122.SZ", "mainline-v2-theme-exit-3d-frozen-20260718") in {
         (event["symbol"], event["strategy_version"]) for event in events
     }
+    assert all("source_role" not in event for event in events)
+    assert all("source_role" not in event.get("payload", {}) for event in events)
