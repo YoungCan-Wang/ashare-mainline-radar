@@ -154,10 +154,10 @@ def is_fund_security(name: str) -> bool:
 def price_limit_rate(symbol: str, name: str, trade_date: str) -> float:
     code = symbol.split(".", 1)[0]
     upper_name = name.upper()
-    if (upper_name.startswith("ST") or upper_name.startswith("*ST")) and not code.startswith(("300", "688")):
-        return 0.05
     if symbol.endswith(".BJ"):
         return 0.30
+    if (upper_name.startswith("ST") or upper_name.startswith("*ST")) and not code.startswith(("300", "688")):
+        return 0.10 if trade_date >= "2026-07-06" else 0.05
     if code.startswith("688"):
         return 0.20
     if code.startswith("300"):

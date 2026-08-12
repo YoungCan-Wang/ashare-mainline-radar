@@ -297,7 +297,30 @@ def render_markdown(report: RadarReport) -> str:
     lines.append("")
 
     watch = report.price_limit_watch
-    lines.append("## 涨跌停行为观察")
+    lines.append("## 涨跌停交易结论")
+    lines.append("")
+    lines.append(f"- **天板：{watch.ceiling_verdict}。** {watch.ceiling_reason}。")
+    lines.append(f"- **地板：{watch.floor_verdict}。** {watch.floor_reason}。")
+    lines.append(f"- 回测证据截至 `{watch.evidence_as_of}`；口径为收盘确认后、下一交易日开盘可成交时买入。")
+    lines.append("")
+    lines.append("### 可执行样本外证据")
+    lines.append("")
+    lines.append("| 策略 | 样本 | 3日胜率 | 3日均值 | 5日均值 | 5%尾部 | 5日路径回撤均值 | 结论 |")
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+    for case in watch.backtest_cases:
+        verdict = "不追" if case.side == "ceiling" else "不抄"
+        lines.append(
+            f"| {case.name} | {case.test_trades} | {pct(case.win_rate_3d)} | "
+            f"{pct(case.avg_return_3d)} | {pct(case.avg_return_5d)} | "
+            f"{pct(case.p05_return_5d)} | {pct(case.avg_worst_5d_drawdown)} | **{verdict}** |"
+        )
+    lines.append("")
+    lines.append("### 通道重开门槛")
+    lines.append("")
+    for condition in watch.reopen_conditions:
+        lines.append(f"- {condition}。")
+    lines.append("")
+    lines.append("### 当日事件与处理")
     lines.append("")
     lines.append(
         f"涨停触及 {watch.limit_up_touches}｜收盘封板 {watch.closed_limit_up}｜"
@@ -311,13 +334,13 @@ def render_markdown(report: RadarReport) -> str:
     )
     lines.append("")
     if watch.signals:
-        lines.append("| 类型 | 标的 | 主题 | 收盘 | 涨跌停幅度 | 行为解释 |")
-        lines.append("| --- | --- | --- | ---: | ---: | --- |")
+        lines.append("| 类型 | 标的 | 主题 | 决策 | 收盘 | 行为解释 |")
+        lines.append("| --- | --- | --- | --- | ---: | --- |")
         for signal in watch.signals:
             themes = "、".join(signal.themes) if signal.themes else "未映射"
             lines.append(
                 f"| {signal.signal_type} | {signal.name} `{signal.symbol}` | {themes} | "
-                f"{signal.close:.2f} | {signal.board_rate * 100:.0f}% | {signal.action} |"
+                f"**{signal.verdict}** | {signal.close:.2f} | {signal.action} |"
             )
     else:
         lines.append("- 当日未识别到涨跌停行为，或标的日K尚未更新到同一交易日。")

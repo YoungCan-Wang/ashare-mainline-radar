@@ -120,6 +120,10 @@ def test_build_feishu_text_minimal_report() -> None:
         one_price_limit_down=0,
         broken_floors=1,
         floor_to_ceiling=0,
+        ceiling_verdict="关闭追板通道",
+        ceiling_reason="样本外期望为负",
+        floor_verdict="关闭抄底通道",
+        floor_reason="样本外期望为负",
         signals=[
             PriceLimitSignal(
                 symbol="000001.SZ",
@@ -137,7 +141,8 @@ def test_build_feishu_text_minimal_report() -> None:
     contents = "\n".join(
         element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
     )
-    assert "涨跌停行为观察" in contents
+    assert "涨跌停交易结论" in contents
+    assert "关闭追板通道" in contents
     assert "首板封住" in contents
 
     report.unmapped_pullback = UnmappedPullbackReport(

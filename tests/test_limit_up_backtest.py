@@ -57,6 +57,8 @@ def test_reseal_event_and_limit_down_exit_delay_are_recorded() -> None:
     assert event.next_day_limit_down is True
     assert event.exit_delay_days["next_open"] == 1
     assert event.returns["next_open"] is not None
+    assert event.confirmed_entry_price == 9.9
+    assert event.confirmed_returns["day3_close"] is not None
 
 
 def test_ceiling_to_floor_and_floor_to_ceiling_paths_are_separated() -> None:
@@ -95,6 +97,7 @@ def test_one_price_limit_up_is_excluded_from_executable_variant() -> None:
 
     assert report["variants"]["touch_fill_naive_baseline"]["all"]["signals"] == 1
     assert report["variants"]["close_sealed_non_one_price_conditional"]["all"]["signals"] == 0
+    assert report["executable_variants"]["chase_first_board_next_open"]["all"]["signals"] == 0
 
 
 def test_independent_limit_down_event_studies_sealed_and_broken_floors() -> None:
@@ -120,3 +123,30 @@ def test_independent_limit_down_event_studies_sealed_and_broken_floors() -> None
     assert len(events) == 2
     assert report["floor_variants"]["close_limit_down_buy_conditional"]["all"]["signals"] == 1
     assert report["floor_variants"]["broken_floor_rebound_conditional"]["all"]["signals"] == 1
+    executable = report["executable_variants"]["buy_broken_floor_next_open"]["all"]
+    assert executable["signals"] == 1
+    assert executable["executable_entries"] == 1
+    assert executable["horizons"]["day3_close"]["trades"] == 1
+
+
+def test_confirmed_entry_rejects_next_open_locked_at_limit_up() -> None:
+    base = [(10, 10.1, 9.9, 10, 1000)] * 85
+    bars = [
+        *base,
+        (10.2, 11, 10.2, 11, 2000),
+        (12.1, 12.1, 12.1, 12.1, 2000),
+        *[(12.1, 12.2, 12.0, 12.1, 1000)] * 4,
+    ]
+    events, metadata = collect_limit_up_events(
+        {"themes": [], "market_context_groups": []},
+        {"000001.SZ": _series("000001.SZ", bars)},
+        {"000001.SZ": {"name": "测试股份", "type": "stock", "ext": {}}},
+        warmup_days=80,
+    )
+    report = build_limit_up_backtest_report(events, metadata)
+
+    assert events[0].confirmed_entry_price is None
+    assert events[0].confirmed_entry_blocked_reason == "next_open_at_limit_up"
+    metrics = report["executable_variants"]["chase_first_board_next_open"]["all"]
+    assert metrics["signals"] == 1
+    assert metrics["executable_entries"] == 0

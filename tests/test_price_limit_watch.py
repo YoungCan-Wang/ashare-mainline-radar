@@ -48,6 +48,10 @@ def test_daily_watch_separates_first_board_broken_board_and_broken_floor() -> No
     assert {signal.signal_type for signal in report.signals} == {"首板封住", "炸板", "跌停打开"}
     first_board = next(signal for signal in report.signals if signal.signal_type == "首板封住")
     assert first_board.themes == ["测试主题"]
+    assert first_board.verdict == "不买"
+    assert report.ceiling_verdict == "关闭追板通道"
+    assert report.floor_verdict == "关闭抄底通道"
+    assert report.backtest_cases[0].test_trades == 12495
 
 
 def test_daily_watch_excludes_first_five_listed_bars() -> None:
@@ -94,3 +98,17 @@ def test_daily_watch_marks_one_price_limits_as_untradeable() -> None:
     assert report.one_price_limit_up == 1
     assert report.one_price_limit_down == 1
     assert {signal.signal_type for signal in report.signals} == {"一字涨停", "一字跌停"}
+
+
+def test_daily_watch_lists_floor_to_ceiling_only_once() -> None:
+    base = [(10, 10.1, 9.9, 10)] * 20
+    report = build_price_limit_watch(
+        {"themes": []},
+        {"000001.SZ": _series("000001.SZ", [*base, (9, 11, 9, 11)])},
+        {"000001.SZ": {"name": "反转样本"}},
+    )
+
+    assert report.floor_to_ceiling == 1
+    assert report.limit_up_touches == 1
+    assert report.limit_down_touches == 1
+    assert [signal.signal_type for signal in report.signals] == ["地天板"]

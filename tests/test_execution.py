@@ -70,7 +70,9 @@ def test_price_limits_cover_main_star_chinext_and_beijing() -> None:
     assert price_limit_rate("300001.SZ", "特锐德", "2020-08-21") == 0.10
     assert price_limit_rate("300001.SZ", "特锐德", "2020-08-24") == 0.20
     assert price_limit_rate("920001.BJ", "北交样本", "2026-07-17") == 0.30
-    assert price_limit_rate("600001.SH", "*ST样本", "2026-07-17") == 0.05
+    assert price_limit_rate("920001.BJ", "*ST北交样本", "2026-07-17") == 0.30
+    assert price_limit_rate("600001.SH", "*ST样本", "2026-07-03") == 0.05
+    assert price_limit_rate("600001.SH", "*ST样本", "2026-07-17") == 0.10
     assert daily_limit_price(9.95, 0.10, direction="up") == 10.95
 
 

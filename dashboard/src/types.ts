@@ -21,7 +21,19 @@ export interface PriceLimitSignal {
   action: string;
   close?: number;
   board_rate?: number;
+  verdict?: string;
   themes?: string[];
+}
+
+export interface PriceLimitBacktestCase {
+  name: string;
+  side: "ceiling" | "floor";
+  test_trades: number;
+  win_rate_3d?: number;
+  avg_return_3d?: number;
+  avg_return_5d?: number;
+  p05_return_5d?: number;
+  avg_worst_5d_drawdown?: number;
 }
 
 export interface PriceLimitWatchSummary {
@@ -37,6 +49,13 @@ export interface PriceLimitWatchSummary {
   one_price_limit_down?: number;
   broken_floors?: number;
   floor_to_ceiling?: number;
+  ceiling_verdict?: string;
+  ceiling_reason?: string;
+  floor_verdict?: string;
+  floor_reason?: string;
+  evidence_as_of?: string;
+  backtest_cases?: PriceLimitBacktestCase[];
+  reopen_conditions?: string[];
   signals?: PriceLimitSignal[];
   notes?: string[];
 }

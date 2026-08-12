@@ -145,6 +145,8 @@ def _report() -> dict:
             "one_price_limit_down": 0,
             "broken_floors": 0,
             "floor_to_ceiling": 0,
+            "ceiling_verdict": "关闭追板通道",
+            "floor_verdict": "关闭抄底通道",
             "signals": [],
         },
         "source_statuses": [],

@@ -33,6 +33,12 @@ class LimitUpEvent:
     exit_delay_days: dict[str, int]
     next_day_limit_down: bool
     worst_5d_drawdown: float | None
+    confirmed_entry_price: float | None
+    confirmed_entry_gap: float | None
+    confirmed_entry_blocked_reason: str | None
+    confirmed_returns: dict[str, float | None]
+    confirmed_exit_delay_days: dict[str, int]
+    confirmed_worst_5d_drawdown: float | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -59,6 +65,12 @@ class LimitDownEvent:
     next_day_limit_down: bool
     worst_5d_drawdown: float | None
     best_5d_runup: float | None
+    confirmed_entry_price: float | None
+    confirmed_entry_gap: float | None
+    confirmed_entry_blocked_reason: str | None
+    confirmed_returns: dict[str, float | None]
+    confirmed_exit_delay_days: dict[str, int]
+    confirmed_worst_5d_drawdown: float | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -161,6 +173,89 @@ def _sealed_limit_down(series: KlineSeries, index: int, symbol: str, name: str) 
     reference = series.prev_close[index] if index < len(series.prev_close) and series.prev_close[index] > 0 else previous["close"]
     limit_price = daily_limit_price(reference, price_limit_rate(symbol, name, trade_date), direction="down")
     return _at_floor(bar["high"], limit_price) and _at_floor(bar["close"], limit_price)
+
+
+def _confirmed_next_open_path(
+    series: KlineSeries,
+    calendar: list[int],
+    calendar_index: int,
+    lookup: dict[int, int],
+    symbol: str,
+    name: str,
+    signal_close: float,
+    cost_model: TradingCostModel,
+    position_fraction: float,
+) -> tuple[
+    float | None,
+    float | None,
+    str | None,
+    dict[str, float | None],
+    dict[str, int],
+    float | None,
+]:
+    """Model an executable entry after the closing state is known.
+
+    Entry is the next session open.  An opening price already locked at the
+    upper limit is rejected because a day bar cannot prove queue access.
+    Returns use the first sellable close from T+1 onward.
+    """
+
+    returns = {"day2_close": None, "day3_close": None, "day5_close": None}
+    delays = {label: 0 for label in returns}
+    if calendar_index + 1 >= len(calendar):
+        return None, None, "missing_next_session", returns, delays, None
+    entry_index = lookup.get(calendar[calendar_index + 1])
+    entry_bar = _bar(series, entry_index) if entry_index is not None else None
+    if entry_index is None or entry_bar is None or entry_bar["volume"] <= 0 or entry_bar["open"] <= 0:
+        return None, None, "next_session_suspended_or_missing", returns, delays, None
+    entry_date = cn_market_date_from_ms(series.timestamp[entry_index])
+    previous = _bar(series, entry_index - 1)
+    if entry_date is None or previous is None or previous["close"] <= 0:
+        return None, None, "missing_entry_reference", returns, delays, None
+    reference = (
+        series.prev_close[entry_index]
+        if entry_index < len(series.prev_close) and series.prev_close[entry_index] > 0
+        else previous["close"]
+    )
+    entry_upper = daily_limit_price(
+        reference, price_limit_rate(symbol, name, entry_date), direction="up"
+    )
+    if _at_price(entry_bar["open"], entry_upper):
+        return None, None, "next_open_at_limit_up", returns, delays, None
+
+    entry_price = entry_bar["open"]
+    entry_gap = entry_price / signal_close - 1 if signal_close > 0 else None
+    for label, offset in {"day2_close": 2, "day3_close": 3, "day5_close": 5}.items():
+        if calendar_index + offset >= len(calendar):
+            continue
+        target_index = lookup.get(calendar[calendar_index + offset])
+        if target_index is None:
+            continue
+        resolved, exit_price, delay = _sellable_exit(
+            series, target_index, symbol, name, "close"
+        )
+        delays[label] = delay
+        if resolved is None or exit_price is None:
+            continue
+        exit_date = cn_market_date_from_ms(series.timestamp[resolved]) or entry_date
+        returns[label] = _net_return(
+            entry_price,
+            exit_price,
+            entry_date,
+            exit_date,
+            cost_model,
+            cost_model.account_capital * position_fraction,
+        )
+
+    path_lows = [
+        series.low[path_index]
+        for offset in range(1, 6)
+        if calendar_index + offset < len(calendar)
+        for path_index in [lookup.get(calendar[calendar_index + offset])]
+        if path_index is not None and series.low[path_index] > 0
+    ]
+    worst_drawdown = min(path_lows) / entry_price - 1 if path_lows else None
+    return entry_price, entry_gap, None, returns, delays, worst_drawdown
 
 
 def _sellable_exit(
@@ -387,6 +482,24 @@ def collect_limit_up_events(
             next_limit_down = bool(
                 next_index is not None and _sealed_limit_down(series, next_index, symbol, name)
             )
+            (
+                confirmed_entry_price,
+                confirmed_entry_gap,
+                confirmed_entry_blocked_reason,
+                confirmed_returns,
+                confirmed_delays,
+                confirmed_worst_drawdown,
+            ) = _confirmed_next_open_path(
+                series,
+                calendar,
+                calendar_index,
+                lookup,
+                symbol,
+                name,
+                bar["close"],
+                cost_model,
+                position_fraction,
+            )
             events.append(
                 LimitUpEvent(
                     symbol=symbol,
@@ -408,6 +521,12 @@ def collect_limit_up_events(
                     exit_delay_days=delays,
                     next_day_limit_down=next_limit_down,
                     worst_5d_drawdown=worst_drawdown,
+                    confirmed_entry_price=confirmed_entry_price,
+                    confirmed_entry_gap=confirmed_entry_gap,
+                    confirmed_entry_blocked_reason=confirmed_entry_blocked_reason,
+                    confirmed_returns=confirmed_returns,
+                    confirmed_exit_delay_days=confirmed_delays,
+                    confirmed_worst_5d_drawdown=confirmed_worst_drawdown,
                 )
             )
 
@@ -541,6 +660,24 @@ def collect_limit_down_events(
                 if series.high[path_index] > 0:
                     path_highs.append(series.high[path_index])
             next_index = lookup.get(calendar[calendar_index + 1])
+            (
+                confirmed_entry_price,
+                confirmed_entry_gap,
+                confirmed_entry_blocked_reason,
+                confirmed_returns,
+                confirmed_delays,
+                confirmed_worst_drawdown,
+            ) = _confirmed_next_open_path(
+                series,
+                calendar,
+                calendar_index,
+                lookup,
+                symbol,
+                name,
+                bar["close"],
+                cost_model,
+                position_fraction,
+            )
             events.append(
                 LimitDownEvent(
                     symbol=symbol,
@@ -564,6 +701,12 @@ def collect_limit_down_events(
                     ),
                     worst_5d_drawdown=min(path_lows) / lower - 1 if path_lows else None,
                     best_5d_runup=max(path_highs) / lower - 1 if path_highs else None,
+                    confirmed_entry_price=confirmed_entry_price,
+                    confirmed_entry_gap=confirmed_entry_gap,
+                    confirmed_entry_blocked_reason=confirmed_entry_blocked_reason,
+                    confirmed_returns=confirmed_returns,
+                    confirmed_exit_delay_days=confirmed_delays,
+                    confirmed_worst_5d_drawdown=confirmed_worst_drawdown,
                 )
             )
 
@@ -613,6 +756,54 @@ def _event_metrics(events: list[LimitUpEvent]) -> dict[str, Any]:
         "exit_delayed_rate": (
             sum(any(delay > 0 for delay in event.exit_delay_days.values()) for event in events) / len(events)
             if events
+            else None
+        ),
+        "average_worst_5d_drawdown": mean(drawdowns) if drawdowns else None,
+        "p05_worst_5d_drawdown": _percentile(drawdowns, 0.05),
+    }
+
+
+def _confirmed_event_metrics(events: list[LimitUpEvent | LimitDownEvent]) -> dict[str, Any]:
+    executable = [event for event in events if event.confirmed_entry_price is not None]
+    horizon_metrics: dict[str, Any] = {}
+    for label in ("day2_close", "day3_close", "day5_close"):
+        values = [
+            float(event.confirmed_returns[label])
+            for event in executable
+            if event.confirmed_returns.get(label) is not None
+        ]
+        average = mean(values) if values else None
+        standard_error = stdev(values) / sqrt(len(values)) if len(values) >= 2 else None
+        horizon_metrics[label] = {
+            "trades": len(values),
+            "win_rate": sum(value > 0 for value in values) / len(values) if values else None,
+            "average_return": average,
+            "median_return": median(values) if values else None,
+            "p05_return": _percentile(values, 0.05),
+            "p95_return": _percentile(values, 0.95),
+            "worst_return": min(values) if values else None,
+            "mean_ci95_low": average - 1.96 * standard_error if standard_error is not None else None,
+            "mean_ci95_high": average + 1.96 * standard_error if standard_error is not None else None,
+        }
+    gaps = [event.confirmed_entry_gap for event in executable if event.confirmed_entry_gap is not None]
+    drawdowns = [
+        event.confirmed_worst_5d_drawdown
+        for event in executable
+        if event.confirmed_worst_5d_drawdown is not None
+    ]
+    return {
+        "signals": len(events),
+        "executable_entries": len(executable),
+        "blocked_entry_rate": 1 - len(executable) / len(events) if events else None,
+        "average_entry_gap": mean(gaps) if gaps else None,
+        "horizons": horizon_metrics,
+        "exit_delayed_rate": (
+            sum(
+                any(delay > 0 for delay in event.confirmed_exit_delay_days.values())
+                for event in executable
+            )
+            / len(executable)
+            if executable
             else None
         ),
         "average_worst_5d_drawdown": mean(drawdowns) if drawdowns else None,
@@ -762,11 +953,38 @@ def build_limit_up_backtest_report(
         }
         for name, selected in floor_variants.items()
     }
+    executable_variants = {
+        "chase_first_board_next_open": variants["first_board_close_sealed_conditional"],
+        "chase_mainline_first_board_next_open": variants[
+            "mainline_first_board_close_sealed_conditional"
+        ],
+        "chase_high_board_next_open": variants["high_board_close_sealed_conditional"],
+        "buy_broken_floor_next_open": floor_variants["broken_floor_rebound_conditional"],
+        "buy_mainline_broken_floor_next_open": floor_variants[
+            "mainline_broken_floor_rebound_conditional"
+        ],
+        "buy_close_limit_down_next_open": floor_variants[
+            "close_limit_down_buy_conditional"
+        ],
+    }
+    executable_variant_metrics = {
+        name: {
+            "all": _confirmed_event_metrics(selected),
+            **{
+                period: _confirmed_event_metrics(
+                    [event for event in selected if predicate(event)]
+                )
+                for period, predicate in periods.items()
+            },
+        }
+        for name, selected in executable_variants.items()
+    }
     return {
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "method": {
             "entry": "触板事件假设在涨停价成交；收盘封板变体是后验条件事件研究，不是可执行入场信号",
             "floor_entry": "触及跌停事件假设在跌停价买入；跌停是否打开或收盘状态同样属于后验条件",
+            "confirmed_entry": "收盘确认后，仅在下一交易日开盘未封涨停且可成交时入场；收益从该开盘价起算",
             "exit": "T+1后按目标开盘/收盘卖出；封死跌停或停牌时顺延至首个可成交日",
             "costs": "股票交易费、印花税和卖出5bp滑点；涨停买入价不额外突破涨停价",
             "mainline_timing": "使用信号日前一交易日收盘可见的前三主线，避免当日收盘信息前视",
@@ -783,6 +1001,7 @@ def build_limit_up_backtest_report(
         "metadata": {**metadata, "train_end": split_60, "validation_end": split_80},
         "variants": variant_metrics,
         "floor_variants": floor_variant_metrics,
+        "executable_variants": executable_variant_metrics,
         "path_risks": {name: _event_metrics(selected) for name, selected in path_events.items()},
         "diagnostics": {
             "mainline_first_board_by_year": mainline_yearly,
@@ -868,6 +1087,30 @@ def render_limit_up_backtest(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "## 可执行确认后入场（次日开盘）",
+            "",
+            "收盘确认形态后，下一交易日开盘未封涨停才允许成交；收益从真实次日开盘价起算。",
+            "",
+            "| 策略 | 全样本可成交 | 测试可成交 | 测试3日胜率 | 测试3日均值 | 测试5日均值 | 测试5%尾部 | 5日最差路径均值 |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for name, periods in report.get("executable_variants", {}).items():
+        all_metrics = periods["all"]
+        metrics = periods["test"]
+        horizons = metrics["horizons"]
+        lines.append(
+            f"| {name} | {all_metrics['executable_entries']} | {metrics['executable_entries']} | "
+            f"{pct(horizons['day3_close']['win_rate'])} | "
+            f"{pct(horizons['day3_close']['average_return'])} | "
+            f"{pct(horizons['day5_close']['average_return'])} | "
+            f"{pct(horizons['day5_close']['p05_return'])} | "
+            f"{pct(metrics['average_worst_5d_drawdown'])} |"
+        )
+
+    lines.extend(
+        [
+            "",
             "## 样本外测试",
             "",
             "| 变体 | 测试样本 | 次日开盘均值 | 次日收盘均值 | 5日均值 | 5%尾部 |",
@@ -918,6 +1161,7 @@ def render_limit_up_backtest(report: dict[str, Any]) -> str:
             "",
             f"- {report['method']['entry']}。",
             f"- {report['method']['floor_entry']}。",
+            f"- {report['method']['confirmed_entry']}。",
             f"- {report['method']['exit']}。",
             f"- {report['method']['mainline_timing']}。",
         ]

@@ -12,7 +12,7 @@ def _bundle() -> dict:
             "market_date": "2026-07-17",
             "generated_at": "2026-07-17T09:00:00+00:00",
             "top_theme": "创新药",
-            "summary": {"price_limit_watch": {"limit_up_touches": 3, "broken_boards": 1}},
+            "summary": {"price_limit_watch": {"limit_up_touches": 3, "broken_boards": 1, "ceiling_verdict": "关闭追板通道"}},
         },
         "themes": [
             {
@@ -81,6 +81,7 @@ def test_dashboard_payload_merges_local_run_over_remote() -> None:
     assert payload["current_run_key"] == "cn:2026-07-17:universe:CN_Equity_A"
     assert payload["runs"][0]["top_theme"] == "创新药"
     assert payload["runs"][0]["summary"]["price_limit_watch"]["broken_boards"] == 1
+    assert payload["runs"][0]["summary"]["price_limit_watch"]["ceiling_verdict"] == "关闭追板通道"
     assert payload["themes"][0]["theme"] == "创新药"
     assert payload["symbols"][0]["symbol"] == "300122.SZ"
     assert payload["symbols"][0]["first_selected_price"] == 35.0

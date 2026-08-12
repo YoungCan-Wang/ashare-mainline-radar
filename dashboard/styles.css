@@ -405,35 +405,103 @@ select {
   padding: 0 14px 14px;
 }
 
-.price-limit-stats {
+.limit-decision-grid {
   display: grid;
-  grid-template-columns: repeat(8, minmax(92px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
   padding: 14px 0;
 }
 
-.price-limit-stats > div {
+.limit-decision-card {
   display: flex;
-  min-height: 64px;
-  padding: 10px;
+  min-height: 132px;
+  padding: 18px;
   flex-direction: column;
-  justify-content: center;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--surface-2);
 }
 
-.price-limit-stats span,
+.limit-decision-card.is-negative {
+  border-color: color-mix(in srgb, var(--up) 36%, var(--line));
+  background: color-mix(in srgb, var(--up) 7%, var(--surface-2));
+}
+
+.limit-decision-card span,
 .watch-disclaimer,
 .empty-watch {
   color: var(--muted);
   font-size: 12px;
 }
 
-.price-limit-stats strong {
-  margin-top: 5px;
-  font-size: 20px;
-  font-variant-numeric: tabular-nums;
+.limit-decision-card strong {
+  margin-top: 10px;
+  color: var(--up);
+  font-size: 25px;
+}
+
+.limit-decision-card p {
+  max-width: 62ch;
+  margin: 10px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.limit-evidence-heading {
+  display: flex;
+  margin: 6px 0 10px;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.limit-evidence-heading h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.limit-evidence-heading p,
+.limit-evidence-heading > span {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.metric-negative {
+  color: var(--up);
+  font-weight: 700;
+}
+
+.limit-event-details {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.limit-reopen-gate {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 7%, var(--surface-2));
+}
+
+.limit-reopen-gate strong {
+  font-size: 13px;
+}
+
+.limit-reopen-gate ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.limit-event-details summary {
+  padding: 14px 2px;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .watch-disclaimer {
@@ -444,12 +512,9 @@ select {
   padding: 18px 0;
 }
 
-@media (max-width: 1180px) {
-  .price-limit-stats { grid-template-columns: repeat(4, 1fr); }
-}
-
 @media (max-width: 640px) {
-  .price-limit-stats { grid-template-columns: repeat(2, 1fr); }
+  .limit-decision-grid { grid-template-columns: 1fr; }
+  .limit-evidence-heading { align-items: start; flex-direction: column; gap: 2px; }
 }
 
 .collapsible-header {

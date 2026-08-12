@@ -516,8 +516,21 @@ class PriceLimitSignal:
     close: float
     board_rate: float
     prior_streak: int
+    verdict: str = "观察"
     themes: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PriceLimitBacktestCase:
+    name: str
+    side: str
+    test_trades: int
+    win_rate_3d: float | None
+    avg_return_3d: float | None
+    avg_return_5d: float | None
+    p05_return_5d: float | None
+    avg_worst_5d_drawdown: float | None
 
 
 @dataclass(frozen=True)
@@ -534,6 +547,13 @@ class PriceLimitWatchReport:
     one_price_limit_down: int
     broken_floors: int
     floor_to_ceiling: int
+    ceiling_verdict: str = "不追"
+    ceiling_reason: str = "可执行样本外期望为负"
+    floor_verdict: str = "不抄"
+    floor_reason: str = "可执行样本外期望为负"
+    evidence_as_of: str = "2026-08-12"
+    backtest_cases: list[PriceLimitBacktestCase] = field(default_factory=list)
+    reopen_conditions: list[str] = field(default_factory=list)
     signals: list[PriceLimitSignal] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 

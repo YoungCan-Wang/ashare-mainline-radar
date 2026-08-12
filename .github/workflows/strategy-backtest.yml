@@ -15,6 +15,10 @@ on:
         description: "Deterministic A-share sample used for historical market breadth"
         required: false
         default: "600"
+      limit_count:
+        description: "Daily bars per symbol for price-limit event studies"
+        required: false
+        default: "1200"
       force:
         description: "Run even if this commit completed a backtest in the last 24 hours"
         required: false
@@ -57,6 +61,13 @@ jobs:
           --count "${{ inputs.count || '1800' }}"
           --breadth-symbols "${{ inputs.breadth_symbols || '600' }}"
           --output reports/backtest/strategy_backtest.json
+      - name: Run executable ceiling and floor event studies
+        if: steps.frequency.outputs.should_run == 'true'
+        run: >-
+          python scripts/run_limit_up_backtest.py
+          --count "${{ inputs.limit_count || '1200' }}"
+          --max-symbols 0
+          --output reports/backtest/limit_up_backtest.json
       - name: Upload backtest
         if: steps.frequency.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4

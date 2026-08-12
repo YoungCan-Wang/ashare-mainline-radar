@@ -71,7 +71,9 @@ def build_feishu_text(report: RadarReport) -> str:
     watch = report.price_limit_watch
     if watch.limit_up_touches or watch.limit_down_touches:
         lines.append("")
-        lines.append("涨跌停行为观察（收盘后）：")
+        lines.append("涨跌停交易结论：")
+        lines.append(f"- 天板：{watch.ceiling_verdict}｜{watch.ceiling_reason}")
+        lines.append(f"- 地板：{watch.floor_verdict}｜{watch.floor_reason}")
         lines.append(
             f"涨停触及 {watch.limit_up_touches}｜封板 {watch.closed_limit_up}｜首板 {watch.first_board_closed}｜"
             f"一字 {watch.one_price_limit_up}｜炸板 {watch.broken_boards}｜天地板 {watch.ceiling_to_floor}"
@@ -82,7 +84,9 @@ def build_feishu_text(report: RadarReport) -> str:
             f"跌停打开 {watch.broken_floors}｜地天板 {watch.floor_to_ceiling}"
         )
         for signal in watch.signals[:5]:
-            lines.append(f"- {signal.signal_type}｜{signal.name} {signal.symbol}｜{signal.action}")
+            lines.append(
+                f"- {signal.signal_type}｜{signal.name} {signal.symbol}｜{signal.verdict}｜{signal.action}"
+            )
     if report.policy_signals and report.policy_signals.signals:
         lines.append("")
         lines.append("政策催化 TOP3：")
@@ -444,18 +448,43 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
         elements.extend([{"tag": "hr"}, _div("\n\n".join(cross_lines))])
     watch = report.price_limit_watch
     if watch.limit_up_touches or watch.limit_down_touches:
+        chase_case = next(
+            (case for case in watch.backtest_cases if case.name == "首板确认后次日开盘追"),
+            None,
+        )
+        floor_case = next(
+            (case for case in watch.backtest_cases if case.name == "跌停打开后次日开盘抄"),
+            None,
+        )
         watch_lines = [
-            "<font color='blue'>**涨跌停行为观察**</font>（收盘后后验，不自动下单）",
+            "<font color='red'>**涨跌停交易结论**</font>",
+            f"**天板：{watch.ceiling_verdict}**｜{watch.ceiling_reason}",
+            f"**地板：{watch.floor_verdict}**｜{watch.floor_reason}",
+        ]
+        if chase_case:
+            watch_lines.append(
+                f"追首板样本外 `{chase_case.test_trades}` 笔｜3日胜率 `{pct(chase_case.win_rate_3d)}`｜"
+                f"5日均值 `{pct(chase_case.avg_return_5d)}`｜5%尾部 `{pct(chase_case.p05_return_5d)}`"
+            )
+        if floor_case:
+            watch_lines.append(
+                f"抄跌停打开样本外 `{floor_case.test_trades}` 笔｜3日胜率 `{pct(floor_case.win_rate_3d)}`｜"
+                f"5日均值 `{pct(floor_case.avg_return_5d)}`｜5%尾部 `{pct(floor_case.p05_return_5d)}`"
+            )
+        if watch.reopen_conditions:
+            watch_lines.append(f"**重开门槛**｜{watch.reopen_conditions[-1]}")
+        watch_lines.extend([
+            f"证据截至 `{watch.evidence_as_of}`｜收盘确认后、次日开盘可成交才计入",
             f"涨停触及 {watch.limit_up_touches}｜封板 {watch.closed_limit_up}｜首板 {watch.first_board_closed}｜"
             f"一字 {watch.one_price_limit_up}｜炸板 {watch.broken_boards}｜天地板 {watch.ceiling_to_floor}",
             f"跌停触及 {watch.limit_down_touches}｜封跌停 {watch.closed_limit_down}｜"
             f"一字 {watch.one_price_limit_down}｜"
             f"跌停打开 {watch.broken_floors}｜地天板 {watch.floor_to_ceiling}",
-        ]
+        ])
         for signal in watch.signals[:6]:
             themes = "、".join(signal.themes) if signal.themes else "未映射"
             watch_lines.append(
-                f"**{signal.signal_type}｜{signal.name} `{signal.symbol}`**｜{themes}\n{signal.action}"
+                f"**{signal.signal_type}｜{signal.name} `{signal.symbol}`｜{signal.verdict}**｜{themes}\n{signal.action}"
             )
         elements.extend([{"tag": "hr"}, _div("\n\n".join(watch_lines))])
     elements.extend(

@@ -75,8 +75,8 @@ export function DashboardApp() {
         </CollapsibleSection>
         <CollapsibleSection
           className="price-limit-section"
-          title="涨跌停行为观察"
-          subtitle="收盘后识别首板、炸板、天地板、跌停打开与封跌停；仅观察，不自动下单"
+          title="涨跌停交易结论"
+          subtitle="直接回答天板能不能追、地板能不能抄；展示可执行样本外胜率、收益和尾部风险"
           open={priceLimitOpen}
           onToggle={() => setPriceLimitOpen((value) => !value)}
         >
