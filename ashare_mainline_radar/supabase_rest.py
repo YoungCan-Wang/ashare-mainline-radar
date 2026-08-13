@@ -118,3 +118,29 @@ def upsert_rows(
                     raise RuntimeError(f"Supabase upsert to {table} returned HTTP {response.status}")
         except HTTPError as exc:
             raise RuntimeError(format_http_error(exc, context=f"Supabase upsert to {table} failed")) from exc
+
+
+def delete_rows(
+    base_url: str,
+    api_key: str,
+    ingest_key: str | None,
+    table: str,
+    filters: dict[str, str],
+    opener: Callable[..., Any] = urlopen,
+) -> None:
+    if not filters:
+        raise ValueError("delete_rows requires filters")
+    headers = request_headers(api_key, ingest_key)
+    headers["Prefer"] = "return=minimal"
+    request = Request(
+        f"{base_url.rstrip('/')}/rest/v1/{table}?{urlencode(filters, safe=',.*(){}')}",
+        data=b"",
+        method="DELETE",
+        headers=headers,
+    )
+    try:
+        with opener(request, timeout=30) as response:
+            if not 200 <= response.status < 300:
+                raise RuntimeError(f"Supabase delete from {table} returned HTTP {response.status}")
+    except HTTPError as exc:
+        raise RuntimeError(format_http_error(exc, context=f"Supabase delete from {table} failed")) from exc

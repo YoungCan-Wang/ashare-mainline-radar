@@ -310,18 +310,22 @@ RADAR_INGEST_KEY
 
 Supabase 项目 URL 和 publishable key 分别配成仓库 Variable `SUPABASE_URL`、
 `SUPABASE_PUBLISHABLE_KEY`，随机入库密钥配成仓库 Secret `RADAR_INGEST_KEY`。
-RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写七张 `radar_*` 表；GitHub Actions
+RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写 `radar_*` 研究表和 `shadow_*` 现金账本表；GitHub Actions
 不需要持有可管理整个 Supabase 项目的 service-role key。入库密钥不能放进网页、报告或提交记录。
 
-持久化采用七张私有表：
+持久化采用私有表：
 
 - `radar_runs`：每个行情日、扫描模式和股票池一行，重复运行执行 upsert。
 - `radar_theme_snapshots`：主线排名、生命周期和完整评分证据。
 - `radar_symbol_snapshots`：每个标的每次运行一行；顺势、下一笔、黄金坑、低位介入等身份合并到 `roles`，目标价、基本面、触发和失效条件分别保存为结构化字段。
 - `radar_symbol_selections`：只记录可执行研究角色的首次入选时间、首次入选价和最近一次入选，不因重复出现而重置基准。
 - `radar_symbol_quotes`：每个入选标的一条最新 TickFlow 实时报价，和历史研究快照分开更新。
-- `radar_trade_plans`：保存收盘确认、次日开盘、仓位、失效位和10-20日持有期计划；持仓期间按最新收盘价和假设卖出费用更新可实现净收益。
+- `radar_trade_plans`：保存收盘确认、次日开盘、仓位、失效位和10-20日持有期计划；持仓期间按最新收盘价和假设卖出费用更新可实现净收益。`is_shadow` 只标记 3 日主题退出的纸面对照策略，不是现金账本。
 - `radar_trade_events`：追加保存计划创建、触发、成交、涨停买入失败、跌停延迟退出和最终平仓事件。
+- `shadow_account`：独立 10 万人民币影子账户单例，记录现金、市值和净值。
+- `shadow_positions`：影子账户持仓（股数、T+1 可卖股数、成本、标记价）。
+- `shadow_events`：当日成交、涨停买不进、跌停卖不出、现金不足、T+1 不能卖和净值标记。
+- `shadow_nav_daily`：按交易日记录现金、市值、净值与盈亏。
 
 `.github/workflows/quote-refresh.yml` 在交易日北京时间 10:30、11:30、14:00、15:10
 只刷新当前可执行研究池，不重跑全市场。若 TickFlow 返回的行情日期不是当天，任务会跳过写入和部署；
@@ -330,12 +334,13 @@ RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写七张 `radar_*`
 数据库只保存进入研究清单的标的，不重复保存全市场原始K线。未配置 Supabase 时任务不会丢报告：
 规范化的 `storage_bundle.json` 会随 GitHub Artifact 保留，配置完成后可再导入。
 
-`FEISHU_WEBHOOK_URL` 配置后，工作流会发送红色交互卡片，按“可尝试建仓、已有仓位可继续持有、等待回踩、低位观察”组织结果，并展示入场触发、失效条件、目标区和15日回测；卡片底部默认带跳转作战台的按钮。默认情况下，飞书侧临时失败不会阻断报告 artifact 上传；如果希望本地或 CI 严格失败，可以加 `--fail-on-feishu-error`。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
+`FEISHU_WEBHOOK_URL` 配置后，工作流会先发送红色雷达作战卡，再发送蓝色影子账户现金账本卡片（可用 `SHADOW_FEISHU_WEBHOOK_URL` 覆盖第二个 webhook）。雷达卡按“可尝试建仓、已有仓位可继续持有、等待回踩、低位观察”组织结果；影子卡只展示净值、现金、持仓和当日成交/阻断。默认情况下，飞书侧临时失败不会阻断报告 artifact 上传；如果希望本地或 CI 严格失败，可以加 `--fail-on-feishu-error`。`TUSHARE_TOKEN` 目前作为预留数据源 secret，不会写入报告或仓库。
 
 飞书通知状态会写入：
 
 ```text
 reports/latest/notification_status.json
+reports/latest/shadow_notification_status.json
 ```
 
 这个文件只记录 `sent` / `skipped` / `failed`、错误码和错误消息，不记录 webhook URL。也可以单独诊断 webhook：
