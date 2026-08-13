@@ -7,9 +7,10 @@ from pathlib import Path
 
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
-from .feishu import FeishuStatus, build_feishu_card, post_feishu_card, write_feishu_status
+from .feishu import FeishuStatus, build_feishu_card, build_shadow_feishu_card, post_feishu_card, write_feishu_status
 from .paper_trading import PaperTradeRefreshStatus, refresh_paper_trades
 from .report import write_report
+from .shadow_account import ShadowRefreshStatus, empty_snapshot, refresh_shadow_account
 from .storage import persist_report
 from .tickflow import TickFlowClient
 
@@ -36,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--as-of", help="Point-in-time cutoff in YYYY-MM-DD; excludes later market, news, and financial data.")
     parser.add_argument("--send-feishu", action="store_true", help="Send a compact report to FEISHU_WEBHOOK_URL.")
     parser.add_argument("--feishu-webhook-url", default=os.getenv("FEISHU_WEBHOOK_URL"))
+    parser.add_argument(
+        "--shadow-feishu-webhook-url",
+        default=os.getenv("SHADOW_FEISHU_WEBHOOK_URL"),
+        help="Optional webhook for the shadow cash-book card; defaults to FEISHU_WEBHOOK_URL.",
+    )
     parser.add_argument(
         "--dashboard-public-url",
         default=os.getenv("DASHBOARD_PUBLIC_URL"),
@@ -88,8 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     active_themes = {
         theme.name for theme in report.themes[:3] if theme.status in {"主线成立", "主线候选"}
     }
+    paper_klines = {}
     try:
-        paper_status = refresh_paper_trades(active_themes, client=client)
+        paper_status = refresh_paper_trades(active_themes, client=client, kline_out=paper_klines)
     except Exception as exc:
         paper_status = PaperTradeRefreshStatus("failed", 0, 0, 0, f"{type(exc).__name__}: {exc}")
     (args.output_dir / "paper_trade_status.json").write_text(
@@ -98,6 +105,39 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"Paper trades: {paper_status.status}; checked={paper_status.plans_checked} "
         f"updated={paper_status.plans_updated} events={paper_status.events_written}"
+    )
+    try:
+        shadow_status = refresh_shadow_account(
+            as_of=report.data_as_of,
+            client=client,
+            klines=paper_klines,
+        )
+    except Exception as exc:
+        shadow_status = ShadowRefreshStatus(
+            "failed",
+            0,
+            0,
+            0,
+            f"{type(exc).__name__}: {exc}",
+            empty_snapshot(report.data_as_of),
+        )
+    shadow_card = build_shadow_feishu_card(
+        shadow_status.snapshot,
+        status=shadow_status.status,
+        message=shadow_status.message,
+    )
+    shadow_card_path = args.output_dir / "shadow_card.json"
+    shadow_card_path.write_text(json.dumps(shadow_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    (args.output_dir / "shadow_status.json").write_text(
+        json.dumps(shadow_status.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (args.output_dir / "shadow_account.json").write_text(
+        json.dumps(shadow_status.snapshot, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+    print(f"Wrote {shadow_card_path}")
+    print(
+        f"Shadow account: {shadow_status.status}; fills={shadow_status.fills} "
+        f"blocked={shadow_status.blocked} events={shadow_status.events_written}"
     )
     if report.themes:
         top = report.themes[0]
@@ -115,6 +155,10 @@ def main(argv: list[str] | None = None) -> int:
         if not args.feishu_webhook_url:
             print("FEISHU_WEBHOOK_URL is not set; skipped Feishu notification.")
             write_feishu_status(args.output_dir / "notification_status.json", FeishuStatus(status="skipped", message="FEISHU_WEBHOOK_URL is not set"))
+            write_feishu_status(
+                args.output_dir / "shadow_notification_status.json",
+                FeishuStatus(status="skipped", message="FEISHU_WEBHOOK_URL is not set"),
+            )
         else:
             status = post_feishu_card(args.feishu_webhook_url, feishu_card)
             write_feishu_status(args.output_dir / "notification_status.json", status)
@@ -122,8 +166,24 @@ def main(argv: list[str] | None = None) -> int:
                 print("Sent Feishu notification.")
             else:
                 print(f"Feishu notification failed: code={status.code} message={status.message}")
-                if args.fail_on_feishu_error:
-                    return 2
+            shadow_webhook = args.shadow_feishu_webhook_url or args.feishu_webhook_url
+            if shadow_status.status == "refreshed":
+                shadow_notify = post_feishu_card(shadow_webhook, shadow_card)
+                write_feishu_status(args.output_dir / "shadow_notification_status.json", shadow_notify)
+                if shadow_notify.status == "sent":
+                    print("Sent shadow account Feishu notification.")
+                else:
+                    print(
+                        f"Shadow Feishu notification failed: code={shadow_notify.code} message={shadow_notify.message}"
+                    )
+            else:
+                shadow_notify = FeishuStatus(status="skipped", message=shadow_status.message)
+                write_feishu_status(args.output_dir / "shadow_notification_status.json", shadow_notify)
+                print(f"Skipped shadow Feishu card: {shadow_status.status}; {shadow_status.message}")
+            if args.fail_on_feishu_error and (
+                status.status != "sent" or (shadow_status.status == "refreshed" and shadow_notify.status != "sent")
+            ):
+                return 2
     if args.fail_on_storage_error and storage_status.status == "failed":
         return 3
     return 0

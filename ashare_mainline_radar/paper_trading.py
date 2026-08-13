@@ -303,6 +303,7 @@ def refresh_paper_trades(
     radar_ingest_key: str | None = None,
     cost_model: TradingCostModel | None = None,
     opener: Callable[..., Any] = urlopen,
+    kline_out: dict[str, KlineSeries] | None = None,
 ) -> PaperTradeRefreshStatus:
     url = supabase_url or os.getenv("SUPABASE_URL")
     api_key = supabase_publishable_key or os.getenv("SUPABASE_PUBLISHABLE_KEY")
@@ -323,6 +324,8 @@ def refresh_paper_trades(
         return PaperTradeRefreshStatus("skipped", 0, 0, 0, "no active paper-trade plans")
     provider = client or TickFlowClient()
     klines = provider.get_klines_batch(sorted({str(plan["symbol"]) for plan in plans}), period="1d", count=120, adjust="forward")
+    if kline_out is not None:
+        kline_out.update(klines)
     model = cost_model or TradingCostModel()
     updated: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []

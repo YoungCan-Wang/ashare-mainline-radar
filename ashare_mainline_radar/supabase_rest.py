@@ -118,3 +118,31 @@ def upsert_rows(
                     raise RuntimeError(f"Supabase upsert to {table} returned HTTP {response.status}")
         except HTTPError as exc:
             raise RuntimeError(format_http_error(exc, context=f"Supabase upsert to {table} failed")) from exc
+
+
+def call_rpc(
+    base_url: str,
+    api_key: str,
+    ingest_key: str | None,
+    function_name: str,
+    payload: dict[str, Any],
+    opener: Callable[..., Any] = urlopen,
+) -> Any:
+    headers = request_headers(api_key, ingest_key)
+    headers["Content-Type"] = "application/json"
+    request = Request(
+        f"{base_url.rstrip('/')}/rest/v1/rpc/{function_name}",
+        data=json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    try:
+        with opener(request, timeout=30) as response:
+            if not 200 <= response.status < 300:
+                raise RuntimeError(f"Supabase rpc {function_name} returned HTTP {response.status}")
+            raw = response.read()
+    except HTTPError as exc:
+        raise RuntimeError(format_http_error(exc, context=f"Supabase rpc {function_name} failed")) from exc
+    if not raw:
+        return None
+    return json.loads(raw.decode("utf-8"))

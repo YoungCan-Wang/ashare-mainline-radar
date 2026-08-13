@@ -618,6 +618,124 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
     }
 
 
+_SHADOW_BLOCK_LABELS = {
+    "sealed_limit_up": "涨停买不进",
+    "sealed_limit_down": "跌停卖不出",
+    "insufficient_cash": "现金不够",
+    "t1": "T+1 不能卖",
+    "suspension": "停牌",
+    "missing_bar": "缺行情不能成交",
+}
+
+
+def _cny(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:,.2f}"
+
+
+def _signed_cny(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:,.2f}"
+
+
+def _shadow_block_label(event: dict[str, Any]) -> str:
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    reason = str(payload.get("reason") or event.get("event_type") or "")
+    return _SHADOW_BLOCK_LABELS.get(reason, reason)
+
+
+def build_shadow_feishu_card(
+    snapshot: dict[str, Any],
+    *,
+    status: str | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
+    account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
+    positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
+    events = snapshot.get("today_events") if isinstance(snapshot.get("today_events"), list) else []
+    as_of = snapshot.get("as_of") or account.get("as_of") or "n/a"
+    stale = status in {"failed", "skipped"}
+    fills = [item for item in events if item.get("event_type") in {"fill_buy", "fill_sell"}]
+    blocked = [
+        item
+        for item in events
+        if item.get("event_type") in {"entry_blocked", "exit_delayed", "skip_insufficient_cash", "skip_t1"}
+    ]
+    lines = [
+        f"**净值 {_cny(account.get('equity'))}**　现金 {_cny(account.get('cash'))}　市值 {_cny(account.get('market_value'))}",
+        f"累计盈亏 {_signed_cny(account.get('pnl_total'))}　当日 {_signed_cny(account.get('pnl_day'))}　基准 {_cny(account.get('initial_capital') or 100000)}",
+    ]
+    if stale:
+        lines.insert(0, f"<font color='red'>**影子账户未刷新（{status}）**</font>\n{message or '未写入现金账本'}")
+    elements: list[dict[str, Any]] = [_div("\n".join(lines))]
+    hold_lines = ["<font color='blue'>**持仓**</font>"]
+    if positions:
+        for item in positions:
+            shares = int(item.get("shares") or 0)
+            avg_cost = float(item.get("avg_cost") or 0)
+            mark = float(item.get("last_mark") or 0)
+            unrealized = (mark - avg_cost) * shares if avg_cost and mark else 0
+            sellable = int(item.get("sellable_shares") or 0)
+            hold_lines.append(
+                f"**{item.get('name') or ''} `{item.get('symbol')}`**　{shares}股"
+                f"{'（T+1）' if sellable < shares else ''}\n"
+                f"成本 {_cny(avg_cost)}　现价 {_cny(mark)}　浮盈亏 {_signed_cny(unrealized)}"
+            )
+    else:
+        hold_lines.append("当前空仓")
+    elements.extend([{"tag": "hr"}, _div("\n".join(hold_lines))])
+
+    fill_lines = ["<font color='green'>**今日成交**</font>"]
+    if fills:
+        for item in fills:
+            side = "买入" if item.get("event_type") == "fill_buy" else "卖出"
+            fees = item.get("fees") if isinstance(item.get("fees"), dict) else {}
+            fill_lines.append(
+                f"{side} `{item.get('symbol')}`　{item.get('qty') or 0}股 @ {_cny(item.get('price'))}"
+                f"　费用 {_cny(fees.get('total'))}"
+            )
+    else:
+        fill_lines.append("今日无成交")
+    elements.extend([{"tag": "hr"}, _div("\n".join(fill_lines))])
+
+    block_lines = ["<font color='orange'>**今日阻断**</font>"]
+    if blocked:
+        for item in blocked:
+            block_lines.append(f"`{item.get('symbol')}`　{_shadow_block_label(item)}")
+    else:
+        block_lines.append("今日无阻断")
+    elements.extend(
+        [
+            {"tag": "hr"},
+            _div("\n".join(block_lines)),
+            {"tag": "hr"},
+            _div("<font color='grey'>影子账户为独立 10 万现金账本，含手续费、手数与 T+1；不是雷达作战卡，也不代表实盘持仓。</font>"),
+        ]
+    )
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "style": {"text_size": {"normal_v2": {"default": "normal", "pc": "normal", "mobile": "normal"}}},
+        },
+        "header": {
+            "template": "orange" if stale else "blue",
+            "title": {
+                "tag": "plain_text",
+                "content": f"影子账户｜{'未刷新' if stale else '现金账本'}｜{as_of}",
+            },
+        },
+        "body": {
+            "direction": "vertical",
+            "padding": "12px 12px 12px 12px",
+            "elements": elements,
+        },
+    }
+
+
 def _post_feishu_payload(webhook_url: str, payload: dict[str, Any], timeout: float) -> FeishuStatus:
     request = urllib.request.Request(
         webhook_url,

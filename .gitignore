@@ -31,6 +31,8 @@ build/
 node_modules/
 dashboard/dist/
 supabase/.temp/
+# Never commit DDL. Apply SQL on live Supabase, then merge application code only.
+*.sql
 *.tsbuildinfo
 *.egg-info/
 reports/*
