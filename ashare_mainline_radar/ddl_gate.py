@@ -29,6 +29,43 @@ def sql_paths(paths: list[str]) -> list[str]:
     return found
 
 
+def parse_name_status(diff_text: str) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for raw in diff_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        status = parts[0][:1]
+        if status in {"R", "C"} and len(parts) >= 3:
+            rows.append(("D", parts[1]))
+            rows.append(("A", parts[2]))
+            continue
+        if len(parts) >= 2:
+            rows.append((status, parts[1]))
+    return rows
+
+
+def sql_diff_error(changes: list[str] | list[tuple[str, str]]) -> str | None:
+    blocked: list[str] = []
+    for item in changes:
+        if isinstance(item, str):
+            status, path = "A", item
+        else:
+            status, path = item
+        normalized = path.replace("\\", "/").lstrip("./")
+        if normalized.endswith(".sql") and status != "D":
+            blocked.append(f"{status} {normalized}")
+    if not blocked:
+        return None
+    listed = "\n".join(f"- {item}" for item in blocked)
+    return (
+        "Do not add or change .sql files. Apply DDL on live Supabase first, then merge application code only. "
+        "Deleting already-tracked SQL is allowed so it can leave the remote tree.\n"
+        f"{listed}"
+    )
+
+
 def load_contract(path: Path | None = None) -> dict[str, list[str]]:
     contract_path = path or DEFAULT_CONTRACT_PATH
     payload = json.loads(contract_path.read_text(encoding="utf-8"))
@@ -95,17 +132,6 @@ def missing_live_objects(
         if not object_exists(url, api_key, "routine", routine, opener):
             missing.append(f"routine:{routine}")
     return missing
-
-
-def sql_diff_error(paths: list[str]) -> str | None:
-    found = sql_paths(paths)
-    if not found:
-        return None
-    listed = "\n".join(f"- {path}" for path in found)
-    return (
-        "Do not commit .sql files. Apply DDL on live Supabase first, then merge application code only.\n"
-        f"{listed}"
-    )
 
 
 def live_schema_error(missing: list[str]) -> str | None:

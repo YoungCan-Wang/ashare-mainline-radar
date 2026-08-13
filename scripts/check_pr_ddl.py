@@ -14,18 +14,19 @@ from ashare_mainline_radar.ddl_gate import (
     live_schema_error,
     load_contract,
     missing_live_objects,
+    parse_name_status,
     sql_diff_error,
 )
 
 
-def _changed_paths(base: str, head: str) -> list[str]:
+def _changed_entries(base: str, head: str) -> list[tuple[str, str]]:
     result = subprocess.run(
-        ["git", "diff", "--name-only", f"{base}...{head}"],
+        ["git", "diff", "--name-status", f"{base}...{head}"],
         check=True,
         capture_output=True,
         text=True,
     )
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return parse_name_status(result.stdout)
 
 
 def main() -> int:
@@ -40,7 +41,7 @@ def main() -> int:
 
     errors: list[str] = []
     if args.base:
-        errors.append(sql_diff_error(_changed_paths(args.base, args.head)) or "")
+        errors.append(sql_diff_error(_changed_entries(args.base, args.head)) or "")
         errors = [item for item in errors if item]
 
     if not args.skip_live:
@@ -58,7 +59,7 @@ def main() -> int:
     if errors:
         print("\n\n".join(errors), file=sys.stderr)
         return 1
-    print("DDL gate passed: no SQL in the diff, live schema matches the contract.")
+    print("DDL gate passed: no added or changed SQL, live schema matches the contract.")
     return 0
 
 

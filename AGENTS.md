@@ -2,7 +2,9 @@
 
 ## Database DDL
 
-- Never `git add`, commit, or push `*.sql` files. Keep them local; `supabase/migrations/*.sql` is gitignored.
+- Never `git add`, commit, or push `*.sql` files. Keep them local; they are gitignored.
+- If a `.sql` file is already tracked on the remote, remove it from git tracking (`git rm --cached`) so the next commit takes it off the remote tree. Leave the local copy in place.
+- Deleting already-tracked SQL from git is allowed. Adding or editing `.sql` in a PR is not.
 - Never apply DDL from CI, and never assume merging a PR will migrate the remote database.
 - Required order: write SQL locally → execute it in the live Supabase SQL editor → confirm the object exists → update `supabase/schema_contract.json` → commit application code only.
 - Do not merge until the PR pipeline is green. It fails if the diff contains `.sql`, or if live PostgREST is missing a contracted table or RPC.

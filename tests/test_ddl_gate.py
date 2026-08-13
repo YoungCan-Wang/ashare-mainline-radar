@@ -9,6 +9,7 @@ from ashare_mainline_radar.ddl_gate import (
     load_contract,
     missing_live_objects,
     object_exists,
+    parse_name_status,
     sql_diff_error,
     sql_paths,
 )
@@ -54,9 +55,24 @@ def test_sql_paths_catch_migrations_and_ignore_code() -> None:
 def test_sql_diff_error_blocks_commit() -> None:
     message = sql_diff_error(["supabase/migrations/new.sql", "README.md"])
     assert message is not None
-    assert "Do not commit .sql files" in message
+    assert "Do not add or change .sql files" in message
     assert "supabase/migrations/new.sql" in message
     assert sql_diff_error(["ashare_mainline_radar/ddl_gate.py"]) is None
+
+
+def test_sql_diff_allows_deleting_tracked_sql() -> None:
+    assert sql_diff_error([("D", "supabase/migrations/old.sql")]) is None
+    message = sql_diff_error([("M", "supabase/migrations/old.sql")])
+    assert message is not None
+    assert "M supabase/migrations/old.sql" in message
+
+
+def test_parse_name_status_treats_rename_to_sql_as_add() -> None:
+    rows = parse_name_status("R100\tdocs/old.sql\tsupabase/migrations/new.sql\nD\tkeep.sql\n")
+    assert ("A", "supabase/migrations/new.sql") in rows
+    assert ("D", "docs/old.sql") in rows
+    assert ("D", "keep.sql") in rows
+    assert sql_diff_error(rows) is not None
 
 
 def test_load_contract_lists_shadow_rpc(tmp_path) -> None:
