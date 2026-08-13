@@ -1,0 +1,18 @@
+{
+  "tables": [
+    "radar_runs",
+    "radar_theme_snapshots",
+    "radar_symbol_snapshots",
+    "radar_symbol_selections",
+    "radar_symbol_quotes",
+    "radar_trade_plans",
+    "radar_trade_events",
+    "shadow_account",
+    "shadow_positions",
+    "shadow_events",
+    "shadow_nav_daily"
+  ],
+  "routines": [
+    "apply_shadow_day"
+  ]
+}

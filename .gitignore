@@ -31,6 +31,8 @@ build/
 node_modules/
 dashboard/dist/
 supabase/.temp/
+# DDL stays local; apply it on live Supabase before merging application code.
+*.sql
 *.tsbuildinfo
 *.egg-info/
 reports/*
