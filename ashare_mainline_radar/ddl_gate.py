@@ -10,6 +10,14 @@ from urllib.request import Request, urlopen
 from .supabase_rest import format_http_error, request_headers
 
 DEFAULT_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "supabase" / "schema_contract.json"
+RPC_PROBE_PAYLOADS = {
+    "apply_shadow_day": {
+        "p_account": {},
+        "p_positions": [],
+        "p_events": [],
+        "p_nav": {},
+    }
+}
 
 
 def sql_paths(paths: list[str]) -> list[str]:
@@ -53,9 +61,10 @@ def object_exists(
         )
     elif kind == "routine":
         headers = {**headers, "Content-Type": "application/json"}
+        payload = RPC_PROBE_PAYLOADS.get(name, {})
         request = Request(
             f"{url.rstrip('/')}/rest/v1/rpc/{name}",
-            data=b"{}",
+            data=json.dumps(payload).encode("utf-8"),
             headers=headers,
             method="POST",
         )

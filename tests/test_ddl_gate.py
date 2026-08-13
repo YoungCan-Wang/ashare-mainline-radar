@@ -94,6 +94,22 @@ def test_rpc_400_means_function_exists_404_means_missing() -> None:
     assert not object_exists("https://example.supabase.co", "key", "routine", "missing_fn", router.opener)
 
 
+def test_apply_shadow_day_probe_sends_named_arguments() -> None:
+    seen: list[Request] = []
+
+    def opener(request: Request, timeout: float):
+        seen.append(request)
+        raise HTTPError(request.full_url, 400, "radar ingest unauthorized", hdrs=None, fp=None)
+
+    assert object_exists("https://example.supabase.co", "key", "routine", "apply_shadow_day", opener)
+    assert json.loads(seen[0].data.decode("utf-8")) == {
+        "p_account": {},
+        "p_positions": [],
+        "p_events": [],
+        "p_nav": {},
+    }
+
+
 def test_repo_contract_loads() -> None:
     contract = load_contract()
     assert "shadow_account" in contract["tables"]
