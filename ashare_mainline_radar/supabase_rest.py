@@ -8,6 +8,13 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 DEFAULT_UPSERT_BATCH_SIZE = 100
+_POSTGREST_IN_SAFE = ",.*(){}\""
+
+
+def quoted_in(values: list[str]) -> str:
+    """PostgREST ``in.()`` with quoted values so ``600001.SH`` is not a JSON path."""
+    inner = ",".join(f'"{str(value).replace(chr(34), "")}"' for value in values)
+    return f"in.({inner})"
 
 
 def request_headers(api_key: str, ingest_key: str | None = None) -> dict[str, str]:
@@ -133,7 +140,7 @@ def delete_rows(
     headers = request_headers(api_key, ingest_key)
     headers["Prefer"] = "return=minimal"
     request = Request(
-        f"{base_url.rstrip('/')}/rest/v1/{table}?{urlencode(filters, safe=',.*(){}')}",
+        f"{base_url.rstrip('/')}/rest/v1/{table}?{urlencode(filters, safe=_POSTGREST_IN_SAFE)}",
         data=b"",
         method="DELETE",
         headers=headers,

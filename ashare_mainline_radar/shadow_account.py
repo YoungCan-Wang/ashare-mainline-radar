@@ -16,7 +16,7 @@ from .execution import (
 )
 from .models import KlineSeries, cn_market_date_from_ms
 from .paper_strategies import PRODUCTION_PAPER_STRATEGY
-from .supabase_rest import delete_rows, fetch_rows, upsert_rows
+from .supabase_rest import delete_rows, fetch_rows, quoted_in, upsert_rows
 from .tickflow import TickFlowClient
 
 SHADOW_ACCOUNT_ID = "default"
@@ -200,6 +200,8 @@ def _apply_sells(
             continue
         session = _session_bar(klines.get(symbol), as_of)
         if session is None:
+            events.append(_event(as_of, "exit_delayed", symbol=symbol, reason="missing_bar"))
+            position["exit_pending_reason"] = "missing_bar"
             continue
         bar, previous_close = session
         name = str(position.get("name") or intent.get("name") or symbol)
@@ -289,6 +291,7 @@ def execute_shadow_day(
             continue
         session = _session_bar(klines.get(symbol), as_of)
         if session is None:
+            events.append(_event(as_of, "entry_blocked", symbol=symbol, reason="missing_bar"))
             continue
         bar, previous_close = session
         name = str(intent.get("name") or symbol)
@@ -482,6 +485,46 @@ def _snapshot(account: dict[str, Any], positions: list[dict[str, Any]], events: 
     }
 
 
+def _fill_symbols(events: list[dict[str, Any]], event_type: str) -> dict[str, dict[str, Any]]:
+    found: dict[str, dict[str, Any]] = {}
+    for row in events:
+        if str(row.get("event_type") or "") != event_type:
+            continue
+        symbol = str(row.get("symbol") or "")
+        if symbol:
+            found[symbol] = row
+    return found
+
+
+def _payload(row: dict[str, Any]) -> dict[str, Any]:
+    payload = row.get("payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _drop_sold_positions(
+    account: dict[str, Any],
+    positions: list[dict[str, Any]],
+    applied_sells: dict[str, dict[str, Any]],
+    as_of: str,
+) -> list[dict[str, Any]]:
+    """Drop leftover lots already recorded as fill_sell. Credit cash only if the book is still on a prior day."""
+    if not applied_sells:
+        return positions
+    book_as_of = str(account.get("as_of") or "")
+    remaining: list[dict[str, Any]] = []
+    cash = float(account.get("cash") or 0)
+    for position in positions:
+        symbol = str(position["symbol"])
+        fill = applied_sells.get(symbol)
+        if fill is None:
+            remaining.append(position)
+            continue
+        if book_as_of < as_of:
+            cash = _money(cash + float(_payload(fill).get("proceeds") or 0))
+    account["cash"] = _money(cash)
+    return remaining
+
+
 def refresh_shadow_account(
     *,
     as_of: str | None,
@@ -532,6 +575,18 @@ def refresh_shadow_account(
         filters={"account_id": f"eq.{SHADOW_ACCOUNT_ID}"},
         opener=opener,
     )
+    book_as_of = str(account.get("as_of") or "")
+    if book_as_of and book_as_of > as_of:
+        snapshot = _snapshot(account, [dict(item) for item in positions], [], 0.0)
+        return ShadowRefreshStatus(
+            "skipped",
+            0,
+            0,
+            0,
+            f"refuse historical replay: live book as_of {book_as_of} is after {as_of}",
+            snapshot,
+        )
+
     paper_events = fetch_rows(
         url,
         api_key,
@@ -558,7 +613,22 @@ def refresh_shadow_account(
         },
         opener=opener,
     )
+    ledger_events = fetch_rows(
+        url,
+        api_key,
+        ingest_key,
+        "shadow_events",
+        order="created_at.asc",
+        max_rows=1000,
+        filters={"as_of": f"eq.{as_of}", "account_id": f"eq.{SHADOW_ACCOUNT_ID}"},
+        opener=opener,
+    )
+    applied_sells = _fill_symbols(ledger_events, "fill_sell")
+    applied_buys = _fill_symbols(ledger_events, "fill_buy")
+    positions = _drop_sold_positions(account, [dict(item) for item in positions], applied_sells, as_of)
     buy_intents, sell_intents = _intents_from_paper(paper_events, paper_plans, positions)
+    buy_intents = [item for item in buy_intents if str(item["symbol"]) not in applied_buys]
+    sell_intents = [item for item in sell_intents if str(item["symbol"]) not in applied_sells]
     needed = {str(item["symbol"]) for item in positions}
     needed.update(str(item["symbol"]) for item in buy_intents)
     needed.update(str(item["symbol"]) for item in sell_intents)
@@ -603,10 +673,12 @@ def refresh_shadow_account(
         "pnl_total": _money(float(next_account["equity"]) - float(next_account["initial_capital"])),
     }
 
-    opened_before = {str(item["symbol"]) for item in positions}
+    opened_before = {str(item["symbol"]) for item in positions} | set(applied_sells)
     opened_after = {str(item["symbol"]) for item in next_positions}
     sold = sorted(opened_before - opened_after)
-    upsert_rows(url, api_key, ingest_key, "shadow_account", "account_id", [next_account], opener)
+    fill_events = [item for item in events if item["event_type"] in {"fill_buy", "fill_sell"}]
+    other_events = [item for item in events if item["event_type"] not in {"fill_buy", "fill_sell"}]
+    upsert_rows(url, api_key, ingest_key, "shadow_events", "event_key", fill_events, opener)
     upsert_rows(url, api_key, ingest_key, "shadow_positions", "account_id,symbol", next_positions, opener)
     if sold:
         delete_rows(
@@ -614,11 +686,12 @@ def refresh_shadow_account(
             api_key,
             ingest_key,
             "shadow_positions",
-            {"account_id": f"eq.{SHADOW_ACCOUNT_ID}", "symbol": f"in.({','.join(sold)})"},
+            {"account_id": f"eq.{SHADOW_ACCOUNT_ID}", "symbol": quoted_in(sold)},
             opener,
         )
-    upsert_rows(url, api_key, ingest_key, "shadow_events", "event_key", events, opener)
+    upsert_rows(url, api_key, ingest_key, "shadow_account", "account_id", [next_account], opener)
     upsert_rows(url, api_key, ingest_key, "shadow_nav_daily", "as_of", [nav], opener)
+    upsert_rows(url, api_key, ingest_key, "shadow_events", "event_key", other_events, opener)
 
     fills = sum(1 for item in events if item["event_type"] in {"fill_buy", "fill_sell"})
     blocked = sum(

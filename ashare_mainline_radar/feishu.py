@@ -624,6 +624,7 @@ _SHADOW_BLOCK_LABELS = {
     "insufficient_cash": "现金不够",
     "t1": "T+1 不能卖",
     "suspension": "停牌",
+    "missing_bar": "缺行情不能成交",
 }
 
 
@@ -646,11 +647,17 @@ def _shadow_block_label(event: dict[str, Any]) -> str:
     return _SHADOW_BLOCK_LABELS.get(reason, reason)
 
 
-def build_shadow_feishu_card(snapshot: dict[str, Any]) -> dict[str, Any]:
+def build_shadow_feishu_card(
+    snapshot: dict[str, Any],
+    *,
+    status: str | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
     events = snapshot.get("today_events") if isinstance(snapshot.get("today_events"), list) else []
     as_of = snapshot.get("as_of") or account.get("as_of") or "n/a"
+    stale = status in {"failed", "skipped"}
     fills = [item for item in events if item.get("event_type") in {"fill_buy", "fill_sell"}]
     blocked = [
         item
@@ -661,6 +668,8 @@ def build_shadow_feishu_card(snapshot: dict[str, Any]) -> dict[str, Any]:
         f"**净值 {_cny(account.get('equity'))}**　现金 {_cny(account.get('cash'))}　市值 {_cny(account.get('market_value'))}",
         f"累计盈亏 {_signed_cny(account.get('pnl_total'))}　当日 {_signed_cny(account.get('pnl_day'))}　基准 {_cny(account.get('initial_capital') or 100000)}",
     ]
+    if stale:
+        lines.insert(0, f"<font color='red'>**影子账户未刷新（{status}）**</font>\n{message or '未写入现金账本'}")
     elements: list[dict[str, Any]] = [_div("\n".join(lines))]
     hold_lines = ["<font color='blue'>**持仓**</font>"]
     if positions:
@@ -713,10 +722,10 @@ def build_shadow_feishu_card(snapshot: dict[str, Any]) -> dict[str, Any]:
             "style": {"text_size": {"normal_v2": {"default": "normal", "pc": "normal", "mobile": "normal"}}},
         },
         "header": {
-            "template": "blue",
+            "template": "orange" if stale else "blue",
             "title": {
                 "tag": "plain_text",
-                "content": f"影子账户｜现金账本｜{as_of}",
+                "content": f"影子账户｜{'未刷新' if stale else '现金账本'}｜{as_of}",
             },
         },
         "body": {

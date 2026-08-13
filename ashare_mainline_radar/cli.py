@@ -121,7 +121,11 @@ def main(argv: list[str] | None = None) -> int:
             f"{type(exc).__name__}: {exc}",
             empty_snapshot(report.data_as_of),
         )
-    shadow_card = build_shadow_feishu_card(shadow_status.snapshot)
+    shadow_card = build_shadow_feishu_card(
+        shadow_status.snapshot,
+        status=shadow_status.status,
+        message=shadow_status.message,
+    )
     shadow_card_path = args.output_dir / "shadow_card.json"
     shadow_card_path.write_text(json.dumps(shadow_card, ensure_ascii=False, indent=2), encoding="utf-8")
     (args.output_dir / "shadow_status.json").write_text(
@@ -163,15 +167,22 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"Feishu notification failed: code={status.code} message={status.message}")
             shadow_webhook = args.shadow_feishu_webhook_url or args.feishu_webhook_url
-            shadow_notify = post_feishu_card(shadow_webhook, shadow_card)
-            write_feishu_status(args.output_dir / "shadow_notification_status.json", shadow_notify)
-            if shadow_notify.status == "sent":
-                print("Sent shadow account Feishu notification.")
+            if shadow_status.status == "refreshed":
+                shadow_notify = post_feishu_card(shadow_webhook, shadow_card)
+                write_feishu_status(args.output_dir / "shadow_notification_status.json", shadow_notify)
+                if shadow_notify.status == "sent":
+                    print("Sent shadow account Feishu notification.")
+                else:
+                    print(
+                        f"Shadow Feishu notification failed: code={shadow_notify.code} message={shadow_notify.message}"
+                    )
             else:
-                print(
-                    f"Shadow Feishu notification failed: code={shadow_notify.code} message={shadow_notify.message}"
-                )
-            if args.fail_on_feishu_error and (status.status != "sent" or shadow_notify.status != "sent"):
+                shadow_notify = FeishuStatus(status="skipped", message=shadow_status.message)
+                write_feishu_status(args.output_dir / "shadow_notification_status.json", shadow_notify)
+                print(f"Skipped shadow Feishu card: {shadow_status.status}; {shadow_status.message}")
+            if args.fail_on_feishu_error and (
+                status.status != "sent" or (shadow_status.status == "refreshed" and shadow_notify.status != "sent")
+            ):
                 return 2
     if args.fail_on_storage_error and storage_status.status == "failed":
         return 3

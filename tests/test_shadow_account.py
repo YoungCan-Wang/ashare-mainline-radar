@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from ashare_mainline_radar.execution import TradingCostModel
-from ashare_mainline_radar.feishu import build_feishu_card, build_shadow_feishu_card
+from ashare_mainline_radar.feishu import FeishuStatus, build_feishu_card, build_shadow_feishu_card
 from ashare_mainline_radar.models import (
     AccumulationReport,
     ExpectationGapReport,
@@ -20,10 +22,12 @@ from ashare_mainline_radar.models import (
     TargetPriceReport,
     TradingGate,
 )
+from ashare_mainline_radar.paper_strategies import PRODUCTION_PAPER_STRATEGY
 from ashare_mainline_radar.shadow_account import (
     SHADOW_INITIAL_CAPITAL,
     execute_shadow_day,
     lot_size,
+    refresh_shadow_account,
     seed_account,
 )
 
@@ -186,10 +190,10 @@ def test_sealed_limit_up_blocks_buy_and_limit_down_blocks_sell() -> None:
     assert account["cash"] == 92000.0
 
 
-def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
-    report = RadarReport(
+def _radar_report(as_of: str = "2026-07-03") -> RadarReport:
+    return RadarReport(
         generated_at="2026-06-29T00:00:00+00:00",
-        data_as_of="2026-07-03",
+        data_as_of=as_of,
         mode="curated",
         universe="CN_Equity_A",
         scanned_symbols=0,
@@ -230,6 +234,78 @@ def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
         source_statuses=[],
         warnings=[],
     )
+
+
+class _MemoryResponse:
+    status = 204
+
+    def __init__(self, payload: bytes = b"[]"):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self):
+        return self.payload
+
+
+class _MemorySupabase:
+    def __init__(self, tables: dict | None = None):
+        self.tables = {name: [dict(row) for row in rows] for name, rows in (tables or {}).items()}
+        self.requests: list = []
+
+    def opener(self, request, timeout):
+        self.requests.append(request)
+        table = urlparse(request.full_url).path.rstrip("/").rsplit("/", 1)[-1]
+        filters = {key: values[0] for key, values in parse_qs(urlparse(request.full_url).query).items()}
+        rows = self.tables.setdefault(table, [])
+        method = request.get_method()
+        if method == "GET":
+            matched = [row for row in rows if self._match(row, filters)]
+            return _MemoryResponse(json.dumps(matched).encode("utf-8"))
+        if method == "POST":
+            payload = json.loads(request.data.decode("utf-8") if request.data else "[]")
+            conflict = [part.strip() for part in str(filters.get("on_conflict") or "").split(",") if part.strip()]
+            for item in payload:
+                idx = next(
+                    (
+                        i
+                        for i, old in enumerate(rows)
+                        if conflict and all(str(old.get(key)) == str(item.get(key)) for key in conflict)
+                    ),
+                    None,
+                )
+                if idx is None:
+                    rows.append(dict(item))
+                else:
+                    rows[idx] = {**rows[idx], **item}
+            return _MemoryResponse()
+        if method == "DELETE":
+            self.tables[table] = [row for row in rows if not self._match(row, filters)]
+            return _MemoryResponse()
+        return _MemoryResponse()
+
+    @staticmethod
+    def _match(row: dict, filters: dict[str, str]) -> bool:
+        for key, raw in filters.items():
+            if key in {"select", "offset", "limit", "order", "on_conflict"}:
+                continue
+            value = str(row.get(key) if row.get(key) is not None else "")
+            if raw.startswith("eq."):
+                if value != raw[3:]:
+                    return False
+            elif raw.startswith("in.("):
+                items = [item.strip().strip('"') for item in raw[4:-1].split(",") if item.strip()]
+                if value not in items:
+                    return False
+        return True
+
+
+def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
+    report = _radar_report()
     radar = build_feishu_card(report)
     shadow = build_shadow_feishu_card(
         {
@@ -288,3 +364,255 @@ def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
     assert "当前主线排名" not in shadow_text
     assert "涨停买不进" in shadow_text
     assert "净值" in shadow_text
+
+
+def test_sell_persist_rerun_does_not_double_credit() -> None:
+    as_of = "2026-07-04"
+    symbol = "600001.SH"
+    credited_cash = 99500.0
+    store = _MemorySupabase(
+        {
+            "shadow_account": [
+                {
+                    "account_id": "default",
+                    "cash": credited_cash,
+                    "equity": credited_cash,
+                    "market_value": 8000.0,
+                    "initial_capital": SHADOW_INITIAL_CAPITAL,
+                    "as_of": as_of,
+                }
+            ],
+            "shadow_positions": [
+                {
+                    "account_id": "default",
+                    "symbol": symbol,
+                    "name": "测试股份",
+                    "shares": 800,
+                    "sellable_shares": 800,
+                    "avg_cost": 10.01,
+                    "buy_dt": "2026-07-02",
+                    "last_mark": 10.0,
+                    "opened_at": "2026-07-02T00:00:00+00:00",
+                }
+            ],
+            "shadow_events": [
+                {
+                    "event_key": f"{as_of}:fill_sell:{symbol}",
+                    "account_id": "default",
+                    "as_of": as_of,
+                    "symbol": symbol,
+                    "event_type": "fill_sell",
+                    "payload": {"proceeds": 7990.0},
+                }
+            ],
+            "radar_trade_events": [
+                {
+                    "symbol": symbol,
+                    "event_type": "closed",
+                    "event_date": as_of,
+                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
+                    "payload": {"raw_price": 10.0},
+                }
+            ],
+            "radar_trade_plans": [],
+            "shadow_nav_daily": [],
+        }
+    )
+    series = _series(
+        symbol,
+        ["2026-07-02", "2026-07-03", as_of],
+        [10.0, 10.1, 10.0],
+        [10.2, 10.3, 10.2],
+        [9.9, 9.9, 9.8],
+        [10.0, 10.1, 10.0],
+    )
+    status = refresh_shadow_account(
+        as_of=as_of,
+        klines={symbol: series},
+        supabase_url="https://example.supabase.co",
+        supabase_publishable_key="sb_publishable_test",
+        radar_ingest_key="ingest",
+        opener=store.opener,
+    )
+    assert status.status == "refreshed"
+    assert store.tables["shadow_account"][0]["cash"] == pytest.approx(credited_cash)
+    assert all(row["symbol"] != symbol for row in store.tables["shadow_positions"])
+    sells = [row for row in store.tables["shadow_events"] if row["event_type"] == "fill_sell"]
+    assert len(sells) == 1
+    delete_urls = [request.full_url for request in store.requests if request.get_method() == "DELETE"]
+    assert any('in.("600001.SH")' in url for url in delete_urls)
+
+
+def test_missing_bar_sets_pending_and_retries_next_session() -> None:
+    as_of = "2026-07-03"
+    next_as_of = "2026-07-04"
+    held = [
+        {
+            "account_id": "default",
+            "symbol": "600001.SH",
+            "name": "测试股份",
+            "shares": 800,
+            "sellable_shares": 800,
+            "avg_cost": 10.01,
+            "buy_dt": "2026-07-01",
+            "last_mark": 10.0,
+            "opened_at": "2026-07-01T00:00:00+00:00",
+        }
+    ]
+    stale = _series("600001.SH", ["2026-07-01", "2026-07-02"], [10.0, 10.1], [10.2, 10.3], [9.9, 9.9], [10.0, 10.1])
+    account, positions, events = execute_shadow_day(
+        {"account_id": "default", "cash": 92000.0, "equity": 100000.0, "market_value": 8000.0, "initial_capital": SHADOW_INITIAL_CAPITAL},
+        held,
+        as_of=as_of,
+        klines={"600001.SH": stale},
+        buy_intents=[],
+        sell_intents=[{"symbol": "600001.SH", "name": "测试股份", "raw_price": 10.0, "reason": "stop"}],
+        cost_model=TradingCostModel(account_capital=SHADOW_INITIAL_CAPITAL),
+    )
+    assert len(positions) == 1
+    assert positions[0]["exit_pending_reason"] == "missing_bar"
+    assert events[0]["event_type"] == "exit_delayed"
+    assert events[0]["payload"]["reason"] == "missing_bar"
+    assert account["cash"] == 92000.0
+
+    live = _series(
+        "600001.SH",
+        ["2026-07-01", "2026-07-02", "2026-07-03", next_as_of],
+        [10.0, 10.1, 10.0, 10.2],
+        [10.2, 10.3, 10.2, 10.4],
+        [9.9, 9.9, 9.8, 10.0],
+        [10.0, 10.1, 10.0, 10.3],
+    )
+    account, positions, events = execute_shadow_day(
+        account,
+        positions,
+        as_of=next_as_of,
+        klines={"600001.SH": live},
+        buy_intents=[],
+        sell_intents=[{"symbol": "600001.SH", "name": "测试股份", "reason": "missing_bar"}],
+        cost_model=TradingCostModel(account_capital=SHADOW_INITIAL_CAPITAL),
+    )
+    assert positions == []
+    assert any(item["event_type"] == "fill_sell" for item in events)
+    assert account["cash"] > 92000.0
+
+
+def test_past_as_of_does_not_mutate_live_book() -> None:
+    live_as_of = "2026-08-12"
+    store = _MemorySupabase(
+        {
+            "shadow_account": [
+                {
+                    "account_id": "default",
+                    "cash": 88000.0,
+                    "equity": 96000.0,
+                    "market_value": 8000.0,
+                    "initial_capital": SHADOW_INITIAL_CAPITAL,
+                    "as_of": live_as_of,
+                }
+            ],
+            "shadow_positions": [
+                {
+                    "account_id": "default",
+                    "symbol": "600001.SH",
+                    "name": "测试股份",
+                    "shares": 800,
+                    "sellable_shares": 800,
+                    "avg_cost": 10.01,
+                    "buy_dt": "2026-08-10",
+                    "last_mark": 10.0,
+                }
+            ],
+            "radar_trade_events": [
+                {
+                    "symbol": "600001.SH",
+                    "event_type": "opened",
+                    "event_date": "2026-07-01",
+                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
+                    "payload": {"raw_price": 10.0},
+                }
+            ],
+            "radar_trade_plans": [],
+            "shadow_events": [],
+            "shadow_nav_daily": [],
+        }
+    )
+    status = refresh_shadow_account(
+        as_of="2026-07-01",
+        klines={},
+        supabase_url="https://example.supabase.co",
+        supabase_publishable_key="sb_publishable_test",
+        radar_ingest_key="ingest",
+        opener=store.opener,
+    )
+    assert status.status == "skipped"
+    assert "historical replay" in status.message
+    assert store.tables["shadow_account"][0]["cash"] == 88000.0
+    assert store.tables["shadow_account"][0]["as_of"] == live_as_of
+    assert len(store.tables["shadow_positions"]) == 1
+    assert not any(request.get_method() in {"POST", "DELETE"} and "shadow_" in request.full_url for request in store.requests)
+
+
+def test_failed_shadow_refresh_does_not_post_empty_card(tmp_path, monkeypatch) -> None:
+    from ashare_mainline_radar import cli
+    from ashare_mainline_radar.paper_trading import PaperTradeRefreshStatus
+    from ashare_mainline_radar.shadow_account import ShadowRefreshStatus, empty_snapshot
+    from ashare_mainline_radar.storage import PersistenceStatus
+
+    posted: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(cli.MainlineRadar, "run", lambda self, **_kwargs: _radar_report())
+    monkeypatch.setattr(
+        cli,
+        "write_report",
+        lambda report, output: (
+            output.mkdir(parents=True, exist_ok=True),
+            (output / "mainline_report.md").write_text("ok", encoding="utf-8"),
+            (output / "mainline_report.json").write_text("{}", encoding="utf-8"),
+            (output / "mainline_report.md", output / "mainline_report.json"),
+        )[-1],
+    )
+    monkeypatch.setattr(
+        cli,
+        "persist_report",
+        lambda *args, **kwargs: PersistenceStatus("skipped", "none", "run", 0, 0, "off"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "refresh_paper_trades",
+        lambda *args, **kwargs: PaperTradeRefreshStatus("skipped", 0, 0, 0, "off"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "refresh_shadow_account",
+        lambda **kwargs: ShadowRefreshStatus("failed", 0, 0, 0, "ledger boom", empty_snapshot("2026-07-03")),
+    )
+
+    def fake_post(url, card, timeout=15.0):
+        posted.append((url, card["header"]["title"]["content"]))
+        return FeishuStatus(status="sent", code=0, message="ok")
+
+    monkeypatch.setattr(cli, "post_feishu_card", fake_post)
+
+    code = cli.main(
+        [
+            "--output-dir",
+            str(tmp_path),
+            "--send-feishu",
+            "--feishu-webhook-url",
+            "https://example.invalid/radar",
+            "--shadow-feishu-webhook-url",
+            "https://example.invalid/shadow",
+            "--storage-backend",
+            "none",
+        ]
+    )
+    assert code == 0
+    assert posted == [("https://example.invalid/radar", posted[0][1])]
+    assert all("影子账户" not in title for _url, title in posted)
+    notify = json.loads((tmp_path / "shadow_notification_status.json").read_text(encoding="utf-8"))
+    assert notify["status"] == "skipped"
+    assert "ledger boom" in notify["message"]
+    card = json.loads((tmp_path / "shadow_card.json").read_text(encoding="utf-8"))
+    assert "未刷新" in card["header"]["title"]["content"]
+    assert "ledger boom" in json.dumps(card, ensure_ascii=False)
