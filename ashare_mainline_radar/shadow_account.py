@@ -501,28 +501,23 @@ def _payload(row: dict[str, Any]) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _drop_sold_positions(
+def _reconcile_recorded_fills(
     account: dict[str, Any],
     positions: list[dict[str, Any]],
     applied_sells: dict[str, dict[str, Any]],
+    applied_buys: dict[str, dict[str, Any]],
     as_of: str,
 ) -> list[dict[str, Any]]:
-    """Drop leftover lots already recorded as fill_sell. Credit cash only if the book is still on a prior day."""
-    if not applied_sells:
-        return positions
+    """Apply already-persisted fills to cash when the account row is still on a prior day."""
     book_as_of = str(account.get("as_of") or "")
-    remaining: list[dict[str, Any]] = []
-    cash = float(account.get("cash") or 0)
-    for position in positions:
-        symbol = str(position["symbol"])
-        fill = applied_sells.get(symbol)
-        if fill is None:
-            remaining.append(position)
-            continue
-        if book_as_of < as_of:
+    if book_as_of < as_of:
+        cash = float(account.get("cash") or 0)
+        for fill in applied_sells.values():
             cash = _money(cash + float(_payload(fill).get("proceeds") or 0))
-    account["cash"] = _money(cash)
-    return remaining
+        for fill in applied_buys.values():
+            cash = _money(cash - float(_payload(fill).get("debit") or 0))
+        account["cash"] = cash
+    return [item for item in positions if str(item["symbol"]) not in applied_sells]
 
 
 def refresh_shadow_account(
@@ -625,7 +620,13 @@ def refresh_shadow_account(
     )
     applied_sells = _fill_symbols(ledger_events, "fill_sell")
     applied_buys = _fill_symbols(ledger_events, "fill_buy")
-    positions = _drop_sold_positions(account, [dict(item) for item in positions], applied_sells, as_of)
+    positions = _reconcile_recorded_fills(
+        account,
+        [dict(item) for item in positions],
+        applied_sells,
+        applied_buys,
+        as_of,
+    )
     buy_intents, sell_intents = _intents_from_paper(paper_events, paper_plans, positions)
     buy_intents = [item for item in buy_intents if str(item["symbol"]) not in applied_buys]
     sell_intents = [item for item in sell_intents if str(item["symbol"]) not in applied_sells]
