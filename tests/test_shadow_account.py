@@ -265,7 +265,13 @@ class _MemorySupabase:
 
     def opener(self, request, timeout):
         self.requests.append(request)
-        table = urlparse(request.full_url).path.rstrip("/").rsplit("/", 1)[-1]
+        path = urlparse(request.full_url).path.rstrip("/")
+        if "/rpc/" in path:
+            payload = json.loads(request.data.decode("utf-8") if request.data else "{}")
+            if path.rsplit("/", 1)[-1] == "apply_shadow_day":
+                self._apply_shadow_day(payload)
+            return _MemoryResponse()
+        table = path.rsplit("/", 1)[-1]
         filters = {key: values[0] for key, values in parse_qs(urlparse(request.full_url).query).items()}
         rows = self.tables.setdefault(table, [])
         method = request.get_method()
@@ -293,6 +299,34 @@ class _MemorySupabase:
             self.tables[table] = [row for row in rows if not self._match(row, filters)]
             return _MemoryResponse()
         return _MemoryResponse()
+
+    def _apply_shadow_day(self, payload: dict) -> None:
+        account = dict(payload["p_account"])
+        positions = [dict(item) for item in payload.get("p_positions") or []]
+        events = [dict(item) for item in payload.get("p_events") or []]
+        nav = dict(payload["p_nav"])
+        account_id = str(account["account_id"])
+        as_of = str(nav["as_of"])
+        accounts = self.tables.setdefault("shadow_account", [])
+        idx = next((i for i, row in enumerate(accounts) if str(row.get("account_id")) == account_id), None)
+        if idx is None:
+            accounts.append(account)
+        else:
+            accounts[idx] = {**accounts[idx], **account}
+        self.tables["shadow_positions"] = [
+            row for row in self.tables.get("shadow_positions", []) if str(row.get("account_id")) != account_id
+        ] + positions
+        self.tables["shadow_events"] = [
+            row
+            for row in self.tables.get("shadow_events", [])
+            if not (str(row.get("account_id")) == account_id and str(row.get("as_of")) == as_of)
+        ] + events
+        navs = self.tables.setdefault("shadow_nav_daily", [])
+        nav_idx = next((i for i, row in enumerate(navs) if str(row.get("as_of")) == as_of), None)
+        if nav_idx is None:
+            navs.append(nav)
+        else:
+            navs[nav_idx] = {**navs[nav_idx], **nav}
 
     @staticmethod
     def _match(row: dict, filters: dict[str, str]) -> bool:
@@ -372,45 +406,105 @@ def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
     assert "净值" in shadow_text
 
 
-def test_sell_persist_rerun_does_not_double_credit() -> None:
+def _held(symbol: str, *, buy_dt: str = "2026-07-02") -> dict:
+    return {
+        "account_id": "default",
+        "symbol": symbol,
+        "name": "测试股份",
+        "shares": 800,
+        "sellable_shares": 800,
+        "avg_cost": 10.01,
+        "buy_dt": buy_dt,
+        "last_mark": 10.0,
+        "opened_at": f"{buy_dt}T00:00:00+00:00",
+    }
+
+
+def test_day_commit_uses_one_rpc_and_same_day_rerun_is_noop() -> None:
     as_of = "2026-07-04"
+    previous = "2026-07-03"
     symbol = "600001.SH"
-    credited_cash = 99500.0
     store = _MemorySupabase(
         {
             "shadow_account": [
                 {
                     "account_id": "default",
-                    "cash": credited_cash,
-                    "equity": credited_cash,
+                    "cash": 92000.0,
+                    "equity": 100000.0,
                     "market_value": 8000.0,
                     "initial_capital": SHADOW_INITIAL_CAPITAL,
-                    "as_of": as_of,
+                    "as_of": previous,
                 }
             ],
-            "shadow_positions": [
+            "shadow_positions": [_held(symbol)],
+            "shadow_events": [],
+            "radar_trade_events": [
+                {
+                    "symbol": symbol,
+                    "event_type": "closed",
+                    "event_date": as_of,
+                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
+                    "payload": {"raw_price": 10.0},
+                }
+            ],
+            "radar_trade_plans": [],
+            "shadow_nav_daily": [{"as_of": previous, "equity": 100000.0, "cash": 92000.0, "market_value": 8000.0, "pnl_day": 0, "pnl_total": 0}],
+        }
+    )
+    series = _series(
+        symbol,
+        [previous, as_of],
+        [10.0, 10.0],
+        [10.2, 10.2],
+        [9.9, 9.8],
+        [10.0, 10.1],
+    )
+    kwargs = {
+        "as_of": as_of,
+        "klines": {symbol: series},
+        "supabase_url": "https://example.supabase.co",
+        "supabase_publishable_key": "sb_publishable_test",
+        "radar_ingest_key": "ingest",
+        "opener": store.opener,
+    }
+    first = refresh_shadow_account(**kwargs)
+    assert first.status == "refreshed"
+    assert first.message == "shadow cash ledger refreshed"
+    rpc_calls = [request for request in store.requests if "/rpc/apply_shadow_day" in request.full_url]
+    assert len(rpc_calls) == 1
+    cash_after_sell = store.tables["shadow_account"][0]["cash"]
+    assert cash_after_sell > 92000.0
+    assert store.tables["shadow_account"][0]["as_of"] == as_of
+    assert store.tables["shadow_positions"] == []
+    assert any(row["event_type"] == "fill_sell" for row in store.tables["shadow_events"])
+    assert any(row["event_type"] == "mark" for row in store.tables["shadow_events"])
+
+    second = refresh_shadow_account(**kwargs)
+    assert second.status == "refreshed"
+    assert "already committed" in second.message
+    assert store.tables["shadow_account"][0]["cash"] == pytest.approx(cash_after_sell)
+    assert len([request for request in store.requests if "/rpc/apply_shadow_day" in request.full_url]) == 1
+    assert len([row for row in store.tables["shadow_events"] if row["event_type"] == "fill_sell"]) == 1
+
+
+def test_failed_commit_retries_from_last_snapshot() -> None:
+    as_of = "2026-07-04"
+    previous = "2026-07-03"
+    symbol = "600001.SH"
+    store = _MemorySupabase(
+        {
+            "shadow_account": [
                 {
                     "account_id": "default",
-                    "symbol": symbol,
-                    "name": "测试股份",
-                    "shares": 800,
-                    "sellable_shares": 800,
-                    "avg_cost": 10.01,
-                    "buy_dt": "2026-07-02",
-                    "last_mark": 10.0,
-                    "opened_at": "2026-07-02T00:00:00+00:00",
+                    "cash": 92000.0,
+                    "equity": 100000.0,
+                    "market_value": 8000.0,
+                    "initial_capital": SHADOW_INITIAL_CAPITAL,
+                    "as_of": previous,
                 }
             ],
-            "shadow_events": [
-                {
-                    "event_key": f"{as_of}:fill_sell:{symbol}",
-                    "account_id": "default",
-                    "as_of": as_of,
-                    "symbol": symbol,
-                    "event_type": "fill_sell",
-                    "payload": {"proceeds": 7990.0},
-                }
-            ],
+            "shadow_positions": [_held(symbol)],
+            "shadow_events": [],
             "radar_trade_events": [
                 {
                     "symbol": symbol,
@@ -424,14 +518,69 @@ def test_sell_persist_rerun_does_not_double_credit() -> None:
             "shadow_nav_daily": [],
         }
     )
-    series = _series(
-        symbol,
-        ["2026-07-02", "2026-07-03", as_of],
-        [10.0, 10.1, 10.0],
-        [10.2, 10.3, 10.2],
-        [9.9, 9.9, 9.8],
-        [10.0, 10.1, 10.0],
+    failed = {"once": False}
+
+    def opener(request, timeout):
+        if "/rpc/apply_shadow_day" in request.full_url and not failed["once"]:
+            failed["once"] = True
+            raise RuntimeError("commit boom")
+        return store.opener(request, timeout)
+
+    series = _series(symbol, [previous, as_of], [10.0, 10.0], [10.2, 10.2], [9.9, 9.8], [10.0, 10.1])
+    kwargs = {
+        "as_of": as_of,
+        "klines": {symbol: series},
+        "supabase_url": "https://example.supabase.co",
+        "supabase_publishable_key": "sb_publishable_test",
+        "radar_ingest_key": "ingest",
+        "opener": opener,
+    }
+    with pytest.raises(RuntimeError, match="commit boom"):
+        refresh_shadow_account(**kwargs)
+    assert store.tables["shadow_account"][0]["cash"] == pytest.approx(92000.0)
+    assert store.tables["shadow_account"][0]["as_of"] == previous
+    assert len(store.tables["shadow_positions"]) == 1
+    assert store.tables["shadow_events"] == []
+
+    status = refresh_shadow_account(**kwargs)
+    assert status.status == "refreshed"
+    assert store.tables["shadow_account"][0]["cash"] > 92000.0
+    assert store.tables["shadow_account"][0]["as_of"] == as_of
+    assert store.tables["shadow_positions"] == []
+    assert len([row for row in store.tables["shadow_events"] if row["event_type"] == "fill_sell"]) == 1
+
+
+def test_first_seed_commits_as_of_only_after_rpc() -> None:
+    as_of = "2026-07-04"
+    symbol = "600001.SH"
+    store = _MemorySupabase(
+        {
+            "shadow_account": [],
+            "shadow_positions": [],
+            "shadow_events": [],
+            "radar_trade_events": [
+                {
+                    "symbol": symbol,
+                    "event_type": "opened",
+                    "event_date": as_of,
+                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
+                    "payload": {"raw_price": 10.0, "name": "测试股份"},
+                }
+            ],
+            "radar_trade_plans": [
+                {
+                    "symbol": symbol,
+                    "name": "测试股份",
+                    "last_evaluated_date": as_of,
+                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
+                    "initial_position_fraction": 1 / 12,
+                    "max_position_fraction": 0.25,
+                }
+            ],
+            "shadow_nav_daily": [],
+        }
     )
+    series = _series(symbol, ["2026-07-03", as_of], [10.0, 10.0], [10.2, 10.3], [9.9, 9.9], [10.0, 10.1])
     status = refresh_shadow_account(
         as_of=as_of,
         klines={symbol: series},
@@ -441,292 +590,11 @@ def test_sell_persist_rerun_does_not_double_credit() -> None:
         opener=store.opener,
     )
     assert status.status == "refreshed"
-    assert store.tables["shadow_account"][0]["cash"] == pytest.approx(credited_cash)
-    assert all(row["symbol"] != symbol for row in store.tables["shadow_positions"])
-    sells = [row for row in store.tables["shadow_events"] if row["event_type"] == "fill_sell"]
-    assert len(sells) == 1
-    delete_urls = [request.full_url for request in store.requests if request.get_method() == "DELETE"]
-    assert any('in.("600001.SH")' in url for url in delete_urls)
-
-
-def test_sell_rerun_credits_when_account_row_is_behind() -> None:
-    as_of = "2026-07-04"
-    previous = "2026-07-03"
-    symbol = "600001.SH"
-    pre_sell_cash = 92000.0
-    proceeds = 7990.0
-    store = _MemorySupabase(
-        {
-            "shadow_account": [
-                {
-                    "account_id": "default",
-                    "cash": pre_sell_cash,
-                    "equity": 100000.0,
-                    "market_value": 8000.0,
-                    "initial_capital": SHADOW_INITIAL_CAPITAL,
-                    "as_of": previous,
-                }
-            ],
-            "shadow_positions": [],
-            "shadow_events": [
-                {
-                    "event_key": f"{as_of}:fill_sell:{symbol}",
-                    "account_id": "default",
-                    "as_of": as_of,
-                    "symbol": symbol,
-                    "event_type": "fill_sell",
-                    "payload": {"proceeds": proceeds},
-                }
-            ],
-            "radar_trade_events": [
-                {
-                    "symbol": symbol,
-                    "event_type": "closed",
-                    "event_date": as_of,
-                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
-                    "payload": {"raw_price": 10.0},
-                }
-            ],
-            "radar_trade_plans": [],
-            "shadow_nav_daily": [],
-        }
-    )
-    status = refresh_shadow_account(
-        as_of=as_of,
-        klines={
-            symbol: _series(
-                symbol,
-                [previous, as_of],
-                [10.0, 10.0],
-                [10.2, 10.2],
-                [9.9, 9.8],
-                [10.0, 10.0],
-            )
-        },
-        supabase_url="https://example.supabase.co",
-        supabase_publishable_key="sb_publishable_test",
-        radar_ingest_key="ingest",
-        opener=store.opener,
-    )
-    assert status.status == "refreshed"
-    assert store.tables["shadow_account"][0]["cash"] == pytest.approx(pre_sell_cash + proceeds)
     assert store.tables["shadow_account"][0]["as_of"] == as_of
-    assert store.tables["shadow_positions"] == []
-    assert len([row for row in store.tables["shadow_events"] if row["event_type"] == "fill_sell"]) == 1
-
-
-def test_buy_rerun_debits_when_account_row_is_behind() -> None:
-    as_of = "2026-07-04"
-    previous = "2026-07-03"
-    symbol = "600001.SH"
-    pre_buy_cash = 100000.0
-    debit = 8009.51
-    store = _MemorySupabase(
-        {
-            "shadow_account": [
-                {
-                    "account_id": "default",
-                    "cash": pre_buy_cash,
-                    "equity": pre_buy_cash,
-                    "market_value": 0.0,
-                    "initial_capital": SHADOW_INITIAL_CAPITAL,
-                    "as_of": previous,
-                }
-            ],
-            "shadow_positions": [
-                {
-                    "account_id": "default",
-                    "symbol": symbol,
-                    "name": "测试股份",
-                    "shares": 800,
-                    "sellable_shares": 0,
-                    "avg_cost": 10.01,
-                    "buy_dt": as_of,
-                    "last_mark": 10.1,
-                    "opened_at": "2026-07-04T00:00:00+00:00",
-                }
-            ],
-            "shadow_events": [
-                {
-                    "event_key": f"{as_of}:fill_buy:{symbol}",
-                    "account_id": "default",
-                    "as_of": as_of,
-                    "symbol": symbol,
-                    "event_type": "fill_buy",
-                    "qty": 800,
-                    "payload": {"debit": debit, "raw_price": 10.0},
-                }
-            ],
-            "radar_trade_events": [
-                {
-                    "symbol": symbol,
-                    "event_type": "opened",
-                    "event_date": as_of,
-                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
-                    "payload": {"raw_price": 10.0},
-                }
-            ],
-            "radar_trade_plans": [],
-            "shadow_nav_daily": [],
-        }
-    )
-    status = refresh_shadow_account(
-        as_of=as_of,
-        klines={
-            symbol: _series(
-                symbol,
-                [previous, as_of],
-                [10.0, 10.0],
-                [10.2, 10.3],
-                [9.9, 9.9],
-                [10.0, 10.1],
-            )
-        },
-        supabase_url="https://example.supabase.co",
-        supabase_publishable_key="sb_publishable_test",
-        radar_ingest_key="ingest",
-        opener=store.opener,
-    )
-    assert status.status == "refreshed"
-    assert store.tables["shadow_account"][0]["cash"] == pytest.approx(pre_buy_cash - debit)
-    assert store.tables["shadow_account"][0]["as_of"] == as_of
-    held = [row for row in store.tables["shadow_positions"] if row["symbol"] == symbol]
-    assert len(held) == 1
-    assert held[0]["shares"] == 800
-    assert len([row for row in store.tables["shadow_events"] if row["event_type"] == "fill_buy"]) == 1
-
-
-def test_null_as_of_seed_debits_recorded_buy_once() -> None:
-    as_of = "2026-07-04"
-    symbol = "600001.SH"
-    debit = 8009.51
-    store = _MemorySupabase(
-        {
-            "shadow_account": [
-                {
-                    "account_id": "default",
-                    "cash": SHADOW_INITIAL_CAPITAL,
-                    "equity": SHADOW_INITIAL_CAPITAL,
-                    "market_value": 8080.0,
-                    "initial_capital": SHADOW_INITIAL_CAPITAL,
-                    "as_of": None,
-                }
-            ],
-            "shadow_positions": [
-                {
-                    "account_id": "default",
-                    "symbol": symbol,
-                    "name": "测试股份",
-                    "shares": 800,
-                    "sellable_shares": 0,
-                    "avg_cost": 10.01,
-                    "buy_dt": as_of,
-                    "last_mark": 10.1,
-                }
-            ],
-            "shadow_events": [
-                {
-                    "event_key": f"{as_of}:fill_buy:{symbol}",
-                    "account_id": "default",
-                    "as_of": as_of,
-                    "symbol": symbol,
-                    "event_type": "fill_buy",
-                    "qty": 800,
-                    "payload": {"debit": debit, "avg_cost": 10.01, "name": "测试股份"},
-                }
-            ],
-            "radar_trade_events": [
-                {
-                    "symbol": symbol,
-                    "event_type": "opened",
-                    "event_date": as_of,
-                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
-                    "payload": {"raw_price": 10.0},
-                }
-            ],
-            "radar_trade_plans": [],
-            "shadow_nav_daily": [],
-        }
-    )
-    status = refresh_shadow_account(
-        as_of=as_of,
-        klines={
-            symbol: _series(symbol, ["2026-07-03", as_of], [10.0, 10.0], [10.2, 10.3], [9.9, 9.9], [10.0, 10.1])
-        },
-        supabase_url="https://example.supabase.co",
-        supabase_publishable_key="sb_publishable_test",
-        radar_ingest_key="ingest",
-        opener=store.opener,
-    )
-    assert status.status == "refreshed"
-    assert store.tables["shadow_account"][0]["cash"] == pytest.approx(SHADOW_INITIAL_CAPITAL - debit)
-    assert store.tables["shadow_account"][0]["as_of"] == as_of
-    held = [row for row in store.tables["shadow_positions"] if row["symbol"] == symbol]
-    assert len(held) == 1
-    assert held[0]["shares"] == 800
-    assert len([row for row in store.tables["shadow_events"] if row["event_type"] == "fill_buy"]) == 1
-
-
-def test_missing_position_is_restored_from_fill_buy() -> None:
-    as_of = "2026-07-04"
-    previous = "2026-07-03"
-    symbol = "600001.SH"
-    debit = 8009.51
-    store = _MemorySupabase(
-        {
-            "shadow_account": [
-                {
-                    "account_id": "default",
-                    "cash": SHADOW_INITIAL_CAPITAL,
-                    "equity": SHADOW_INITIAL_CAPITAL,
-                    "market_value": 0.0,
-                    "initial_capital": SHADOW_INITIAL_CAPITAL,
-                    "as_of": previous,
-                }
-            ],
-            "shadow_positions": [],
-            "shadow_events": [
-                {
-                    "event_key": f"{as_of}:fill_buy:{symbol}",
-                    "account_id": "default",
-                    "as_of": as_of,
-                    "symbol": symbol,
-                    "event_type": "fill_buy",
-                    "qty": 800,
-                    "price": 10.005,
-                    "payload": {"debit": debit, "avg_cost": 10.01, "name": "测试股份", "raw_price": 10.0},
-                }
-            ],
-            "radar_trade_events": [
-                {
-                    "symbol": symbol,
-                    "event_type": "opened",
-                    "event_date": as_of,
-                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
-                    "payload": {"raw_price": 10.0},
-                }
-            ],
-            "radar_trade_plans": [],
-            "shadow_nav_daily": [],
-        }
-    )
-    status = refresh_shadow_account(
-        as_of=as_of,
-        klines={
-            symbol: _series(symbol, [previous, as_of], [10.0, 10.0], [10.2, 10.3], [9.9, 9.9], [10.0, 10.1])
-        },
-        supabase_url="https://example.supabase.co",
-        supabase_publishable_key="sb_publishable_test",
-        radar_ingest_key="ingest",
-        opener=store.opener,
-    )
-    assert status.status == "refreshed"
-    assert store.tables["shadow_account"][0]["cash"] == pytest.approx(SHADOW_INITIAL_CAPITAL - debit)
-    held = [row for row in store.tables["shadow_positions"] if row["symbol"] == symbol]
-    assert len(held) == 1
-    assert held[0]["shares"] == 800
-    assert held[0]["sellable_shares"] == 0
-    assert len([row for row in store.tables["shadow_events"] if row["event_type"] == "fill_buy"]) == 1
+    assert store.tables["shadow_account"][0]["cash"] < SHADOW_INITIAL_CAPITAL
+    assert len(store.tables["shadow_positions"]) == 1
+    assert store.tables["shadow_positions"][0]["shares"] == 800
+    assert any("/rpc/apply_shadow_day" in request.full_url for request in store.requests)
 
 
 def test_missing_bar_sets_pending_and_retries_next_session() -> None:

@@ -8,13 +8,6 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 DEFAULT_UPSERT_BATCH_SIZE = 100
-_POSTGREST_IN_SAFE = ",.*(){}\""
-
-
-def quoted_in(values: list[str]) -> str:
-    """PostgREST ``in.()`` with quoted values so ``600001.SH`` is not a JSON path."""
-    inner = ",".join(f'"{str(value).replace(chr(34), "")}"' for value in values)
-    return f"in.({inner})"
 
 
 def request_headers(api_key: str, ingest_key: str | None = None) -> dict[str, str]:
@@ -127,27 +120,29 @@ def upsert_rows(
             raise RuntimeError(format_http_error(exc, context=f"Supabase upsert to {table} failed")) from exc
 
 
-def delete_rows(
+def call_rpc(
     base_url: str,
     api_key: str,
     ingest_key: str | None,
-    table: str,
-    filters: dict[str, str],
+    function_name: str,
+    payload: dict[str, Any],
     opener: Callable[..., Any] = urlopen,
-) -> None:
-    if not filters:
-        raise ValueError("delete_rows requires filters")
+) -> Any:
     headers = request_headers(api_key, ingest_key)
-    headers["Prefer"] = "return=minimal"
+    headers["Content-Type"] = "application/json"
     request = Request(
-        f"{base_url.rstrip('/')}/rest/v1/{table}?{urlencode(filters, safe=_POSTGREST_IN_SAFE)}",
-        data=b"",
-        method="DELETE",
+        f"{base_url.rstrip('/')}/rest/v1/rpc/{function_name}",
+        data=json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8"),
+        method="POST",
         headers=headers,
     )
     try:
         with opener(request, timeout=30) as response:
             if not 200 <= response.status < 300:
-                raise RuntimeError(f"Supabase delete from {table} returned HTTP {response.status}")
+                raise RuntimeError(f"Supabase rpc {function_name} returned HTTP {response.status}")
+            raw = response.read()
     except HTTPError as exc:
-        raise RuntimeError(format_http_error(exc, context=f"Supabase delete from {table} failed")) from exc
+        raise RuntimeError(format_http_error(exc, context=f"Supabase rpc {function_name} failed")) from exc
+    if not raw:
+        return None
+    return json.loads(raw.decode("utf-8"))
