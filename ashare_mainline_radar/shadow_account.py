@@ -63,13 +63,15 @@ def _session_bar(series: KlineSeries | None, as_of: str) -> tuple[dict[str, floa
 
 
 def seed_account(as_of: str | None = None) -> dict[str, Any]:
+    """Uncommitted singleton; as_of stays null until a successful account upsert."""
+    _ = as_of
     return {
         "account_id": SHADOW_ACCOUNT_ID,
         "cash": SHADOW_INITIAL_CAPITAL,
         "equity": SHADOW_INITIAL_CAPITAL,
         "market_value": 0.0,
         "initial_capital": SHADOW_INITIAL_CAPITAL,
-        "as_of": as_of,
+        "as_of": None,
         "updated_at": _now(),
     }
 
@@ -501,6 +503,47 @@ def _payload(row: dict[str, Any]) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _committed_as_of(account: dict[str, Any]) -> str:
+    value = account.get("as_of")
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text in {"", "None", "null"} else text
+
+
+def _session_uncommitted(book_as_of: str, as_of: str) -> bool:
+    return not book_as_of or book_as_of < as_of
+
+
+def _position_from_buy_fill(fill: dict[str, Any], as_of: str) -> dict[str, Any] | None:
+    payload = _payload(fill)
+    symbol = str(fill.get("symbol") or "")
+    qty = int(fill.get("qty") or payload.get("qty") or payload.get("shares") or 0)
+    if not symbol or qty <= 0:
+        return None
+    debit = float(payload.get("debit") or 0)
+    avg_cost = float(payload.get("avg_cost") or 0)
+    if avg_cost <= 0 and debit > 0:
+        avg_cost = _money(debit / qty)
+    if avg_cost <= 0:
+        avg_cost = float(fill.get("price") or payload.get("raw_price") or 0)
+    if avg_cost <= 0:
+        return None
+    buy_dt = str(fill.get("as_of") or as_of)
+    return {
+        "account_id": SHADOW_ACCOUNT_ID,
+        "symbol": symbol,
+        "name": str(payload.get("name") or symbol),
+        "shares": qty,
+        "sellable_shares": 0 if not buy_dt or buy_dt >= as_of else qty,
+        "avg_cost": _money(avg_cost),
+        "buy_dt": buy_dt,
+        "last_mark": _money(float(fill.get("price") or avg_cost)),
+        "opened_at": str(fill.get("created_at") or _now()),
+        "exit_pending_reason": None,
+    }
+
+
 def _reconcile_recorded_fills(
     account: dict[str, Any],
     positions: list[dict[str, Any]],
@@ -508,16 +551,26 @@ def _reconcile_recorded_fills(
     applied_buys: dict[str, dict[str, Any]],
     as_of: str,
 ) -> list[dict[str, Any]]:
-    """Apply already-persisted fills to cash when the account row is still on a prior day."""
-    book_as_of = str(account.get("as_of") or "")
-    if book_as_of < as_of:
+    """Replay persisted fills onto cash/lots when this session is not committed yet."""
+    book_as_of = _committed_as_of(account)
+    if _session_uncommitted(book_as_of, as_of):
         cash = float(account.get("cash") or 0)
         for fill in applied_sells.values():
             cash = _money(cash + float(_payload(fill).get("proceeds") or 0))
         for fill in applied_buys.values():
             cash = _money(cash - float(_payload(fill).get("debit") or 0))
         account["cash"] = cash
-    return [item for item in positions if str(item["symbol"]) not in applied_sells]
+    held = [item for item in positions if str(item["symbol"]) not in applied_sells]
+    held_symbols = {str(item["symbol"]) for item in held}
+    for symbol, fill in applied_buys.items():
+        if symbol in held_symbols or symbol in applied_sells:
+            continue
+        restored = _position_from_buy_fill(fill, as_of)
+        if restored is None:
+            continue
+        held.append(restored)
+        held_symbols.add(symbol)
+    return held
 
 
 def refresh_shadow_account(
@@ -556,7 +609,7 @@ def refresh_shadow_account(
         filters={"account_id": f"eq.{SHADOW_ACCOUNT_ID}"},
         opener=opener,
     )
-    account = dict(accounts[0]) if accounts else seed_account(as_of)
+    account = dict(accounts[0]) if accounts else seed_account()
     if not accounts:
         upsert_rows(url, api_key, ingest_key, "shadow_account", "account_id", [account], opener)
 
@@ -570,7 +623,7 @@ def refresh_shadow_account(
         filters={"account_id": f"eq.{SHADOW_ACCOUNT_ID}"},
         opener=opener,
     )
-    book_as_of = str(account.get("as_of") or "")
+    book_as_of = _committed_as_of(account)
     if book_as_of and book_as_of > as_of:
         snapshot = _snapshot(account, [dict(item) for item in positions], [], 0.0)
         return ShadowRefreshStatus(
