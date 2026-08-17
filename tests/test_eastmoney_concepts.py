@@ -1,5 +1,8 @@
+import urllib.error
+
 from ashare_mainline_radar.eastmoney_concepts import (
     THEME_PRESETS,
+    _request_json,
     build_theme_from_preset,
     code_to_symbol,
     filter_boards,
@@ -46,6 +49,55 @@ def test_select_scoring_symbols_keeps_seed_leaders_first() -> None:
     )
     assert symbols[:2] == ["600519.SH", "000333.SZ"]
     assert symbols[2] in {"600199.SH", "002050.SZ"}
+
+
+def test_one_board_502_does_not_abort_all_presets() -> None:
+    """A 502 on BK0509 (传媒游戏 / 网络游戏) must not kill --all-presets."""
+
+    def fake_fetch(board_code: str, pages: int = 2) -> list[dict]:
+        if board_code == "BK0509":
+            raise RuntimeError(
+                "East Money request failed for BK0509: HTTP Error 502: Bad Gateway"
+            )
+        return [{"symbol": "600000.SH", "code": "600000", "amount": 1}]
+
+    themes = [
+        build_theme_from_preset(name, as_of="2026-08-17", fetch_constituents=fake_fetch)
+        for name in THEME_PRESETS
+    ]
+    assert len(themes) == len(THEME_PRESETS)
+    media = next(theme for theme in themes if theme["name"] == "传媒游戏")
+    assert media["symbols"][0] == THEME_PRESETS["传媒游戏"]["seed_symbols"][0]
+    assert "BK0509" in media["source"]
+
+
+def test_request_json_rides_out_seven_502s(monkeypatch) -> None:
+    """CDN 502 streaks of 7 must not exhaust retries before a 200 lands."""
+    from ashare_mainline_radar import eastmoney_concepts as em
+
+    calls = {"n": 0}
+
+    class _Resp:
+        def read(self) -> bytes:
+            return b'{"data":{"diff":[]}}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=45.0):
+        calls["n"] += 1
+        if calls["n"] <= 7:
+            raise urllib.error.HTTPError(request.full_url, 502, "Bad Gateway", hdrs=None, fp=None)
+        return _Resp()
+
+    monkeypatch.setattr(em.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(em.time, "sleep", lambda _seconds: None)
+    payload = _request_json("https://example.test/clist")
+    assert payload["data"]["diff"] == []
+    assert calls["n"] == 8
 
 
 def test_build_theme_from_preset_uses_fetcher() -> None:
