@@ -36,7 +36,14 @@ def _print_theme(theme: dict) -> None:
 def _build(preset: str, *, offline: bool, as_of: str | None) -> dict:
     if offline:
         return offline_theme_from_preset(preset, as_of=as_of)
-    return build_theme_from_preset(preset, as_of=as_of)
+    try:
+        return build_theme_from_preset(preset, as_of=as_of)
+    except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
+        print(
+            f"warning: live preset {preset} failed; falling back to seed symbols: {exc}",
+            file=sys.stderr,
+        )
+        return offline_theme_from_preset(preset, as_of=as_of)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -8,14 +8,26 @@ concept. These helpers refresh baskets from BK boards and keep leader seeds stab
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
 
-DEFAULT_UA = "Mozilla/5.0 (compatible; ashare-mainline-radar/0.1)"
+# Browser-like headers: GitHub-hosted runners with a bot UA commonly get HTTP 502
+# from East Money clist (push2.eastmoney.com).
+DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+DEFAULT_HEADERS = {
+    "User-Agent": DEFAULT_UA,
+    "Referer": "https://quote.eastmoney.com/",
+    "Accept": "application/json, text/javascript, */*;q=0.1",
+}
 BOARD_LIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
+TRANSIENT_HTTP_CODES = {429, 502, 503, 504}
 BOARD_FS = {
     "concept": "m:90+t:3+f:!50",
     "industry": "m:90+t:2+f:!50",
@@ -399,7 +411,7 @@ def _request_json(url: str, timeout: float = 45.0, retries: int = 3) -> dict[str
     last_error: Exception | None = None
     for attempt in range(retries):
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
+            request = urllib.request.Request(url, headers=DEFAULT_HEADERS)
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             if not isinstance(payload, dict):
@@ -407,8 +419,15 @@ def _request_json(url: str, timeout: float = 45.0, retries: int = 3) -> dict[str
             return payload
         except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             last_error = exc
-            time.sleep(1.2 * (attempt + 1))
+            if attempt + 1 >= retries:
+                break
+            backoff = 2.4 if _is_transient_http(exc) else 1.2
+            time.sleep(backoff * (attempt + 1))
     raise RuntimeError(f"East Money request failed for {url}: {last_error}") from last_error
+
+
+def _is_transient_http(exc: BaseException) -> bool:
+    return isinstance(exc, urllib.error.HTTPError) and exc.code in TRANSIENT_HTTP_CODES
 
 
 def fetch_board_list(kind: str = "concept", pages: int = 8, page_size: int = 100) -> list[dict[str, Any]]:
@@ -575,21 +594,34 @@ def build_theme_from_preset(
     preset_name: str,
     *,
     as_of: str | None = None,
-    fetch_constituents=fetch_board_constituents,
+    fetch_constituents=None,
 ) -> dict[str, Any]:
-    """Materialize a theme dict from a preset and live East Money constituents."""
+    """Materialize a theme dict from a preset and live East Money constituents.
+
+    A single flaky board (HTTP 502/503/timeout after retries) must not abort the
+    preset: that board contributes no live fill, and seed_symbols still lead.
+    """
     preset = THEME_PRESETS.get(preset_name)
     if not preset:
         known = ", ".join(sorted(THEME_PRESETS))
         raise KeyError(f"unknown preset {preset_name!r}; known: {known}")
 
+    fetch = fetch_constituents or fetch_board_constituents
     constituents_by_board: dict[str, list[dict[str, Any]]] = {}
     board_labels: list[str] = []
     for board in preset["boards"]:
         code = str(board["code"])
         label = str(board["name"])
         board_labels.append(f"{label}({code})")
-        constituents_by_board[code] = fetch_constituents(code, pages=2)
+        try:
+            constituents_by_board[code] = fetch(code, pages=2)
+        except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
+            print(
+                f"warning: East Money board {code} ({label}) fetch failed; "
+                f"continuing with seed/other-board fill: {exc}",
+                file=sys.stderr,
+            )
+            constituents_by_board[code] = []
 
     symbols = select_scoring_symbols(
         constituents_by_board,
