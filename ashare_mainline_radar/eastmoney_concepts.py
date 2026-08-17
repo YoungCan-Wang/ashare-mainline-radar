@@ -15,8 +15,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-# Browser-like headers: GitHub-hosted runners with a bot UA commonly get HTTP 502
-# from East Money clist (push2.eastmoney.com).
+# Browser-like headers. East Money clist from non-China IPs (GitHub runners)
+# flip-flops 200 vs 502 regardless of UA; headers are cheap, retries matter.
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -28,6 +28,9 @@ DEFAULT_HEADERS = {
 }
 BOARD_LIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 TRANSIENT_HTTP_CODES = {429, 502, 503, 504}
+# 3 short retries (~7s) lose to a 7-in-a-row 502 streak. Weekly job can wait.
+TRANSIENT_RETRIES = 8
+TRANSIENT_BACKOFF_SECONDS = 2.4
 BOARD_FS = {
     "concept": "m:90+t:3+f:!50",
     "industry": "m:90+t:2+f:!50",
@@ -409,7 +412,8 @@ def code_to_symbol(code: str) -> str:
 
 def _request_json(url: str, timeout: float = 45.0, retries: int = 3) -> dict[str, Any]:
     last_error: Exception | None = None
-    for attempt in range(retries):
+    attempt = 0
+    while True:
         try:
             request = urllib.request.Request(url, headers=DEFAULT_HEADERS)
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -419,10 +423,12 @@ def _request_json(url: str, timeout: float = 45.0, retries: int = 3) -> dict[str
             return payload
         except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             last_error = exc
-            if attempt + 1 >= retries:
+            attempt += 1
+            limit = TRANSIENT_RETRIES if _is_transient_http(exc) else retries
+            if attempt >= limit:
                 break
-            backoff = 2.4 if _is_transient_http(exc) else 1.2
-            time.sleep(backoff * (attempt + 1))
+            backoff = TRANSIENT_BACKOFF_SECONDS if _is_transient_http(exc) else 1.2
+            time.sleep(backoff * attempt)
     raise RuntimeError(f"East Money request failed for {url}: {last_error}") from last_error
 
 
