@@ -158,9 +158,13 @@ def trace_theme_lifecycle(
                     next_stage = "退潮预警"
 
         if next_stage != stage:
+            # 主线确认→主线延续 is an automatic label rename for the same
+            # confirmed phase; keep stage_since at the original 确认 date.
+            rename_only = stage == "主线确认" and next_stage == "主线延续"
             previous_stage = stage
             stage = next_stage
-            stage_since = point.date
+            if not rename_only:
+                stage_since = point.date
             transition_index = index
 
     latest = points[-1]
