@@ -95,6 +95,24 @@ def test_failed_false_start_resets_before_next_round() -> None:
     assert signal.confirmed_at == "2026-06-30"
 
 
+def test_confirm_to_continuation_keeps_stage_since() -> None:
+    points = [
+        _point("2026-08-12", "轮动观察", 0.75, 0.3, 0.02, 0.00, 1.05),
+        _point("2026-08-14", "主线成立", 0.8, 0.65, 0.04, 0.08, 1.25),
+        _point("2026-08-15", "主线成立", 0.75, 0.62, 0.03, 0.07, 1.15),
+        _point("2026-08-17", "主线成立", 0.70, 0.60, 0.025, 0.06, 1.10),
+    ]
+
+    signal = trace_theme_lifecycle("光伏", points, _theme())
+
+    assert signal is not None
+    assert signal.stage == "主线延续"
+    assert signal.started_at == "2026-08-12"
+    assert signal.confirmed_at == "2026-08-14"
+    assert signal.stage_since == "2026-08-14"
+    assert signal.previous_stage == "主线确认"
+
+
 def test_weak_market_can_keep_a_genuinely_independent_mainline() -> None:
     theme = _theme()
     theme.breadth_5d = 0.8

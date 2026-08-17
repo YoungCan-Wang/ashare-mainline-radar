@@ -197,34 +197,77 @@ def _dedupe_plans(report: RadarReport) -> list[NextBuyPlan]:
     return list({plan.symbol: plan for plan in plans}.values())
 
 
-def _attempt_ready(candidate: StrongStockCandidate | None, plan: NextBuyPlan) -> bool:
-    actionable = {
-        "优先候选，等待回踩",
-        "突破确认候选",
-        "优先候选，分批确认",
-        "主升加速，等待回踩",
-    }
-    if (
-        candidate is None
-        or plan.decision not in actionable
-        or candidate.fundamental_status == "基本面拖累"
-        or candidate.expectation_status == "利好兑现风险"
-    ):
-        return False
-    is_fund = "ETF" in candidate.name.upper() or "基金" in candidate.name
-    if candidate.fundamental_status == "未覆盖" and not is_fund:
-        return False
+_ATTEMPT_DECISIONS = {
+    "优先候选，等待回踩",
+    "突破确认候选",
+    "优先候选，分批确认",
+    "主升加速，等待回踩",
+}
+
+
+def _is_fund_name(name: str) -> bool:
+    return "ETF" in name.upper() or "基金" in name
+
+
+def _attempt_cut_reason(candidate: StrongStockCandidate | None, plan: NextBuyPlan) -> str | None:
+    """Return the first display-only 建仓 cut that failed, or None if ready."""
+    name = plan.name
+    if candidate is None:
+        return f"{name} 缺少强势回测"
+    if plan.decision not in _ATTEMPT_DECISIONS:
+        return f"{name} 决策未达建仓"
+    if candidate.fundamental_status == "基本面拖累":
+        return f"{name} 基本面拖累"
+    if candidate.expectation_status == "利好兑现风险":
+        return f"{name} 利好兑现风险"
+    if candidate.fundamental_status == "未覆盖" and not _is_fund_name(candidate.name):
+        return f"{name} 基本面未覆盖"
+    if plan.priority_score < 70:
+        return f"{name} 优先级 {plan.priority_score:.0f}<70"
     backtest = candidate.backtest
-    return bool(
-        plan.priority_score >= 70
-        and backtest
-        and backtest.signals >= 5
-        and backtest.win_rate is not None
-        and backtest.win_rate >= 0.55
-        and backtest.avg_return is not None
-        and backtest.avg_return > 0
-        and (candidate.ret_5d is None or candidate.ret_5d < 0.15)
-    )
+    if not backtest:
+        return f"{name} 无15日回测"
+    if backtest.signals < 5:
+        return f"{name} 样本 {backtest.signals}<5"
+    if backtest.win_rate is None:
+        return f"{name} 胜率缺失"
+    if backtest.win_rate < 0.55:
+        return f"{name} 胜率 {backtest.win_rate * 100:.0f}%<55%"
+    if backtest.avg_return is None:
+        return f"{name} 均值缺失"
+    if backtest.avg_return <= 0:
+        return f"{name} 均值 {backtest.avg_return * 100:.1f}%≤0"
+    if candidate.ret_5d is not None and candidate.ret_5d >= 0.15:
+        return f"{name} 5日涨幅 {candidate.ret_5d * 100:.0f}%≥15%"
+    return None
+
+
+def _attempt_ready(candidate: StrongStockCandidate | None, plan: NextBuyPlan) -> bool:
+    return _attempt_cut_reason(candidate, plan) is None
+
+
+def _empty_attempt_copy(
+    report: RadarReport,
+    candidates: dict[str, StrongStockCandidate],
+) -> str:
+    if report.trading_gate.level == "red":
+        return "**市场风险闸门已关闭，今日暂停新增仓位。**"
+    primary = report.next_buy.primary
+    if primary is None:
+        return "**今日没有同时通过15日回测、基本面和位置约束的新开仓标的。**"
+    considered = [primary, *report.next_buy.alternatives]
+    reasons: list[str] = []
+    seen: set[str] = set()
+    for plan in considered:
+        if plan.symbol in seen:
+            continue
+        seen.add(plan.symbol)
+        reason = _attempt_cut_reason(candidates.get(plan.symbol), plan)
+        if reason:
+            reasons.append(reason)
+    if not reasons:
+        return "**今日没有同时通过15日回测、基本面和位置约束的新开仓标的。**"
+    return f"**优先候选未过建仓裁切：** {'；'.join(reasons)}。"
 
 
 def _hold_ready(candidate: StrongStockCandidate, theme_phase: str | None) -> bool:
@@ -499,12 +542,7 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
         for plan in attempt:
             elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), True)))
     else:
-        message = (
-            "**市场风险闸门已关闭，今日暂停新增仓位。**"
-            if report.trading_gate.level == "red"
-            else "**今日没有同时通过15日回测、基本面和位置约束的新开仓标的。**"
-        )
-        elements.append(_div(message))
+        elements.append(_div(_empty_attempt_copy(report, candidates)))
 
     hold_title = "已有仓位：仅留强去弱" if report.trading_gate.level == "red" else "已有仓位可继续持有"
     elements.extend(

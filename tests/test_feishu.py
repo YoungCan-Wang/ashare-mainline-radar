@@ -761,3 +761,99 @@ def test_card_separates_mainline_rank_from_lifecycle_transition_order() -> None:
     assert "第1主线｜创新药｜主线延续" in contents
     assert "第3主线｜AI算力｜主线回踩" in contents
     assert contents.index("第1主线｜创新药") < contents.index("第3主线｜AI算力")
+
+
+def _candidate(
+    symbol: str,
+    name: str,
+    *,
+    signals: int,
+    win_rate: float,
+    avg_return: float = 0.05,
+    ret_5d: float = 0.04,
+    fundamental_status: str = "基本面兑现",
+) -> StrongStockCandidate:
+    return StrongStockCandidate(
+        symbol=symbol,
+        name=name,
+        theme="AI算力",
+        last_close=20,
+        score=85,
+        status="趋势延续",
+        ret_5d=ret_5d,
+        ret_20d=0.18,
+        amount_ratio=1.2,
+        high_proximity_20d=-0.03,
+        fundamental_status=fundamental_status,
+        backtest=BacktestSummary(
+            symbol=symbol,
+            name=name,
+            theme="AI算力",
+            hold_days=15,
+            signals=signals,
+            win_rate=win_rate,
+            avg_return=avg_return,
+            median_return=0.04,
+            best_return=0.12,
+            worst_return=-0.04,
+            avg_max_drawdown=-0.03,
+        ),
+    )
+
+
+def _plan(candidate: StrongStockCandidate, *, priority: float = 82) -> NextBuyPlan:
+    return NextBuyPlan(
+        symbol=candidate.symbol,
+        name=candidate.name,
+        theme=candidate.theme,
+        decision="优先候选，分批确认",
+        priority_score=priority,
+        last_close=candidate.last_close,
+        entry_plan="等待回踩确认。",
+        invalidation="跌破退出。",
+        position_note="首笔试错。",
+    )
+
+
+def test_empty_attempt_section_names_failed_cuts_when_primary_exists() -> None:
+    runze = _candidate("603893.SH", "润泽", signals=8, win_rate=0.50)
+    hangfa = _candidate("600893.SH", "航发", signals=3, win_rate=0.62)
+    report = RadarReport(
+        generated_at="2026-08-17T00:00:00+00:00",
+        data_as_of="2026-08-17",
+        mode="universe",
+        universe="CN_Equity_A",
+        scanned_symbols=1200,
+        data_source="test",
+        themes=[],
+        market_pulses=[],
+        market_structure=_market_structure(),
+        trading_gate=_green_gate(),
+        strong_stocks=StrongStockReport(
+            selected_themes=["AI算力"],
+            hold_days=15,
+            candidates=[runze, hangfa],
+        ),
+        next_buy=NextBuyReport(primary=_plan(runze), alternatives=[_plan(hangfa)]),
+        accumulation=AccumulationReport(candidates=[]),
+        golden_pits=GoldenPitReport(candidates=[]),
+        policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
+        target_prices=TargetPriceReport(estimates=[]),
+        fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+        expectation_gaps=ExpectationGapReport(signals=[]),
+        leader_tape=[],
+        market_watchlist=[],
+        intel_items=[],
+        source_statuses=[],
+        warnings=[],
+    )
+
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+
+    assert "优先候选未过建仓裁切" in contents
+    assert "润泽 胜率 50%<55%" in contents
+    assert "航发 样本 3<5" in contents
+    assert "今日没有同时通过15日回测、基本面和位置约束的新开仓标的" not in contents
