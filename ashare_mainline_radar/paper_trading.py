@@ -75,6 +75,123 @@ def _execution_plan(row: dict[str, Any]) -> TradeExecutionPlan:
     )
 
 
+def _waits_for_zone_pullback(entry_mode: str) -> bool:
+    mode = str(entry_mode or "")
+    if "breakout" in mode:
+        return False
+    return mode == "pullback_close_reclaim" or "pullback" in mode or "reclaim" in mode or "zone" in mode
+
+
+def _bar_sealed_or_halted(plan: dict[str, Any], series: KlineSeries, index: int) -> str | None:
+    bar = _bar(series, index)
+    dates = _dates(series)
+    if bar["volume"] <= 0:
+        return "suspension"
+    if is_sealed_limit_up(
+        str(plan["symbol"]),
+        str(plan["name"]),
+        dates[index],
+        series.close[index - 1],
+        day_low=bar["low"],
+        day_close=bar["close"],
+        volume=bar["volume"],
+    ):
+        return "sealed_limit_up"
+    return None
+
+
+def _open_plan(
+    plan: dict[str, Any],
+    series: KlineSeries,
+    cost_model: TradingCostModel,
+    execution: TradeExecutionPlan,
+    entry_index: int,
+    raw_price: float,
+    *,
+    price_basis: str,
+    price_note: str,
+    events: list[dict[str, Any]],
+    reason: str | None = None,
+) -> None:
+    dates = _dates(series)
+    entry_date = dates[entry_index]
+    notional = cost_model.account_capital * execution.initial_position_fraction
+    cost = apply_execution_costs(
+        raw_price,
+        raw_price,
+        entry_date,
+        entry_date,
+        notional,
+        is_fund=is_fund_security(str(plan["name"])),
+        cost_model=cost_model,
+    )
+    plan.update(
+        status="open",
+        entry_date=entry_date,
+        raw_entry_price=raw_price,
+        entry_price=cost["entry_price"],
+        buy_fee_rate=cost["buy_fee_rate"],
+        cost_payload={"buy": cost["buy_fees"]},
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    payload: dict[str, Any] = {
+        "raw_price": raw_price,
+        "buy_fees": cost["buy_fees"],
+        "price_basis": price_basis,
+        "price_note": price_note,
+    }
+    if reason:
+        payload["reason"] = reason
+    events.append(_event(plan, "opened", entry_date, float(cost["entry_price"]), **payload))
+
+
+def _block_next_open(
+    plan: dict[str, Any],
+    *,
+    entry_date: str,
+    price: float | None,
+    reason: str,
+    events: list[dict[str, Any]],
+) -> None:
+    exit_reason = "确认后下一交易日停牌，取消计划" if reason == "suspension" else "确认后下一交易日封死涨停，取消计划"
+    plan.update(status="cancelled", exit_reason=exit_reason, updated_at=datetime.now(timezone.utc).isoformat())
+    events.append(_event(plan, "entry_blocked", entry_date, price, reason=reason, price_basis=reason))
+
+
+def _fill_or_block_next_open(
+    plan: dict[str, Any],
+    series: KlineSeries,
+    cost_model: TradingCostModel,
+    execution: TradeExecutionPlan,
+    entry_index: int,
+    events: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    dates = _dates(series)
+    blocked = _bar_sealed_or_halted(plan, series, entry_index)
+    if blocked:
+        bar = _bar(series, entry_index)
+        _block_next_open(
+            plan,
+            entry_date=dates[entry_index],
+            price=None if blocked == "suspension" else bar["close"],
+            reason=blocked,
+            events=events,
+        )
+        return plan, events
+    _open_plan(
+        plan,
+        series,
+        cost_model,
+        execution,
+        entry_index,
+        _bar(series, entry_index)["open"],
+        price_basis="next_session_open",
+        price_note="确认后次日开盘价",
+        events=events,
+    )
+    return plan, events
+
+
 def _evaluate_entry(
     plan: dict[str, Any], series: KlineSeries, cost_model: TradingCostModel
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -111,69 +228,62 @@ def _evaluate_entry(
     if trigger_index is None or trigger_index + 1 >= len(dates):
         return plan, events
 
-    entry_index = trigger_index + 1
-    entry_bar = _bar(series, entry_index)
-    previous_close = series.close[entry_index - 1]
-    entry_date = dates[entry_index]
-    if entry_bar["volume"] <= 0:
-        plan.update(status="cancelled", exit_reason="确认后下一交易日停牌，取消计划")
-        events.append(
-            _event(plan, "entry_blocked", entry_date, None, reason="suspension", price_basis="suspension")
+    first_entry = trigger_index + 1
+    if not _waits_for_zone_pullback(execution.entry_mode):
+        return _fill_or_block_next_open(plan, series, cost_model, execution, first_entry, events)
+
+    zone_high = execution.entry_zone_high
+    last_search = max(first_entry, signal_index + execution.valid_for_days)
+    search_end = min(last_search, len(dates) - 1)
+    for entry_index in range(first_entry, search_end + 1):
+        if _bar_sealed_or_halted(plan, series, entry_index):
+            continue
+        bar = _bar(series, entry_index)
+        if bar["open"] <= zone_high:
+            _open_plan(
+                plan,
+                series,
+                cost_model,
+                execution,
+                entry_index,
+                bar["open"],
+                price_basis="next_session_open",
+                price_note="确认后次日开盘价",
+                events=events,
+            )
+            return plan, events
+        if bar["low"] <= zone_high:
+            _open_plan(
+                plan,
+                series,
+                cost_model,
+                execution,
+                entry_index,
+                zone_high,
+                price_basis="zone_high_limit",
+                price_note="开盘高于区间，回踩触及区间上限限价",
+                events=events,
+                reason="pullback_into_zone",
+            )
+            return plan, events
+    if len(dates) - 1 >= last_search:
+        expiry_date = dates[last_search]
+        plan.update(
+            status="expired",
+            exit_reason="确认后有效期内未回踩到买入区间",
+            updated_at=datetime.now(timezone.utc).isoformat(),
         )
-        return plan, events
-    if is_sealed_limit_up(
-        str(plan["symbol"]),
-        str(plan["name"]),
-        entry_date,
-        previous_close,
-        day_low=entry_bar["low"],
-        day_close=entry_bar["close"],
-        volume=entry_bar["volume"],
-    ):
-        plan.update(status="cancelled", exit_reason="确认后下一交易日封死涨停，取消计划")
         events.append(
             _event(
                 plan,
-                "entry_blocked",
-                entry_date,
-                entry_bar["close"],
-                reason="sealed_limit_up",
-                price_basis="sealed_limit_up",
+                "expired",
+                expiry_date,
+                None,
+                reason="entry_zone_not_touched",
+                price_basis="expired_no_zone_touch",
+                price_note="开盘高于区间，有效期内最低价未触及区间上限，未成交",
             )
         )
-        return plan, events
-
-    notional = cost_model.account_capital * execution.initial_position_fraction
-    cost = apply_execution_costs(
-        entry_bar["open"],
-        entry_bar["open"],
-        entry_date,
-        entry_date,
-        notional,
-        is_fund=is_fund_security(str(plan["name"])),
-        cost_model=cost_model,
-    )
-    plan.update(
-        status="open",
-        entry_date=entry_date,
-        raw_entry_price=entry_bar["open"],
-        entry_price=cost["entry_price"],
-        buy_fee_rate=cost["buy_fee_rate"],
-        cost_payload={"buy": cost["buy_fees"]},
-        updated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    events.append(
-        _event(
-            plan,
-            "opened",
-            entry_date,
-            float(cost["entry_price"]),
-            raw_price=entry_bar["open"],
-            buy_fees=cost["buy_fees"],
-            price_basis="next_session_open",
-            price_note="确认后次日开盘价",
-        )
-    )
     return plan, events
 
 

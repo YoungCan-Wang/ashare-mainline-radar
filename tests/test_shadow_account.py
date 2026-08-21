@@ -124,6 +124,101 @@ def test_lot_rounding_and_cash_deducts_fees() -> None:
     assert "missing_fields" not in payload
 
 
+def test_shadow_fill_uses_zone_high_when_paper_opens_on_pullback() -> None:
+    as_of = "2026-08-22"
+    series = _series(
+        "002041.SZ",
+        ["2026-08-21", as_of],
+        [9.71, 9.80],
+        [9.85, 9.85],
+        [9.70, 9.60],
+        [9.78, 9.70],
+    )
+    model = TradingCostModel(account_capital=SHADOW_INITIAL_CAPITAL)
+    account, positions, events = execute_shadow_day(
+        seed_account(as_of),
+        [],
+        as_of=as_of,
+        klines={"002041.SZ": series},
+        buy_intents=[
+            {
+                "symbol": "002041.SZ",
+                "name": "登海种业",
+                "raw_price": 9.65,
+                "initial_position_fraction": 1 / 12,
+                "max_position_fraction": 0.25,
+                "paper_event_type": "opened",
+                "paper_price_basis": "zone_high_limit",
+                "reason": "pullback_into_zone",
+                "theme": "种业",
+                "status": "open",
+                "entry_mode": "pullback_close_reclaim",
+                "confirm_price": 9.92,
+                "entry_zone_low": 9.36,
+                "entry_zone_high": 9.65,
+                "trigger_date": "2026-08-20",
+            }
+        ],
+        sell_intents=[],
+        cost_model=model,
+    )
+
+    fill = next(item for item in events if item["event_type"] == "fill_buy")
+    payload = fill["payload"]
+    assert payload["raw_price"] == 9.65
+    assert payload["session_open"] == 9.80
+    assert payload["price_basis"] == "zone_high_limit"
+    assert payload["fill_price"] == pytest.approx(9.65 * (1 + model.slippage_rate))
+    assert payload["price_note"] == "开盘高于区间，回踩触及区间上限限价成交，再加滑点"
+    assert "回踩触及区间上限买入" in payload["reason_note"]
+    assert positions[0]["shares"] > 0
+    assert account["cash"] < SHADOW_INITIAL_CAPITAL
+
+
+def test_shadow_does_not_fill_when_paper_expires_without_zone_touch() -> None:
+    as_of = "2026-08-25"
+    series = _series(
+        "002041.SZ",
+        ["2026-08-21", as_of],
+        [9.71, 9.85],
+        [9.85, 9.95],
+        [9.70, 9.74],
+        [9.78, 9.88],
+    )
+    account, positions, events = execute_shadow_day(
+        seed_account(as_of),
+        [],
+        as_of=as_of,
+        klines={"002041.SZ": series},
+        buy_intents=[
+            {
+                "symbol": "002041.SZ",
+                "name": "登海种业",
+                "paper_event_type": "expired",
+                "paper_price_basis": "expired_no_zone_touch",
+                "reason": "entry_zone_not_touched",
+                "theme": "种业",
+                "status": "expired",
+                "entry_mode": "pullback_close_reclaim",
+                "confirm_price": 9.92,
+                "entry_zone_low": 9.36,
+                "entry_zone_high": 9.65,
+                "trigger_date": "2026-08-20",
+            }
+        ],
+        sell_intents=[],
+        cost_model=TradingCostModel(account_capital=SHADOW_INITIAL_CAPITAL),
+    )
+
+    assert positions == []
+    assert account["cash"] == SHADOW_INITIAL_CAPITAL
+    assert not any(item["event_type"] == "fill_buy" for item in events)
+    expired = next(item for item in events if item["event_type"] == "expired")
+    assert expired["payload"]["price_basis"] == "expired_no_zone_touch"
+    assert "未触及区间上限" in expired["payload"]["price_note"]
+    assert "未开仓" in expired["payload"]["reason_note"]
+
+
 def test_t1_cannot_sell_same_day() -> None:
     as_of = "2026-07-03"
     series = _series(

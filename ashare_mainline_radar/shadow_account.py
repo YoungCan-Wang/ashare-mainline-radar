@@ -127,6 +127,10 @@ _PRICE_NOTES = {
         "buy": "使用纸面事件 raw_price（与当日开盘价不同），再加滑点",
         "sell": "使用纸面事件 raw_price（与当日开盘价不同），再减滑点",
     },
+    "zone_high_limit": {
+        "buy": "开盘高于区间，回踩触及区间上限限价成交，再加滑点",
+        "sell": "开盘高于区间，回踩触及区间上限限价成交，再减滑点",
+    },
     "session_close": {
         "buy": "按当日收盘价成交，再加滑点",
         "sell": "按当日收盘价成交（固定持有期），再减滑点",
@@ -137,6 +141,7 @@ _PRICE_NOTES = {
     "suspension": "当日停牌，未按开盘价成交",
     "t1": "T+1 当日买入不可卖，未成交",
     "insufficient_cash": "现金不足，未成交",
+    "expired_no_zone_touch": "开盘高于区间，有效期内最低价未触及区间上限，未成交",
 }
 
 
@@ -158,6 +163,7 @@ def _paper_intent_fields(plan: dict[str, Any], payload: dict[str, Any], event_ty
         "exit_reason": plan.get("exit_reason"),
         "paper_event_type": event_type,
         "paper_price_basis": payload.get("price_basis"),
+        "reason": payload.get("reason"),
     }
     return {key: value for key, value in fields.items() if _present(value)}
 
@@ -209,10 +215,17 @@ def _reason_note(*, side: str, intent: dict[str, Any], extra_reason: str | None 
         missing.append("theme")
     if side == "buy":
         event_type = intent.get("paper_event_type")
+        basis = str(intent.get("paper_price_basis") or "")
+        reason = str(intent.get("reason") or extra_reason or "")
         if event_type == "opened":
-            parts.append("确认后次日开盘买入")
+            if basis == "zone_high_limit" or reason == "pullback_into_zone":
+                parts.append("确认后开盘高于区间，回踩触及区间上限买入")
+            else:
+                parts.append("确认后次日开盘买入")
         elif event_type == "entry_blocked":
-            parts.append("纸面入场阻断后影子仍尝试买入")
+            parts.append("纸面入场阻断，未开仓")
+        elif event_type == "expired":
+            parts.append("有效期内未回踩到买入区间，未开仓")
         else:
             missing.append("paper_event_type")
         if _present(intent.get("status")):
@@ -588,6 +601,30 @@ def execute_shadow_day(
         symbol = str(intent["symbol"])
         if symbol in by_symbol:
             continue
+        paper_event = str(intent.get("paper_event_type") or "")
+        if paper_event in {"entry_blocked", "expired"}:
+            session = _session_bar(klines.get(symbol), as_of)
+            bar = session[0] if session else None
+            events.append(
+                _event(
+                    as_of,
+                    paper_event,
+                    symbol=symbol,
+                    price=bar["close"] if bar else None,
+                    reason=intent.get("reason") or paper_event,
+                    **_execution_fields(
+                        side="buy",
+                        intent=intent,
+                        session_open=bar["open"] if bar else None,
+                        session_close=bar["close"] if bar else None,
+                        raw_price=intent.get("raw_price"),
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=not _present(intent.get("raw_price")),
+                        branch=str(intent.get("paper_price_basis") or intent.get("reason") or paper_event),
+                    ),
+                )
+            )
+            continue
         session = _session_bar(klines.get(symbol), as_of)
         if session is None:
             events.append(
@@ -808,22 +845,11 @@ def _intents_from_paper(
             continue
         plan = plans_by_symbol.get(symbol, {})
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-        if event_type == "opened":
+        if event_type in {"opened", "entry_blocked", "expired"}:
             buy_intents.append(
                 {
                     "symbol": symbol,
                     "name": plan.get("name") or payload.get("name") or symbol,
-                    "raw_price": payload.get("raw_price") or row.get("price"),
-                    "initial_position_fraction": plan.get("initial_position_fraction") or (1 / 12),
-                    "max_position_fraction": plan.get("max_position_fraction") or 0.25,
-                    **_paper_intent_fields(plan, payload, event_type),
-                }
-            )
-        elif event_type == "entry_blocked":
-            buy_intents.append(
-                {
-                    "symbol": symbol,
-                    "name": plan.get("name") or symbol,
                     "raw_price": payload.get("raw_price") or row.get("price"),
                     "initial_position_fraction": plan.get("initial_position_fraction") or (1 / 12),
                     "max_position_fraction": plan.get("max_position_fraction") or 0.25,

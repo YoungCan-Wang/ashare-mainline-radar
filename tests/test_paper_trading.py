@@ -42,9 +42,9 @@ def test_paper_plan_opens_only_after_close_confirmation() -> None:
     series = KlineSeries(
         symbol="600001.SH",
         timestamp=_timestamps("2026-07-01", "2026-07-02", "2026-07-03"),
-        open=[100, 97, 99],
+        open=[100, 97, 98.0],
         high=[101, 100, 101],
-        low=[99, 96, 98],
+        low=[99, 96, 97],
         close=[100, 99, 100],
         volume=[100, 100, 100],
         amount=[1000, 1000, 1000],
@@ -55,10 +55,10 @@ def test_paper_plan_opens_only_after_close_confirmation() -> None:
     assert plan["status"] == "open"
     assert plan["trigger_date"] == "2026-07-02"
     assert plan["entry_date"] == "2026-07-03"
-    assert plan["entry_price"] > 99
+    assert plan["entry_price"] > 98.0
     assert [event["event_type"] for event in events] == ["triggered", "opened"]
     opened = events[-1]
-    assert opened["payload"]["raw_price"] == 99
+    assert opened["payload"]["raw_price"] == 98.0
     assert opened["payload"]["price_basis"] == "next_session_open"
     assert opened["payload"]["price_note"] == "确认后次日开盘价"
 
@@ -75,11 +75,115 @@ def test_paper_plan_cancels_when_next_open_is_sealed_limit_up() -> None:
         amount=[1000, 1000, 1000],
     )
 
-    plan, events = _evaluate_entry(_plan(), series, TradingCostModel())
+    plan, events = _evaluate_entry(
+        _plan(entry_mode="breakout_close_confirm", confirm_price=99),
+        series,
+        TradingCostModel(),
+    )
 
     assert plan["status"] == "cancelled"
     assert events[-1]["payload"]["reason"] == "sealed_limit_up"
     assert events[-1]["payload"]["price_basis"] == "sealed_limit_up"
+
+
+def _denghai_plan(**overrides):
+    return _plan(
+        plan_key="2026-08-18:002041.SZ",
+        symbol="002041.SZ",
+        name="登海种业",
+        signal_date="2026-08-18",
+        entry_mode="pullback_close_reclaim",
+        entry_zone_low=9.36,
+        entry_zone_high=9.65,
+        confirm_price=9.92,
+        stop_price=8.61,
+        **overrides,
+    )
+
+
+def _denghai_series(*, extra_dates: list[str] | None = None, extra_bars: list[tuple[float, float, float, float]] | None = None) -> KlineSeries:
+    dates = ["2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21"]
+    opens = [9.50, 9.80, 9.50, 9.71]
+    highs = [9.70, 9.90, 10.05, 9.85]
+    lows = [9.40, 9.70, 9.40, 9.70]
+    closes = [9.60, 9.85, 9.92, 9.78]
+    if extra_dates:
+        dates.extend(extra_dates)
+        for open_, high, low, close in extra_bars or []:
+            opens.append(open_)
+            highs.append(high)
+            lows.append(low)
+            closes.append(close)
+    n = len(dates)
+    return KlineSeries(
+        symbol="002041.SZ",
+        timestamp=_timestamps(*dates),
+        open=opens,
+        high=highs,
+        low=lows,
+        close=closes,
+        volume=[100] * n,
+        amount=[1000] * n,
+    )
+
+
+def test_pullback_gap_above_zone_does_not_buy_next_open() -> None:
+    plan, events = _evaluate_entry(_denghai_plan(), _denghai_series(), TradingCostModel())
+
+    assert plan["status"] == "triggered"
+    assert plan["trigger_date"] == "2026-08-20"
+    assert "entry_date" not in plan
+    assert [event["event_type"] for event in events] == ["triggered"]
+
+
+def test_pullback_later_dip_fills_at_zone_high() -> None:
+    series = _denghai_series(extra_dates=["2026-08-22"], extra_bars=[(9.80, 9.85, 9.60, 9.70)])
+
+    plan, events = _evaluate_entry(_denghai_plan(), series, TradingCostModel())
+
+    assert plan["status"] == "open"
+    assert plan["entry_date"] == "2026-08-22"
+    assert plan["raw_entry_price"] == 9.65
+    opened = events[-1]
+    assert opened["event_type"] == "opened"
+    assert opened["payload"]["raw_price"] == 9.65
+    assert opened["payload"]["price_basis"] == "zone_high_limit"
+    assert opened["payload"]["reason"] == "pullback_into_zone"
+    assert opened["payload"]["price_note"] == "开盘高于区间，回踩触及区间上限限价"
+
+
+def test_pullback_window_without_zone_touch_expires() -> None:
+    series = _denghai_series(
+        extra_dates=["2026-08-24", "2026-08-25"],
+        extra_bars=[(9.80, 9.90, 9.72, 9.82), (9.85, 9.95, 9.74, 9.88)],
+    )
+
+    plan, events = _evaluate_entry(_denghai_plan(), series, TradingCostModel())
+
+    assert plan["status"] == "expired"
+    assert plan["exit_reason"] == "确认后有效期内未回踩到买入区间"
+    expired = events[-1]
+    assert expired["event_type"] == "expired"
+    assert expired["payload"]["reason"] == "entry_zone_not_touched"
+    assert expired["payload"]["price_basis"] == "expired_no_zone_touch"
+    assert "opened" not in [event["event_type"] for event in events]
+
+
+def test_breakout_still_opens_next_day_at_open_above_zone() -> None:
+    series = _denghai_series()
+
+    plan, events = _evaluate_entry(
+        _denghai_plan(entry_mode="breakout_close_confirm"),
+        series,
+        TradingCostModel(),
+    )
+
+    assert plan["status"] == "open"
+    assert plan["entry_date"] == "2026-08-21"
+    assert plan["raw_entry_price"] == 9.71
+    opened = events[-1]
+    assert opened["payload"]["price_basis"] == "next_session_open"
+    assert opened["payload"]["raw_price"] == 9.71
 
 
 def test_paper_exit_waits_through_sealed_limit_down() -> None:
