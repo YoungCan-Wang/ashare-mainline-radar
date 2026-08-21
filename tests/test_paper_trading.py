@@ -87,18 +87,19 @@ def test_paper_plan_cancels_when_next_open_is_sealed_limit_up() -> None:
 
 
 def _denghai_plan(**overrides):
-    return _plan(
-        plan_key="2026-08-18:002041.SZ",
-        symbol="002041.SZ",
-        name="登海种业",
-        signal_date="2026-08-18",
-        entry_mode="pullback_close_reclaim",
-        entry_zone_low=9.36,
-        entry_zone_high=9.65,
-        confirm_price=9.92,
-        stop_price=8.61,
-        **overrides,
-    )
+    fields = {
+        "plan_key": "2026-08-18:002041.SZ",
+        "symbol": "002041.SZ",
+        "name": "登海种业",
+        "signal_date": "2026-08-18",
+        "entry_mode": "pullback_close_reclaim",
+        "entry_zone_low": 9.36,
+        "entry_zone_high": 9.65,
+        "confirm_price": 9.92,
+        "stop_price": 8.61,
+    }
+    fields.update(overrides)
+    return _plan(**fields)
 
 
 def _denghai_series(*, extra_dates: list[str] | None = None, extra_bars: list[tuple[float, float, float, float]] | None = None) -> KlineSeries:
