@@ -75,11 +75,46 @@ def _execution_plan(row: dict[str, Any]) -> TradeExecutionPlan:
     )
 
 
-def _waits_for_zone_pullback(entry_mode: str) -> bool:
+def _has_overnight_buy_limit(entry_mode: str) -> bool:
     mode = str(entry_mode or "")
     if "breakout" in mode:
         return False
     return mode == "pullback_close_reclaim" or "pullback" in mode or "reclaim" in mode or "zone" in mode
+
+
+def _merge_cost_payload(plan: dict[str, Any], **fields: Any) -> None:
+    payload = dict(plan.get("cost_payload") or {})
+    payload.update(fields)
+    plan["cost_payload"] = payload
+
+
+def _working_buy_order(execution: TradeExecutionPlan) -> dict[str, Any]:
+    if _has_overnight_buy_limit(execution.entry_mode):
+        limit = float(execution.entry_zone_high)
+        return {
+            "working_order_type": "overnight_limit",
+            "suggested_buy_price": limit,
+            "working_order_note": f"次日隔夜限价挂单，建议购买价 {limit}",
+        }
+    return {
+        "working_order_type": "market_on_open",
+        "working_order_note": "次日开盘价市价挂单",
+    }
+
+
+def _stamp_working_buy_order(plan: dict[str, Any], execution: TradeExecutionPlan) -> dict[str, Any]:
+    order = _working_buy_order(execution)
+    _merge_cost_payload(plan, working_order=order)
+    return order
+
+
+def _stamp_working_sell_order(plan: dict[str, Any]) -> dict[str, Any]:
+    order = {
+        "working_order_type": "market_on_open",
+        "working_order_note": "次日开盘价卖出挂单",
+    }
+    _merge_cost_payload(plan, working_sell_order=order)
+    return order
 
 
 def _bar_sealed_or_halted(plan: dict[str, Any], series: KlineSeries, index: int) -> str | None:
@@ -125,20 +160,24 @@ def _open_plan(
         is_fund=is_fund_security(str(plan["name"])),
         cost_model=cost_model,
     )
+    cost_payload = dict(plan.get("cost_payload") or {})
+    cost_payload["buy"] = cost["buy_fees"]
     plan.update(
         status="open",
         entry_date=entry_date,
         raw_entry_price=raw_price,
         entry_price=cost["entry_price"],
         buy_fee_rate=cost["buy_fee_rate"],
-        cost_payload={"buy": cost["buy_fees"]},
+        cost_payload=cost_payload,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
+    working = cost_payload.get("working_order") if isinstance(cost_payload.get("working_order"), dict) else {}
     payload: dict[str, Any] = {
         "raw_price": raw_price,
         "buy_fees": cost["buy_fees"],
         "price_basis": price_basis,
         "price_note": price_note,
+        **{key: working[key] for key in ("working_order_type", "suggested_buy_price", "working_order_note") if key in working},
     }
     if reason:
         payload["reason"] = reason
@@ -186,7 +225,7 @@ def _fill_or_block_next_open(
         entry_index,
         _bar(series, entry_index)["open"],
         price_basis="next_session_open",
-        price_note="确认后次日开盘价",
+        price_note="隔夜开盘市价挂单，按开盘价成交",
         events=events,
     )
     return plan, events
@@ -218,28 +257,32 @@ def _evaluate_entry(
             ):
                 trigger_index = index
                 plan.update(status="triggered", trigger_date=dates[index], updated_at=datetime.now(timezone.utc).isoformat())
-                events.append(_event(plan, "triggered", dates[index], bar["close"]))
+                order = _stamp_working_buy_order(plan, execution)
+                events.append(_event(plan, "triggered", dates[index], bar["close"], **order))
                 break
         if trigger_index is None and len(dates) - 1 >= signal_index + execution.valid_for_days:
             expiry_date = dates[signal_index + execution.valid_for_days]
             plan.update(status="expired", exit_reason="5个交易日内未触发", updated_at=datetime.now(timezone.utc).isoformat())
             events.append(_event(plan, "expired", expiry_date, None, reason="entry_not_triggered"))
             return plan, events
-    if trigger_index is None or trigger_index + 1 >= len(dates):
+    if trigger_index is None:
+        return plan, events
+    order = _stamp_working_buy_order(plan, execution)
+    if trigger_index + 1 >= len(dates):
         return plan, events
 
     first_entry = trigger_index + 1
-    if not _waits_for_zone_pullback(execution.entry_mode):
+    if not _has_overnight_buy_limit(execution.entry_mode):
         return _fill_or_block_next_open(plan, series, cost_model, execution, first_entry, events)
 
-    zone_high = execution.entry_zone_high
+    limit = float(order.get("suggested_buy_price") or execution.entry_zone_high)
     last_search = max(first_entry, signal_index + execution.valid_for_days)
     search_end = min(last_search, len(dates) - 1)
     for entry_index in range(first_entry, search_end + 1):
         if _bar_sealed_or_halted(plan, series, entry_index):
             continue
         bar = _bar(series, entry_index)
-        if bar["open"] <= zone_high:
+        if bar["open"] <= limit:
             _open_plan(
                 plan,
                 series,
@@ -247,30 +290,31 @@ def _evaluate_entry(
                 execution,
                 entry_index,
                 bar["open"],
-                price_basis="next_session_open",
-                price_note="确认后次日开盘价",
+                price_basis="overnight_limit_open",
+                price_note="隔夜限价挂单，开盘不高于建议购买价，按开盘价成交",
                 events=events,
+                reason="price_improvement",
             )
             return plan, events
-        if bar["low"] <= zone_high:
+        if bar["low"] <= limit:
             _open_plan(
                 plan,
                 series,
                 cost_model,
                 execution,
                 entry_index,
-                zone_high,
-                price_basis="zone_high_limit",
-                price_note="开盘高于区间，回踩触及区间上限限价",
+                limit,
+                price_basis="overnight_limit",
+                price_note="隔夜限价挂单，开盘高于建议购买价，按建议购买价限价成交",
                 events=events,
-                reason="pullback_into_zone",
+                reason="overnight_limit",
             )
             return plan, events
     if len(dates) - 1 >= last_search:
         expiry_date = dates[last_search]
         plan.update(
             status="expired",
-            exit_reason="确认后有效期内未回踩到买入区间",
+            exit_reason="确认后有效期内隔夜限价未成交",
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
         events.append(
@@ -279,9 +323,10 @@ def _evaluate_entry(
                 "expired",
                 expiry_date,
                 None,
-                reason="entry_zone_not_touched",
-                price_basis="expired_no_zone_touch",
-                price_note="开盘高于区间，有效期内最低价未触及区间上限，未成交",
+                reason="overnight_limit_not_tagged",
+                price_basis="overnight_limit_not_tagged",
+                price_note="隔夜限价挂单有效期内未触及建议购买价，未成交",
+                **{key: order[key] for key in ("working_order_type", "suggested_buy_price", "working_order_note") if key in order},
             )
         )
     return plan, events
@@ -307,9 +352,12 @@ def _evaluate_exit(
         reason = f"主线连续{exit_days_text}日退出前三"
     else:
         for index in range(entry_index, latest_index + 1):
-            if series.close[index] <= float(plan["stop_price"]) and index + 1 <= latest_index:
-                requested_index = index + 1
-                reason = "收盘跌破失效位"
+            if series.close[index] <= float(plan["stop_price"]):
+                if index + 1 <= latest_index:
+                    requested_index = index + 1
+                    reason = "收盘跌破失效位"
+                    break
+                _stamp_working_sell_order(plan)
                 break
         hold_index = entry_index + int(plan["max_hold_days"])
         if requested_index is None and hold_index <= latest_index:
@@ -317,6 +365,8 @@ def _evaluate_exit(
             requested_field = "close"
             reason = f"固定持有{plan['max_hold_days']}日"
     if requested_index is None:
+        if exit_signal_date in dates and dates.index(exit_signal_date) + 1 > latest_index:
+            _stamp_working_sell_order(plan)
         _mark_open_plan(plan, series, latest_index, cost_model)
         return plan, []
 
@@ -391,7 +441,7 @@ def _evaluate_exit(
                 reason=reason,
                 price_basis=price_basis,
                 price_note=(
-                    "退出信号后次日开盘价"
+                    "隔夜开盘卖出挂单，按开盘价成交"
                     if price_basis == "next_session_open"
                     else "固定持有期当日收盘价"
                 ),
@@ -493,6 +543,7 @@ def refresh_paper_trades(
                 and not plan.get("exit_signal_date")
             ):
                 plan["exit_signal_date"] = latest_date
+                _stamp_working_sell_order(plan)
         if plan["status"] in {"watching", "triggered"}:
             if uses_theme_exit and int(plan.get("inactive_theme_days") or 0) >= theme_exit_days:
                 exit_days_text = "两" if theme_exit_days == 2 else str(theme_exit_days)

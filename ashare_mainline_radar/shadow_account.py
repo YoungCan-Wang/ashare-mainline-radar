@@ -116,8 +116,20 @@ _ENTRY_MODE_LABELS = {
 
 _PRICE_NOTES = {
     "next_session_open": {
-        "buy": "确认后次日开盘价成交，再加滑点",
-        "sell": "退出信号后次日开盘价成交，再减滑点",
+        "buy": "隔夜开盘市价挂单，按开盘价成交，再加滑点",
+        "sell": "隔夜开盘卖出挂单，按开盘价成交，再减滑点",
+    },
+    "overnight_limit_open": {
+        "buy": "隔夜限价挂单，开盘不高于建议购买价，按开盘价成交，再加滑点",
+        "sell": "隔夜限价挂单，开盘优于限价，按开盘价成交，再减滑点",
+    },
+    "overnight_limit": {
+        "buy": "隔夜限价挂单，开盘高于建议购买价，按建议购买价限价成交，再加滑点",
+        "sell": "隔夜限价挂单，按建议卖出价限价成交，再减滑点",
+    },
+    "zone_high_limit": {
+        "buy": "隔夜限价挂单，开盘高于建议购买价，按建议购买价限价成交，再加滑点",
+        "sell": "隔夜限价挂单，按建议卖出价限价成交，再减滑点",
     },
     "session_open": {
         "buy": "纸面未提供成交价，改用当日开盘价，再加滑点",
@@ -126,10 +138,6 @@ _PRICE_NOTES = {
     "paper_raw_price": {
         "buy": "使用纸面事件 raw_price（与当日开盘价不同），再加滑点",
         "sell": "使用纸面事件 raw_price（与当日开盘价不同），再减滑点",
-    },
-    "zone_high_limit": {
-        "buy": "开盘高于区间，回踩触及区间上限限价成交，再加滑点",
-        "sell": "开盘高于区间，回踩触及区间上限限价成交，再减滑点",
     },
     "session_close": {
         "buy": "按当日收盘价成交，再加滑点",
@@ -141,7 +149,8 @@ _PRICE_NOTES = {
     "suspension": "当日停牌，未按开盘价成交",
     "t1": "T+1 当日买入不可卖，未成交",
     "insufficient_cash": "现金不足，未成交",
-    "expired_no_zone_touch": "开盘高于区间，有效期内最低价未触及区间上限，未成交",
+    "expired_no_zone_touch": "隔夜限价挂单有效期内未触及建议购买价，未成交",
+    "overnight_limit_not_tagged": "隔夜限价挂单有效期内未触及建议购买价，未成交",
 }
 
 
@@ -150,6 +159,8 @@ def _present(value: Any) -> bool:
 
 
 def _paper_intent_fields(plan: dict[str, Any], payload: dict[str, Any], event_type: str) -> dict[str, Any]:
+    working = (plan.get("cost_payload") or {}).get("working_order")
+    working = working if isinstance(working, dict) else {}
     fields = {
         "theme": plan.get("theme") or payload.get("theme"),
         "status": plan.get("status"),
@@ -164,6 +175,9 @@ def _paper_intent_fields(plan: dict[str, Any], payload: dict[str, Any], event_ty
         "paper_event_type": event_type,
         "paper_price_basis": payload.get("price_basis"),
         "reason": payload.get("reason"),
+        "suggested_buy_price": payload.get("suggested_buy_price") or working.get("suggested_buy_price"),
+        "working_order_type": payload.get("working_order_type") or working.get("working_order_type"),
+        "working_order_note": payload.get("working_order_note") or working.get("working_order_note"),
     }
     return {key: value for key, value in fields.items() if _present(value)}
 
@@ -218,16 +232,24 @@ def _reason_note(*, side: str, intent: dict[str, Any], extra_reason: str | None 
         basis = str(intent.get("paper_price_basis") or "")
         reason = str(intent.get("reason") or extra_reason or "")
         if event_type == "opened":
-            if basis == "zone_high_limit" or reason == "pullback_into_zone":
-                parts.append("确认后开盘高于区间，回踩触及区间上限买入")
+            if basis in {"overnight_limit", "zone_high_limit"} or reason in {"overnight_limit", "pullback_into_zone"}:
+                parts.append("隔夜限价挂单触及建议购买价买入")
+            elif basis == "overnight_limit_open" or reason == "price_improvement":
+                parts.append("隔夜限价挂单，开盘优于建议购买价买入")
+            elif str(intent.get("working_order_type") or "") == "overnight_limit":
+                parts.append("隔夜限价挂单买入")
             else:
-                parts.append("确认后次日开盘买入")
+                parts.append("隔夜开盘市价挂单买入")
         elif event_type == "entry_blocked":
             parts.append("纸面入场阻断，未开仓")
         elif event_type == "expired":
-            parts.append("有效期内未回踩到买入区间，未开仓")
+            parts.append("有效期内隔夜限价未成交，未开仓")
         else:
             missing.append("paper_event_type")
+        if _present(intent.get("suggested_buy_price")):
+            parts.append(f"建议购买价{intent['suggested_buy_price']}")
+        elif _present(intent.get("working_order_note")):
+            parts.append(str(intent["working_order_note"]))
         if _present(intent.get("status")):
             parts.append(f"计划状态{intent['status']}")
         else:
@@ -314,6 +336,9 @@ def _execution_fields(
         "entry_zone_high": intent.get("entry_zone_high"),
         "stop_price": intent.get("stop_price"),
         "trigger_date": intent.get("trigger_date"),
+        "suggested_buy_price": intent.get("suggested_buy_price"),
+        "working_order_type": intent.get("working_order_type"),
+        "working_order_note": intent.get("working_order_note"),
         "reason_note": reason_note,
         "price_basis": price_basis,
         "slippage_rate": slippage_rate,

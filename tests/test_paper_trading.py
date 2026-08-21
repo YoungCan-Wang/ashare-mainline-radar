@@ -59,8 +59,13 @@ def test_paper_plan_opens_only_after_close_confirmation() -> None:
     assert [event["event_type"] for event in events] == ["triggered", "opened"]
     opened = events[-1]
     assert opened["payload"]["raw_price"] == 98.0
-    assert opened["payload"]["price_basis"] == "next_session_open"
-    assert opened["payload"]["price_note"] == "确认后次日开盘价"
+    assert opened["payload"]["price_basis"] == "overnight_limit_open"
+    assert opened["payload"]["suggested_buy_price"] == 98.5
+    assert "隔夜限价挂单" in opened["payload"]["price_note"]
+    triggered = events[0]
+    assert triggered["payload"]["working_order_type"] == "overnight_limit"
+    assert triggered["payload"]["suggested_buy_price"] == 98.5
+    assert plan["cost_payload"]["working_order"]["suggested_buy_price"] == 98.5
 
 
 def test_paper_plan_cancels_when_next_open_is_sealed_limit_up() -> None:
@@ -135,6 +140,10 @@ def test_pullback_gap_above_zone_does_not_buy_next_open() -> None:
     assert plan["trigger_date"] == "2026-08-20"
     assert "entry_date" not in plan
     assert [event["event_type"] for event in events] == ["triggered"]
+    assert events[0]["payload"]["suggested_buy_price"] == 9.65
+    assert events[0]["payload"]["working_order_type"] == "overnight_limit"
+    assert "隔夜限价挂单" in events[0]["payload"]["working_order_note"]
+    assert plan["cost_payload"]["working_order"]["suggested_buy_price"] == 9.65
 
 
 def test_pullback_later_dip_fills_at_zone_high() -> None:
@@ -148,9 +157,10 @@ def test_pullback_later_dip_fills_at_zone_high() -> None:
     opened = events[-1]
     assert opened["event_type"] == "opened"
     assert opened["payload"]["raw_price"] == 9.65
-    assert opened["payload"]["price_basis"] == "zone_high_limit"
-    assert opened["payload"]["reason"] == "pullback_into_zone"
-    assert opened["payload"]["price_note"] == "开盘高于区间，回踩触及区间上限限价"
+    assert opened["payload"]["price_basis"] == "overnight_limit"
+    assert opened["payload"]["reason"] == "overnight_limit"
+    assert opened["payload"]["suggested_buy_price"] == 9.65
+    assert opened["payload"]["price_note"] == "隔夜限价挂单，开盘高于建议购买价，按建议购买价限价成交"
 
 
 def test_pullback_window_without_zone_touch_expires() -> None:
@@ -162,12 +172,42 @@ def test_pullback_window_without_zone_touch_expires() -> None:
     plan, events = _evaluate_entry(_denghai_plan(), series, TradingCostModel())
 
     assert plan["status"] == "expired"
-    assert plan["exit_reason"] == "确认后有效期内未回踩到买入区间"
+    assert plan["exit_reason"] == "确认后有效期内隔夜限价未成交"
     expired = events[-1]
     assert expired["event_type"] == "expired"
-    assert expired["payload"]["reason"] == "entry_zone_not_touched"
-    assert expired["payload"]["price_basis"] == "expired_no_zone_touch"
+    assert expired["payload"]["reason"] == "overnight_limit_not_tagged"
+    assert expired["payload"]["price_basis"] == "overnight_limit_not_tagged"
+    assert expired["payload"]["suggested_buy_price"] == 9.65
     assert "opened" not in [event["event_type"] for event in events]
+
+
+def test_close_run_surfaces_next_day_working_order_without_fill() -> None:
+    dates = ["2026-08-18", "2026-08-19", "2026-08-20"]
+    series = KlineSeries(
+        symbol="002041.SZ",
+        timestamp=_timestamps(*dates),
+        open=[9.50, 9.80, 9.50],
+        high=[9.70, 9.90, 10.05],
+        low=[9.40, 9.70, 9.40],
+        close=[9.60, 9.85, 9.92],
+        volume=[100, 100, 100],
+        amount=[1000, 1000, 1000],
+    )
+
+    pullback, pullback_events = _evaluate_entry(_denghai_plan(), series, TradingCostModel())
+    assert pullback["status"] == "triggered"
+    assert pullback["cost_payload"]["working_order"]["suggested_buy_price"] == 9.65
+    assert "隔夜限价挂单" in pullback_events[-1]["payload"]["working_order_note"]
+
+    breakout, breakout_events = _evaluate_entry(
+        _denghai_plan(entry_mode="breakout_close_confirm"),
+        series,
+        TradingCostModel(),
+    )
+    assert breakout["status"] == "triggered"
+    assert "suggested_buy_price" not in breakout["cost_payload"]["working_order"]
+    assert breakout_events[-1]["payload"]["working_order_type"] == "market_on_open"
+    assert "开盘价" in breakout_events[-1]["payload"]["working_order_note"]
 
 
 def test_breakout_still_opens_next_day_at_open_above_zone() -> None:
@@ -185,6 +225,9 @@ def test_breakout_still_opens_next_day_at_open_above_zone() -> None:
     opened = events[-1]
     assert opened["payload"]["price_basis"] == "next_session_open"
     assert opened["payload"]["raw_price"] == 9.71
+    assert opened["payload"]["working_order_type"] == "market_on_open"
+    assert "suggested_buy_price" not in opened["payload"]
+    assert "开盘价" in events[0]["payload"]["working_order_note"]
 
 
 def test_paper_exit_waits_through_sealed_limit_down() -> None:

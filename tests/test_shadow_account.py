@@ -113,8 +113,8 @@ def test_lot_rounding_and_cash_deducts_fees() -> None:
     assert payload["raw_price"] == 10.0
     assert payload["slippage_rate"] == model.slippage_rate
     assert payload["fill_price"] == pytest.approx(fill_price)
-    assert payload["price_note"] == "确认后次日开盘价成交，再加滑点"
-    assert "确认后次日开盘买入" in payload["reason_note"]
+    assert payload["price_note"] == "隔夜开盘市价挂单，按开盘价成交，再加滑点"
+    assert "隔夜开盘市价挂单买入" in payload["reason_note"]
     assert "测试主线" in payload["reason_note"]
     assert "回踩收盘站回" in payload["reason_note"]
     assert payload["theme"] == "测试主线"
@@ -148,8 +148,11 @@ def test_shadow_fill_uses_zone_high_when_paper_opens_on_pullback() -> None:
                 "initial_position_fraction": 1 / 12,
                 "max_position_fraction": 0.25,
                 "paper_event_type": "opened",
-                "paper_price_basis": "zone_high_limit",
-                "reason": "pullback_into_zone",
+                "paper_price_basis": "overnight_limit",
+                "reason": "overnight_limit",
+                "suggested_buy_price": 9.65,
+                "working_order_type": "overnight_limit",
+                "working_order_note": "次日隔夜限价挂单，建议购买价 9.65",
                 "theme": "种业",
                 "status": "open",
                 "entry_mode": "pullback_close_reclaim",
@@ -167,10 +170,11 @@ def test_shadow_fill_uses_zone_high_when_paper_opens_on_pullback() -> None:
     payload = fill["payload"]
     assert payload["raw_price"] == 9.65
     assert payload["session_open"] == 9.80
-    assert payload["price_basis"] == "zone_high_limit"
+    assert payload["price_basis"] == "overnight_limit"
     assert payload["fill_price"] == pytest.approx(9.65 * (1 + model.slippage_rate))
-    assert payload["price_note"] == "开盘高于区间，回踩触及区间上限限价成交，再加滑点"
-    assert "回踩触及区间上限买入" in payload["reason_note"]
+    assert payload["price_note"] == "隔夜限价挂单，开盘高于建议购买价，按建议购买价限价成交，再加滑点"
+    assert "隔夜限价挂单触及建议购买价买入" in payload["reason_note"]
+    assert "建议购买价9.65" in payload["reason_note"]
     assert positions[0]["shares"] > 0
     assert account["cash"] < SHADOW_INITIAL_CAPITAL
 
@@ -195,8 +199,9 @@ def test_shadow_does_not_fill_when_paper_expires_without_zone_touch() -> None:
                 "symbol": "002041.SZ",
                 "name": "登海种业",
                 "paper_event_type": "expired",
-                "paper_price_basis": "expired_no_zone_touch",
-                "reason": "entry_zone_not_touched",
+                "paper_price_basis": "overnight_limit_not_tagged",
+                "reason": "overnight_limit_not_tagged",
+                "suggested_buy_price": 9.65,
                 "theme": "种业",
                 "status": "expired",
                 "entry_mode": "pullback_close_reclaim",
@@ -214,8 +219,8 @@ def test_shadow_does_not_fill_when_paper_expires_without_zone_touch() -> None:
     assert account["cash"] == SHADOW_INITIAL_CAPITAL
     assert not any(item["event_type"] == "fill_buy" for item in events)
     expired = next(item for item in events if item["event_type"] == "expired")
-    assert expired["payload"]["price_basis"] == "expired_no_zone_touch"
-    assert "未触及区间上限" in expired["payload"]["price_note"]
+    assert expired["payload"]["price_basis"] == "overnight_limit_not_tagged"
+    assert "未触及建议购买价" in expired["payload"]["price_note"]
     assert "未开仓" in expired["payload"]["reason_note"]
 
 
@@ -498,8 +503,8 @@ def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
                     "price": 10.005,
                     "fees": {"total": 5.51},
                     "payload": {
-                        "reason_note": "主线测试主线；确认后次日开盘买入",
-                        "price_note": "确认后次日开盘价成交，再加滑点",
+                        "reason_note": "主线测试主线；隔夜开盘市价挂单买入",
+                        "price_note": "隔夜开盘市价挂单，按开盘价成交，再加滑点",
                         "price_basis": "next_session_open",
                     },
                 },
@@ -534,8 +539,8 @@ def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
     assert "当前主线排名" not in shadow_text
     assert "涨停买不进" in shadow_text
     assert "净值" in shadow_text
-    assert "成交理由：主线测试主线；确认后次日开盘买入" in shadow_text
-    assert "价格：确认后次日开盘价成交，再加滑点" in shadow_text
+    assert "成交理由：主线测试主线；隔夜开盘市价挂单买入" in shadow_text
+    assert "价格：隔夜开盘市价挂单，按开盘价成交，再加滑点" in shadow_text
     assert "价格：当日封死涨停，未按开盘价成交" in shadow_text
 
 
@@ -755,8 +760,8 @@ def test_first_seed_commits_as_of_only_after_rpc() -> None:
     assert payload["price_basis"] == "next_session_open"
     assert payload["reason_note"]
     assert "测试主线" in payload["reason_note"]
-    assert "确认后次日开盘买入" in payload["reason_note"]
-    assert payload["price_note"] == "确认后次日开盘价成交，再加滑点"
+    assert "隔夜开盘市价挂单买入" in payload["reason_note"]
+    assert payload["price_note"] == "隔夜开盘市价挂单，按开盘价成交，再加滑点"
     assert "成交理由" in payload["execution_note"]
     snapshot_fill = next(item for item in status.snapshot["today_events"] if item["event_type"] == "fill_buy")
     assert snapshot_fill["payload"]["price_basis"] == "next_session_open"
