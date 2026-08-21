@@ -57,6 +57,10 @@ def test_paper_plan_opens_only_after_close_confirmation() -> None:
     assert plan["entry_date"] == "2026-07-03"
     assert plan["entry_price"] > 99
     assert [event["event_type"] for event in events] == ["triggered", "opened"]
+    opened = events[-1]
+    assert opened["payload"]["raw_price"] == 99
+    assert opened["payload"]["price_basis"] == "next_session_open"
+    assert opened["payload"]["price_note"] == "确认后次日开盘价"
 
 
 def test_paper_plan_cancels_when_next_open_is_sealed_limit_up() -> None:
@@ -75,6 +79,7 @@ def test_paper_plan_cancels_when_next_open_is_sealed_limit_up() -> None:
 
     assert plan["status"] == "cancelled"
     assert events[-1]["payload"]["reason"] == "sealed_limit_up"
+    assert events[-1]["payload"]["price_basis"] == "sealed_limit_up"
 
 
 def test_paper_exit_waits_through_sealed_limit_down() -> None:
@@ -186,3 +191,5 @@ def test_shadow_plan_records_three_day_theme_exit_reason() -> None:
     assert plan["status"] == "closed"
     assert plan["exit_reason"] == "主线连续3日退出前三"
     assert events[-1]["strategy_version"] == "mainline-v2-theme-exit-3d-frozen-20260718"
+    assert events[-1]["payload"]["price_basis"] == "next_session_open"
+    assert events[-1]["payload"]["reason"] == "主线连续3日退出前三"

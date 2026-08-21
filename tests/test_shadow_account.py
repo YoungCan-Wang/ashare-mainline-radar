@@ -81,6 +81,14 @@ def test_lot_rounding_and_cash_deducts_fees() -> None:
                 "raw_price": 10.0,
                 "initial_position_fraction": 1 / 12,
                 "max_position_fraction": 0.25,
+                "paper_event_type": "opened",
+                "theme": "测试主线",
+                "status": "open",
+                "entry_mode": "pullback_close_reclaim",
+                "confirm_price": 101.2,
+                "entry_zone_low": 95.5,
+                "entry_zone_high": 98.5,
+                "trigger_date": "2026-07-02",
             }
         ],
         sell_intents=[],
@@ -99,6 +107,21 @@ def test_lot_rounding_and_cash_deducts_fees() -> None:
     assert account["cash"] == pytest.approx(SHADOW_INITIAL_CAPITAL - notional - fees.total)
     assert positions[0]["sellable_shares"] == 0
     assert positions[0]["avg_cost"] > fill_price
+    payload = fill["payload"]
+    assert payload["price_basis"] == "next_session_open"
+    assert payload["session_open"] == 10.0
+    assert payload["raw_price"] == 10.0
+    assert payload["slippage_rate"] == model.slippage_rate
+    assert payload["fill_price"] == pytest.approx(fill_price)
+    assert payload["price_note"] == "确认后次日开盘价成交，再加滑点"
+    assert "确认后次日开盘买入" in payload["reason_note"]
+    assert "测试主线" in payload["reason_note"]
+    assert "回踩收盘站回" in payload["reason_note"]
+    assert payload["theme"] == "测试主线"
+    assert payload["entry_mode"] == "pullback_close_reclaim"
+    assert "成交理由" in payload["execution_note"]
+    assert "价格怎么选的" in payload["execution_note"]
+    assert "missing_fields" not in payload
 
 
 def test_t1_cannot_sell_same_day() -> None:
@@ -156,6 +179,8 @@ def test_sealed_limit_up_blocks_buy_and_limit_down_blocks_sell() -> None:
     assert account["cash"] == SHADOW_INITIAL_CAPITAL
     assert events[0]["event_type"] == "entry_blocked"
     assert events[0]["payload"]["reason"] == "sealed_limit_up"
+    assert events[0]["payload"]["price_basis"] == "sealed_limit_up"
+    assert "封死涨停" in events[0]["payload"]["price_note"]
 
     sell_as_of = "2026-07-04"
     sell_series = _series(
@@ -193,6 +218,8 @@ def test_sealed_limit_up_blocks_buy_and_limit_down_blocks_sell() -> None:
     assert positions[0]["shares"] == 800
     assert events[0]["event_type"] == "exit_delayed"
     assert events[0]["payload"]["reason"] == "sealed_limit_down"
+    assert events[0]["payload"]["price_basis"] == "sealed_limit_down"
+    assert "封死跌停" in events[0]["payload"]["price_note"]
     assert account["cash"] == 92000.0
 
 
@@ -375,12 +402,20 @@ def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
                     "qty": 800,
                     "price": 10.005,
                     "fees": {"total": 5.51},
-                    "payload": {},
+                    "payload": {
+                        "reason_note": "主线测试主线；确认后次日开盘买入",
+                        "price_note": "确认后次日开盘价成交，再加滑点",
+                        "price_basis": "next_session_open",
+                    },
                 },
                 {
                     "event_type": "entry_blocked",
                     "symbol": "000001.SZ",
-                    "payload": {"reason": "sealed_limit_up"},
+                    "payload": {
+                        "reason": "sealed_limit_up",
+                        "price_basis": "sealed_limit_up",
+                        "price_note": "当日封死涨停，未按开盘价成交",
+                    },
                 },
             ],
         }
@@ -404,6 +439,9 @@ def test_shadow_feishu_card_is_not_the_radar_gate_card() -> None:
     assert "当前主线排名" not in shadow_text
     assert "涨停买不进" in shadow_text
     assert "净值" in shadow_text
+    assert "成交理由：主线测试主线；确认后次日开盘买入" in shadow_text
+    assert "价格：确认后次日开盘价成交，再加滑点" in shadow_text
+    assert "价格：当日封死涨停，未按开盘价成交" in shadow_text
 
 
 def _held(symbol: str, *, buy_dt: str = "2026-07-02") -> dict:
@@ -444,10 +482,21 @@ def test_day_commit_uses_one_rpc_and_same_day_rerun_is_noop() -> None:
                     "event_type": "closed",
                     "event_date": as_of,
                     "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
-                    "payload": {"raw_price": 10.0},
+                    "payload": {"raw_price": 10.0, "reason": "收盘跌破失效位", "price_basis": "next_session_open"},
                 }
             ],
-            "radar_trade_plans": [],
+            "radar_trade_plans": [
+                {
+                    "symbol": symbol,
+                    "name": "测试股份",
+                    "theme": "测试主线",
+                    "status": "closed",
+                    "exit_reason": "收盘跌破失效位",
+                    "stop_price": 9.2,
+                    "last_evaluated_date": as_of,
+                    "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
+                }
+            ],
             "shadow_nav_daily": [{"as_of": previous, "equity": 100000.0, "cash": 92000.0, "market_value": 8000.0, "pnl_day": 0, "pnl_total": 0}],
         }
     )
@@ -478,6 +527,10 @@ def test_day_commit_uses_one_rpc_and_same_day_rerun_is_noop() -> None:
     assert store.tables["shadow_positions"] == []
     assert any(row["event_type"] == "fill_sell" for row in store.tables["shadow_events"])
     assert any(row["event_type"] == "mark" for row in store.tables["shadow_events"])
+    sell = next(row for row in store.tables["shadow_events"] if row["event_type"] == "fill_sell")
+    assert sell["payload"]["price_basis"] == "next_session_open"
+    assert "收盘跌破失效位" in sell["payload"]["reason_note"]
+    assert "价格怎么选的" in sell["payload"]["execution_note"]
 
     second = refresh_shadow_account(**kwargs)
     assert second.status == "refreshed"
@@ -564,13 +617,20 @@ def test_first_seed_commits_as_of_only_after_rpc() -> None:
                     "event_type": "opened",
                     "event_date": as_of,
                     "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
-                    "payload": {"raw_price": 10.0, "name": "测试股份"},
+                    "payload": {"raw_price": 10.0, "name": "测试股份", "price_basis": "next_session_open"},
                 }
             ],
             "radar_trade_plans": [
                 {
                     "symbol": symbol,
                     "name": "测试股份",
+                    "theme": "测试主线",
+                    "status": "open",
+                    "entry_mode": "pullback_close_reclaim",
+                    "confirm_price": 101.2,
+                    "entry_zone_low": 95.5,
+                    "entry_zone_high": 98.5,
+                    "trigger_date": "2026-07-03",
                     "last_evaluated_date": as_of,
                     "strategy_version": PRODUCTION_PAPER_STRATEGY.version,
                     "initial_position_fraction": 1 / 12,
@@ -595,6 +655,17 @@ def test_first_seed_commits_as_of_only_after_rpc() -> None:
     assert len(store.tables["shadow_positions"]) == 1
     assert store.tables["shadow_positions"][0]["shares"] == 800
     assert any("/rpc/apply_shadow_day" in request.full_url for request in store.requests)
+    fill = next(row for row in store.tables["shadow_events"] if row["event_type"] == "fill_buy")
+    payload = fill["payload"]
+    assert payload["price_basis"] == "next_session_open"
+    assert payload["reason_note"]
+    assert "测试主线" in payload["reason_note"]
+    assert "确认后次日开盘买入" in payload["reason_note"]
+    assert payload["price_note"] == "确认后次日开盘价成交，再加滑点"
+    assert "成交理由" in payload["execution_note"]
+    snapshot_fill = next(item for item in status.snapshot["today_events"] if item["event_type"] == "fill_buy")
+    assert snapshot_fill["payload"]["price_basis"] == "next_session_open"
+    assert snapshot_fill["payload"]["reason_note"] == payload["reason_note"]
 
 
 def test_missing_bar_sets_pending_and_retries_next_session() -> None:
@@ -647,7 +718,10 @@ def test_missing_bar_sets_pending_and_retries_next_session() -> None:
         cost_model=TradingCostModel(account_capital=SHADOW_INITIAL_CAPITAL),
     )
     assert positions == []
-    assert any(item["event_type"] == "fill_sell" for item in events)
+    sell = next(item for item in events if item["event_type"] == "fill_sell")
+    assert sell["payload"]["price_basis"] == "session_open"
+    assert "改用当日开盘价" in sell["payload"]["price_note"]
+    assert "missing_bar" in sell["payload"]["reason_note"]
     assert account["cash"] > 92000.0
 
 

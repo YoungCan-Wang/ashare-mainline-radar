@@ -731,10 +731,17 @@ def build_shadow_feishu_card(
         for item in fills:
             side = "买入" if item.get("event_type") == "fill_buy" else "卖出"
             fees = item.get("fees") if isinstance(item.get("fees"), dict) else {}
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
             fill_lines.append(
                 f"{side} `{item.get('symbol')}`　{item.get('qty') or 0}股 @ {_cny(item.get('price'))}"
                 f"　费用 {_cny(fees.get('total'))}"
             )
+            reason_note = payload.get("reason_note")
+            price_note = payload.get("price_note")
+            if reason_note:
+                fill_lines.append(f"成交理由：{reason_note}")
+            if price_note:
+                fill_lines.append(f"价格：{price_note}")
     else:
         fill_lines.append("今日无成交")
     elements.extend([{"tag": "hr"}, _div("\n".join(fill_lines))])
@@ -742,7 +749,12 @@ def build_shadow_feishu_card(
     block_lines = ["<font color='orange'>**今日阻断**</font>"]
     if blocked:
         for item in blocked:
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
             block_lines.append(f"`{item.get('symbol')}`　{_shadow_block_label(item)}")
+            if payload.get("reason_note"):
+                block_lines.append(f"成交理由：{payload['reason_note']}")
+            if payload.get("price_note"):
+                block_lines.append(f"价格：{payload['price_note']}")
     else:
         block_lines.append("今日无阻断")
     elements.extend(
