@@ -109,6 +109,214 @@ class ShadowRefreshStatus:
         }
 
 
+_ENTRY_MODE_LABELS = {
+    "breakout_close_confirm": "收盘突破确认",
+    "pullback_close_reclaim": "回踩收盘站回",
+}
+
+_PRICE_NOTES = {
+    "next_session_open": {
+        "buy": "确认后次日开盘价成交，再加滑点",
+        "sell": "退出信号后次日开盘价成交，再减滑点",
+    },
+    "session_open": {
+        "buy": "纸面未提供成交价，改用当日开盘价，再加滑点",
+        "sell": "纸面未提供成交价，改用当日开盘价，再减滑点",
+    },
+    "paper_raw_price": {
+        "buy": "使用纸面事件 raw_price（与当日开盘价不同），再加滑点",
+        "sell": "使用纸面事件 raw_price（与当日开盘价不同），再减滑点",
+    },
+    "session_close": {
+        "buy": "按当日收盘价成交，再加滑点",
+        "sell": "按当日收盘价成交（固定持有期），再减滑点",
+    },
+    "missing_bar": "缺当日K线，未按开盘价成交",
+    "sealed_limit_up": "当日封死涨停，未按开盘价成交",
+    "sealed_limit_down": "当日封死跌停，未按开盘价成交",
+    "suspension": "当日停牌，未按开盘价成交",
+    "t1": "T+1 当日买入不可卖，未成交",
+    "insufficient_cash": "现金不足，未成交",
+}
+
+
+def _present(value: Any) -> bool:
+    return value not in (None, "")
+
+
+def _paper_intent_fields(plan: dict[str, Any], payload: dict[str, Any], event_type: str) -> dict[str, Any]:
+    fields = {
+        "theme": plan.get("theme") or payload.get("theme"),
+        "status": plan.get("status"),
+        "entry_mode": plan.get("entry_mode") or payload.get("entry_mode"),
+        "entry_zone_low": plan.get("entry_zone_low"),
+        "entry_zone_high": plan.get("entry_zone_high"),
+        "confirm_price": plan.get("confirm_price"),
+        "stop_price": plan.get("stop_price"),
+        "trigger_date": plan.get("trigger_date"),
+        "entry_date": plan.get("entry_date"),
+        "exit_reason": plan.get("exit_reason"),
+        "paper_event_type": event_type,
+        "paper_price_basis": payload.get("price_basis"),
+    }
+    return {key: value for key, value in fields.items() if _present(value)}
+
+
+def _resolve_price_basis(
+    *,
+    intent: dict[str, Any],
+    session_open: float | None,
+    session_close: float | None,
+    raw_price: float | None,
+    used_session_fallback: bool,
+    branch: str,
+) -> str:
+    if branch != "filled":
+        return branch
+    paper_basis = intent.get("paper_price_basis")
+    if _present(paper_basis):
+        return str(paper_basis)
+    if used_session_fallback:
+        return "session_open"
+    paper_event = str(intent.get("paper_event_type") or "")
+    if paper_event == "opened":
+        return "next_session_open"
+    if raw_price is not None and session_open is not None and abs(raw_price - session_open) < 1e-9:
+        return "next_session_open"
+    if raw_price is not None and session_close is not None and abs(raw_price - session_close) < 1e-9:
+        return "session_close"
+    if _present(intent.get("raw_price")):
+        return "paper_raw_price"
+    return "session_open"
+
+
+def _price_note(price_basis: str, *, side: str) -> str:
+    mapped = _PRICE_NOTES.get(price_basis)
+    if isinstance(mapped, dict):
+        return str(mapped.get(side) or mapped.get("buy") or price_basis)
+    if isinstance(mapped, str):
+        return mapped
+    return f"价格分支：{price_basis}"
+
+
+def _reason_note(*, side: str, intent: dict[str, Any], extra_reason: str | None = None) -> tuple[str, list[str]]:
+    parts: list[str] = []
+    missing: list[str] = []
+    theme = intent.get("theme")
+    if _present(theme):
+        parts.append(f"主线{theme}")
+    else:
+        missing.append("theme")
+    if side == "buy":
+        event_type = intent.get("paper_event_type")
+        if event_type == "opened":
+            parts.append("确认后次日开盘买入")
+        elif event_type == "entry_blocked":
+            parts.append("纸面入场阻断后影子仍尝试买入")
+        else:
+            missing.append("paper_event_type")
+        if _present(intent.get("status")):
+            parts.append(f"计划状态{intent['status']}")
+        else:
+            missing.append("status")
+        entry_mode = intent.get("entry_mode")
+        if _present(entry_mode):
+            parts.append(f"入场模式{_ENTRY_MODE_LABELS.get(str(entry_mode), entry_mode)}")
+        else:
+            missing.append("entry_mode")
+        if _present(intent.get("confirm_price")):
+            parts.append(f"确认价{intent['confirm_price']}")
+        else:
+            missing.append("confirm_price")
+        low, high = intent.get("entry_zone_low"), intent.get("entry_zone_high")
+        if _present(low) and _present(high):
+            parts.append(f"买入区间{low}-{high}")
+        else:
+            if not _present(low):
+                missing.append("entry_zone_low")
+            if not _present(high):
+                missing.append("entry_zone_high")
+        if _present(intent.get("trigger_date")):
+            parts.append(f"确认日{intent['trigger_date']}")
+    else:
+        exit_reason = intent.get("exit_reason") or extra_reason or intent.get("reason")
+        if _present(exit_reason):
+            parts.append(str(exit_reason))
+        else:
+            missing.extend(["exit_reason", "payload.reason"])
+        if _present(intent.get("stop_price")):
+            parts.append(f"失效位{intent['stop_price']}")
+    note = "；".join(parts) if parts else "成交理由字段缺失，无法还原"
+    if missing:
+        note = f"{note}。缺失字段：{', '.join(missing)}"
+    return note, missing
+
+
+def _execution_fields(
+    *,
+    side: str,
+    intent: dict[str, Any],
+    session_open: float | None,
+    session_close: float | None = None,
+    raw_price: float | None = None,
+    fill_price: float | None = None,
+    qty: int | None = None,
+    fees: dict[str, Any] | None = None,
+    notional: float | None = None,
+    debit: float | None = None,
+    proceeds: float | None = None,
+    slippage_rate: float,
+    used_session_fallback: bool,
+    branch: str,
+    extra_reason: str | None = None,
+) -> dict[str, Any]:
+    reason_note, missing = _reason_note(side=side, intent=intent, extra_reason=extra_reason)
+    price_basis = _resolve_price_basis(
+        intent=intent,
+        session_open=session_open,
+        session_close=session_close,
+        raw_price=raw_price,
+        used_session_fallback=used_session_fallback,
+        branch=branch,
+    )
+    price_note = _price_note(price_basis, side=side)
+    fill_bits: list[str] = []
+    if qty is not None and fill_price is not None:
+        fill_bits.append(f"{qty}股 @ {fill_price:.4f}")
+    if fees and fees.get("total") is not None:
+        fill_bits.append(f"费用{_money(float(fees['total']))}")
+    if notional is not None:
+        fill_bits.append(f"成交额{_money(notional)}")
+    if debit is not None:
+        fill_bits.append(f"扣款{_money(debit)}")
+    if proceeds is not None:
+        fill_bits.append(f"入账{_money(proceeds)}")
+    fill_text = "，".join(fill_bits) if fill_bits else "未成交"
+    fields: dict[str, Any] = {
+        "theme": intent.get("theme"),
+        "status": intent.get("status"),
+        "entry_mode": intent.get("entry_mode"),
+        "confirm_price": intent.get("confirm_price"),
+        "entry_zone_low": intent.get("entry_zone_low"),
+        "entry_zone_high": intent.get("entry_zone_high"),
+        "stop_price": intent.get("stop_price"),
+        "trigger_date": intent.get("trigger_date"),
+        "reason_note": reason_note,
+        "price_basis": price_basis,
+        "slippage_rate": slippage_rate,
+        "price_note": price_note,
+        "execution_note": f"成交理由：{reason_note}\n成交价：{fill_text}\n价格怎么选的：{price_note}",
+        "missing_fields": missing,
+    }
+    if _present(intent.get("exit_reason") or extra_reason or intent.get("reason")):
+        fields["exit_reason"] = intent.get("exit_reason") or extra_reason or intent.get("reason")
+    if session_open is not None:
+        fields["session_open"] = _money(session_open)
+    if fill_price is not None:
+        fields["fill_price"] = fill_price
+    return {key: value for key, value in fields.items() if value not in (None, "", [])}
+
+
 def _event(
     as_of: str,
     event_type: str,
@@ -201,15 +409,50 @@ def _apply_sells(
         if position is None:
             continue
         session = _session_bar(klines.get(symbol), as_of)
+        sell_reason = intent.get("reason") or position.get("exit_pending_reason")
         if session is None:
-            events.append(_event(as_of, "exit_delayed", symbol=symbol, reason="missing_bar"))
+            events.append(
+                _event(
+                    as_of,
+                    "exit_delayed",
+                    symbol=symbol,
+                    reason="missing_bar",
+                    **_execution_fields(
+                        side="sell",
+                        intent=intent,
+                        session_open=None,
+                        raw_price=intent.get("raw_price"),
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=not _present(intent.get("raw_price")),
+                        branch="missing_bar",
+                        extra_reason=sell_reason,
+                    ),
+                )
+            )
             position["exit_pending_reason"] = "missing_bar"
             continue
         bar, previous_close = session
         name = str(position.get("name") or intent.get("name") or symbol)
         if bar["volume"] <= 0:
             events.append(
-                _event(as_of, "exit_delayed", symbol=symbol, price=bar["close"], reason="suspension")
+                _event(
+                    as_of,
+                    "exit_delayed",
+                    symbol=symbol,
+                    price=bar["close"],
+                    reason="suspension",
+                    **_execution_fields(
+                        side="sell",
+                        intent=intent,
+                        session_open=bar["open"],
+                        session_close=bar["close"],
+                        raw_price=intent.get("raw_price"),
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=not _present(intent.get("raw_price")),
+                        branch="suspension",
+                        extra_reason=sell_reason,
+                    ),
+                )
             )
             position["exit_pending_reason"] = "suspension"
             continue
@@ -223,15 +466,53 @@ def _apply_sells(
             volume=bar["volume"],
         ):
             events.append(
-                _event(as_of, "exit_delayed", symbol=symbol, price=bar["close"], reason="sealed_limit_down")
+                _event(
+                    as_of,
+                    "exit_delayed",
+                    symbol=symbol,
+                    price=bar["close"],
+                    reason="sealed_limit_down",
+                    **_execution_fields(
+                        side="sell",
+                        intent=intent,
+                        session_open=bar["open"],
+                        session_close=bar["close"],
+                        raw_price=intent.get("raw_price"),
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=not _present(intent.get("raw_price")),
+                        branch="sealed_limit_down",
+                        extra_reason=sell_reason,
+                    ),
+                )
             )
             position["exit_pending_reason"] = "sealed_limit_down"
             continue
         sellable = int(position.get("sellable_shares") or 0)
         if sellable <= 0:
-            events.append(_event(as_of, "skip_t1", symbol=symbol, qty=int(position["shares"]), reason="t1"))
+            events.append(
+                _event(
+                    as_of,
+                    "skip_t1",
+                    symbol=symbol,
+                    qty=int(position["shares"]),
+                    reason="t1",
+                    **_execution_fields(
+                        side="sell",
+                        intent=intent,
+                        session_open=bar["open"],
+                        session_close=bar["close"],
+                        raw_price=intent.get("raw_price"),
+                        qty=int(position["shares"]),
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=not _present(intent.get("raw_price")),
+                        branch="t1",
+                        extra_reason=sell_reason,
+                    ),
+                )
+            )
             position["exit_pending_reason"] = "t1"
             continue
+        used_session_fallback = not _present(intent.get("raw_price"))
         raw_price = float(intent.get("raw_price") or bar["open"])
         fill_price = raw_price * (1 - model.slippage_rate)
         notional = _money(sellable * fill_price)
@@ -250,7 +531,23 @@ def _apply_sells(
                 raw_price=raw_price,
                 notional=notional,
                 proceeds=proceeds,
-                reason=intent.get("reason") or position.get("exit_pending_reason"),
+                reason=sell_reason,
+                **_execution_fields(
+                    side="sell",
+                    intent=intent,
+                    session_open=bar["open"],
+                    session_close=bar["close"],
+                    raw_price=raw_price,
+                    fill_price=fill_price,
+                    qty=sellable,
+                    fees=fees.to_dict(),
+                    notional=notional,
+                    proceeds=proceeds,
+                    slippage_rate=model.slippage_rate,
+                    used_session_fallback=used_session_fallback,
+                    branch="filled",
+                    extra_reason=sell_reason,
+                ),
             )
         )
         held[:] = [item for item in held if item["symbol"] != symbol]
@@ -293,12 +590,46 @@ def execute_shadow_day(
             continue
         session = _session_bar(klines.get(symbol), as_of)
         if session is None:
-            events.append(_event(as_of, "entry_blocked", symbol=symbol, reason="missing_bar"))
+            events.append(
+                _event(
+                    as_of,
+                    "entry_blocked",
+                    symbol=symbol,
+                    reason="missing_bar",
+                    **_execution_fields(
+                        side="buy",
+                        intent=intent,
+                        session_open=None,
+                        raw_price=intent.get("raw_price"),
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=not _present(intent.get("raw_price")),
+                        branch="missing_bar",
+                    ),
+                )
+            )
             continue
         bar, previous_close = session
         name = str(intent.get("name") or symbol)
         if bar["volume"] <= 0:
-            events.append(_event(as_of, "entry_blocked", symbol=symbol, price=bar["close"], reason="suspension"))
+            events.append(
+                _event(
+                    as_of,
+                    "entry_blocked",
+                    symbol=symbol,
+                    price=bar["close"],
+                    reason="suspension",
+                    **_execution_fields(
+                        side="buy",
+                        intent=intent,
+                        session_open=bar["open"],
+                        session_close=bar["close"],
+                        raw_price=intent.get("raw_price"),
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=not _present(intent.get("raw_price")),
+                        branch="suspension",
+                    ),
+                )
+            )
             continue
         if is_sealed_limit_up(
             symbol,
@@ -310,9 +641,26 @@ def execute_shadow_day(
             volume=bar["volume"],
         ):
             events.append(
-                _event(as_of, "entry_blocked", symbol=symbol, price=bar["close"], reason="sealed_limit_up")
+                _event(
+                    as_of,
+                    "entry_blocked",
+                    symbol=symbol,
+                    price=bar["close"],
+                    reason="sealed_limit_up",
+                    **_execution_fields(
+                        side="buy",
+                        intent=intent,
+                        session_open=bar["open"],
+                        session_close=bar["close"],
+                        raw_price=intent.get("raw_price"),
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=not _present(intent.get("raw_price")),
+                        branch="sealed_limit_up",
+                    ),
+                )
             )
             continue
+        used_session_fallback = not _present(intent.get("raw_price"))
         raw_price = float(intent.get("raw_price") or bar["open"])
         fill_price = raw_price * (1 + model.slippage_rate)
         fund = is_fund_security(name)
@@ -336,6 +684,17 @@ def execute_shadow_day(
                     price=_money(fill_price),
                     reason="insufficient_cash",
                     cash=_money(float(state["cash"])),
+                    **_execution_fields(
+                        side="buy",
+                        intent=intent,
+                        session_open=bar["open"],
+                        session_close=bar["close"],
+                        raw_price=raw_price,
+                        fill_price=fill_price,
+                        slippage_rate=model.slippage_rate,
+                        used_session_fallback=used_session_fallback,
+                        branch="insufficient_cash",
+                    ),
                 )
             )
             continue
@@ -371,6 +730,21 @@ def execute_shadow_day(
                 debit=debit,
                 avg_cost=avg_cost,
                 name=name,
+                **_execution_fields(
+                    side="buy",
+                    intent=intent,
+                    session_open=bar["open"],
+                    session_close=bar["close"],
+                    raw_price=raw_price,
+                    fill_price=fill_price,
+                    qty=shares,
+                    fees=fees.to_dict(),
+                    notional=notional,
+                    debit=debit,
+                    slippage_rate=model.slippage_rate,
+                    used_session_fallback=used_session_fallback,
+                    branch="filled",
+                ),
             )
         )
 
@@ -442,6 +816,7 @@ def _intents_from_paper(
                     "raw_price": payload.get("raw_price") or row.get("price"),
                     "initial_position_fraction": plan.get("initial_position_fraction") or (1 / 12),
                     "max_position_fraction": plan.get("max_position_fraction") or 0.25,
+                    **_paper_intent_fields(plan, payload, event_type),
                 }
             )
         elif event_type == "entry_blocked":
@@ -452,6 +827,7 @@ def _intents_from_paper(
                     "raw_price": payload.get("raw_price") or row.get("price"),
                     "initial_position_fraction": plan.get("initial_position_fraction") or (1 / 12),
                     "max_position_fraction": plan.get("max_position_fraction") or 0.25,
+                    **_paper_intent_fields(plan, payload, event_type),
                 }
             )
         elif event_type in {"closed", "exit_delayed"}:
@@ -461,6 +837,7 @@ def _intents_from_paper(
                     "name": plan.get("name") or symbol,
                     "raw_price": payload.get("raw_price") or row.get("price"),
                     "reason": payload.get("reason") or event_type,
+                    **_paper_intent_fields(plan, payload, event_type),
                 }
             )
             sell_symbols.add(symbol)

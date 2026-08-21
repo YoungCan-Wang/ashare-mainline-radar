@@ -117,7 +117,9 @@ def _evaluate_entry(
     entry_date = dates[entry_index]
     if entry_bar["volume"] <= 0:
         plan.update(status="cancelled", exit_reason="确认后下一交易日停牌，取消计划")
-        events.append(_event(plan, "entry_blocked", entry_date, None, reason="suspension"))
+        events.append(
+            _event(plan, "entry_blocked", entry_date, None, reason="suspension", price_basis="suspension")
+        )
         return plan, events
     if is_sealed_limit_up(
         str(plan["symbol"]),
@@ -129,7 +131,16 @@ def _evaluate_entry(
         volume=entry_bar["volume"],
     ):
         plan.update(status="cancelled", exit_reason="确认后下一交易日封死涨停，取消计划")
-        events.append(_event(plan, "entry_blocked", entry_date, entry_bar["close"], reason="sealed_limit_up"))
+        events.append(
+            _event(
+                plan,
+                "entry_blocked",
+                entry_date,
+                entry_bar["close"],
+                reason="sealed_limit_up",
+                price_basis="sealed_limit_up",
+            )
+        )
         return plan, events
 
     notional = cost_model.account_capital * execution.initial_position_fraction
@@ -159,6 +170,8 @@ def _evaluate_entry(
             float(cost["entry_price"]),
             raw_price=entry_bar["open"],
             buy_fees=cost["buy_fees"],
+            price_basis="next_session_open",
+            price_note="确认后次日开盘价",
         )
     )
     return plan, events
@@ -217,7 +230,16 @@ def _evaluate_exit(
             blocked_reason = "sealed_limit_down"
         if blocked_reason:
             delay_days += 1
-            events.append(_event(plan, "exit_delayed", exit_date, bar["close"], reason=blocked_reason))
+            events.append(
+                _event(
+                    plan,
+                    "exit_delayed",
+                    exit_date,
+                    bar["close"],
+                    reason=blocked_reason,
+                    price_basis=blocked_reason,
+                )
+            )
             continue
         field = requested_field if exit_index == requested_index else "open"
         raw_exit = bar[field]
@@ -246,6 +268,7 @@ def _evaluate_exit(
             cost_payload=cost_payload,
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
+        price_basis = "next_session_open" if field == "open" else "session_close"
         events.append(
             _event(
                 plan,
@@ -256,6 +279,12 @@ def _evaluate_exit(
                 net_return=cost["net_return"],
                 sell_fees=cost["sell_fees"],
                 reason=reason,
+                price_basis=price_basis,
+                price_note=(
+                    "退出信号后次日开盘价"
+                    if price_basis == "next_session_open"
+                    else "固定持有期当日收盘价"
+                ),
             )
         )
         return plan, events
