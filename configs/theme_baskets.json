@@ -969,7 +969,8 @@
         "159928.SZ",
         "512690.SH"
       ],
-      "source": "eastmoney boards: 白酒(BK0896), 食品饮料(BK0438), 家用电器(BK0456), 旅游酒店(BK0485), 消费风格(BK1711), 商业百货(BK0482); curated 2026-07-29"
+      "source": "eastmoney boards: 白酒(BK0896), 食品饮料(BK0438), 家用电器(BK0456), 旅游酒店(BK0485), 消费风格(BK1711), 商业百货(BK0482); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "传媒游戏",
@@ -1008,7 +1009,8 @@
         "159869.SZ",
         "516010.SH"
       ],
-      "source": "eastmoney boards: 网络游戏(BK0509), 短剧互动游戏(BK1151); curated 2026-07-29"
+      "source": "eastmoney boards: 网络游戏(BK0509), 短剧互动游戏(BK1151); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "保险",
@@ -1041,7 +1043,8 @@
       "vehicles": [
         "512070.SH"
       ],
-      "source": "eastmoney boards: 保险Ⅲ(BK1358), 参股保险(BK0604); curated 2026-07-29"
+      "source": "eastmoney boards: 保险Ⅲ(BK1358), 参股保险(BK0604); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "信创软件",
@@ -1080,7 +1083,8 @@
         "159852.SZ",
         "562060.SH"
       ],
-      "source": "eastmoney boards: 信创(BK1104), 国产软件(BK0696); curated 2026-07-29"
+      "source": "eastmoney boards: 信创(BK1104), 国产软件(BK0696); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "光伏与储能",
@@ -1121,7 +1125,8 @@
         "515790.SH",
         "159857.SZ"
       ],
-      "source": "eastmoney boards: 光伏概念(BK0588), 储能概念(BK0989); curated 2026-07-29"
+      "source": "eastmoney boards: 光伏概念(BK0588), 储能概念(BK0989); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "农业种植",
@@ -1160,7 +1165,8 @@
         "159825.SZ",
         "159698.SZ"
       ],
-      "source": "eastmoney boards: 农业种植(BK0888), 种子(BK1518), 生猪养殖(BK1512); curated 2026-07-29"
+      "source": "eastmoney boards: 农业种植(BK0888), 种子(BK1518), 生猪养殖(BK1512); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "医疗器械",
@@ -1198,10 +1204,9 @@
         "159883.SZ"
       ],
       "vehicle_name_keywords": [
-        "医疗器械",
-        "医疗设备"
+        "医疗器械"
       ],
-      "source": "eastmoney boards: 医疗器械概念(BK0668), 医疗设备(BK1605), 体外诊断(BK1603); curated 2026-07-29"
+      "source": "eastmoney boards: 医疗器械概念(BK0668), 医疗设备(BK1605), 体外诊断(BK1603); curated 2026-08-23"
     },
     {
       "name": "工程机械",
@@ -1238,7 +1243,8 @@
         "159667.SZ",
         "561700.SH"
       ],
-      "source": "eastmoney boards: 工程机械概念(BK0991), 工程机械整机(BK1393); curated 2026-07-29"
+      "source": "eastmoney boards: 工程机械概念(BK0991), 工程机械整机(BK1393); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "房地产链",
@@ -1277,7 +1283,8 @@
         "512200.SH",
         "159768.SZ"
       ],
-      "source": "eastmoney boards: 住宅开发(BK1346), 物业管理(BK1343), 金融地产风格(BK1714); curated 2026-07-29"
+      "source": "eastmoney boards: 住宅开发(BK1346), 物业管理(BK1343), 金融地产风格(BK1714); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "新能源车",
@@ -1316,7 +1323,8 @@
         "516110.SH",
         "159637.SZ"
       ],
-      "source": "eastmoney boards: 新能源车(BK0900), 汽车整车(BK1029); curated 2026-07-29"
+      "source": "eastmoney boards: 新能源车(BK0900), 汽车整车(BK1029); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "电网设备",
@@ -1326,15 +1334,14 @@
         "特高压",
         "变压器",
         "电力设备",
-        "输变电",
-        "电网投资"
+        "配电网",
+        "智能电网"
       ],
       "policy_keywords": [
         "新型电力系统",
         "特高压",
         "电网改造",
-        "电力保供",
-        "能源安全",
+        "配电网",
         "智能电网"
       ],
       "symbols": [
@@ -1346,54 +1353,52 @@
         "600312.SH",
         "603606.SH",
         "600131.SH",
-        "600577.SH",
         "601727.SH"
       ],
       "vehicles": [],
-      "source": "eastmoney boards: 特高压(BK0918), 电网概念(BK1647), 智能电网(BK0581); curated 2026-08-08"
+      "source": "eastmoney boards: 特高压(BK0918), 电网概念(BK1647), 智能电网(BK0581); curated 2026-08-23",
+      "vehicle_name_keywords": []
     },
     {
       "name": "电力运营",
       "valuation_style": "income",
       "keywords": [
-        "电力",
-        "绿电",
+        "电力运营",
+        "发电",
         "水电",
-        "核电",
         "火电",
-        "用电负荷",
-        "电价"
+        "核电",
+        "绿电"
       ],
       "policy_keywords": [
         "电力保供",
-        "新型电力系统",
-        "电力市场",
-        "能源安全",
-        "可再生能源"
+        "电力市场化",
+        "煤电",
+        "绿色电力",
+        "能源安全"
       ],
       "symbols": [
         "600900.SH",
-        "600025.SH",
-        "600886.SH",
         "600011.SH",
-        "600795.SH",
+        "600886.SH",
+        "600027.SH",
         "601985.SH",
         "003816.SZ",
-        "600905.SH",
-        "001289.SZ",
-        "600023.SH",
+        "600795.SH",
+        "600642.SH",
         "600674.SH",
-        "601016.SH"
+        "600025.SH",
+        "000543.SZ",
+        "000027.SZ"
       ],
       "vehicles": [
         "159611.SZ",
         "561560.SH"
       ],
       "vehicle_name_keywords": [
-        "电力",
-        "公用事业"
+        "电力"
       ],
-      "source": "curated power generators and electricity operators; split from mixed grid basket 2026-08-08"
+      "source": "eastmoney boards: 绿色电力(BK1024); curated 2026-08-23"
     },
     {
       "name": "航运港口",
@@ -1432,7 +1437,8 @@
         "516550.SH",
         "159866.SZ"
       ],
-      "source": "eastmoney boards: 航运(BK1482), 港口(BK1481); curated 2026-07-29"
+      "source": "eastmoney boards: 航运(BK1482), 港口(BK1481); curated 2026-08-23",
+      "vehicle_name_keywords": []
     }
   ]
 }
