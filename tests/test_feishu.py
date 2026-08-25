@@ -785,3 +785,78 @@ def test_empty_attempt_section_names_failed_cuts_when_primary_exists() -> None:
     )
     assert "润泽 胜率 50%<55%" in contents
     assert "航发 样本 3<5" in contents
+
+
+def test_card_shows_triggered_working_order_instead_of_fresh_watching() -> None:
+    plan = NextBuyPlan(
+        symbol="000975.SZ",
+        name="山金国际",
+        theme="黄金贵金属",
+        decision="已触发",
+        priority_score=99,
+        last_close=29.26,
+        entry_plan="已触发，次日开盘市价挂单。确认日 2026-08-24，确认价 28.92；原买入区 27.29-28.15；原信号日 2026-08-21。",
+        invalidation="跌破 26.61 退出。",
+        position_note="按原计划仓位执行。",
+        execution_status="triggered",
+        entry_mode="breakout_close_confirm",
+        entry_zone_low=27.29,
+        entry_zone_high=28.15,
+        confirm_price=28.92,
+        stop_price=26.61,
+        signal_date="2026-08-21",
+        trigger_date="2026-08-24",
+        working_order_type="market_on_open",
+        working_order_note="次日开盘价市价挂单",
+    )
+    report = _report(next_buy=NextBuyReport(primary=plan, triggered_orders=[plan]))
+    card = build_feishu_card(report)
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    text = build_feishu_text(report)
+
+    assert "已触发，次日开盘市价挂单" in contents
+    assert "确认日 2026-08-24" in contents
+    assert "确认价 28.92" in contents
+    assert "原买入区 27.29-28.15" in contents
+    assert "原信号日 2026-08-21" in contents
+    assert "主升加速，等待回踩" not in contents
+    assert "29.61" not in contents
+    assert "已触发，次日开盘挂单" in text
+    assert "山金国际" in text
+
+
+def test_shadow_card_lists_triggered_working_order() -> None:
+    from ashare_mainline_radar.feishu import build_shadow_feishu_card
+
+    card = build_shadow_feishu_card(
+        {"as_of": "2026-08-24", "account": {"cash": 100000, "equity": 100000}, "positions": [], "today_events": []},
+        working_orders=[
+            {
+                "symbol": "000975.SZ",
+                "name": "山金国际",
+                "status": "triggered",
+                "signal_date": "2026-08-21",
+                "trigger_date": "2026-08-24",
+                "confirm_price": 28.92,
+                "entry_zone_low": 27.29,
+                "entry_zone_high": 28.15,
+                "cost_payload": {
+                    "working_order": {
+                        "working_order_type": "market_on_open",
+                        "working_order_note": "次日开盘价市价挂单",
+                    }
+                },
+            }
+        ],
+    )
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    assert "待成交挂单" in contents
+    assert "山金国际" in contents
+    assert "已触发" in contents
+    assert "次日开盘市价挂单" in contents
+    assert "确认日 2026-08-24" in contents
+    assert "原信号日 2026-08-21" in contents

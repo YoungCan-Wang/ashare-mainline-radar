@@ -70,6 +70,7 @@ def _run_key(report: dict[str, Any]) -> str:
 def _candidate_sections(report: dict[str, Any]) -> list[tuple[str, list[dict[str, Any]]]]:
     next_buy = _dict(report.get("next_buy"))
     next_candidates: list[dict[str, Any]] = []
+    next_candidates.extend(item for item in _list(next_buy.get("triggered_orders")) if isinstance(item, dict))
     if isinstance(next_buy.get("primary"), dict):
         next_candidates.append(next_buy["primary"])
     next_candidates.extend(item for item in _list(next_buy.get("alternatives")) if isinstance(item, dict))
@@ -146,6 +147,8 @@ def _paper_trade_records(
             continue
         symbol = str(candidate["symbol"])
         if symbol in seen_symbols:
+            continue
+        if str(candidate.get("execution_status") or "") == "triggered":
             continue
         seen_symbols.add(symbol)
         for strategy in PAPER_STRATEGIES:
@@ -234,6 +237,10 @@ def _trade_plan(candidate: dict[str, Any]) -> dict[str, Any]:
         "max_hold_days",
         "max_position_fraction",
         "initial_position_fraction",
+        "signal_date",
+        "trigger_date",
+        "working_order_type",
+        "working_order_note",
     )
     return {key: candidate[key] for key in keys if candidate.get(key) not in (None, "")}
 

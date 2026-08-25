@@ -112,6 +112,11 @@ export interface TradePlan {
   stop_price?: number;
   valid_for_days?: number;
   max_hold_days?: number;
+  execution_status?: string;
+  signal_date?: string;
+  trigger_date?: string;
+  working_order_type?: string;
+  working_order_note?: string;
 }
 
 export interface PaperTradePlan {

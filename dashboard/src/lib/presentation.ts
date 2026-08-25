@@ -41,7 +41,7 @@ export function gateTone(level: string | undefined): string {
 export function themeTone(stage: string | undefined, status: string | undefined): string {
   const text = `${stage ?? ""}${status ?? ""}`;
   if (/退潮|风险|破位/.test(text)) return "red";
-  if (/主升|成立|延续|确认/.test(text)) return "green";
+  if (/触发|主升|成立|延续|确认/.test(text)) return "green";
   if (/回踩|试探|候选|等待/.test(text)) return "yellow";
   return "neutral";
 }

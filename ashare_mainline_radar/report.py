@@ -422,6 +422,32 @@ def render_markdown(report: RadarReport) -> str:
         )
         lines.append("")
 
+    triggered_orders = report.next_buy.triggered_orders
+    if triggered_orders:
+        lines.append("## 已触发，次日开盘挂单")
+        lines.append("")
+        lines.append("纸面计划已在收盘确认后触发；下一交易日开盘成交，不是当天盘中新买点。")
+        lines.append("")
+        for item in triggered_orders:
+            zone = (
+                f"{_fmt(item.entry_zone_low)}-{_fmt(item.entry_zone_high)}"
+                if item.entry_zone_low is not None and item.entry_zone_high is not None
+                else "n/a"
+            )
+            order = "次日开盘市价挂单"
+            if item.working_order_type == "overnight_limit" or (
+                item.working_order_note and "限价" in item.working_order_note
+            ):
+                order = item.working_order_note or "次日隔夜限价挂单"
+            lines.append(f"- **{item.name} `{item.symbol}`：已触发，{order}。**")
+            lines.append(
+                f"  确认日 {item.trigger_date or 'n/a'}，确认价 {_fmt(item.confirm_price)}；"
+                f"原买入区 {zone}；原信号日 {item.signal_date or 'n/a'}。"
+            )
+            if item.entry_plan:
+                lines.append(f"  {item.entry_plan}")
+        lines.append("")
+
     if report.next_buy.primary:
         primary = report.next_buy.primary
         lines.append("## 下一笔买入候选")

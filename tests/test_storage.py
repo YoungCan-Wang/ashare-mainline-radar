@@ -419,3 +419,73 @@ def test_existing_production_plan_does_not_block_shadow_plan(tmp_path) -> None:
     }
     assert all("source_role" not in event for event in events)
     assert all("source_role" not in event.get("payload", {}) for event in events)
+
+
+def test_triggered_overlay_keeps_original_plan_and_snapshot_copy() -> None:
+    report = _report()
+    report["data_as_of"] = "2026-08-24"
+    report["next_buy"] = {
+        "primary": {
+            "symbol": "000975.SZ",
+            "name": "山金国际",
+            "theme": "黄金贵金属",
+            "last_close": 29.26,
+            "priority_score": 99.0,
+            "decision": "已触发",
+            "entry_plan": "已触发，次日开盘市价挂单。确认日 2026-08-24，确认价 28.92；原买入区 27.29-28.15；原信号日 2026-08-21。",
+            "invalidation": "跌破 26.61 退出。",
+            "execution_status": "triggered",
+            "entry_mode": "breakout_close_confirm",
+            "entry_zone_low": 27.29,
+            "entry_zone_high": 28.15,
+            "confirm_price": 28.92,
+            "stop_price": 26.61,
+            "signal_date": "2026-08-21",
+            "trigger_date": "2026-08-24",
+            "working_order_type": "market_on_open",
+            "working_order_note": "次日开盘价市价挂单",
+        },
+        "alternatives": [],
+        "by_theme": [],
+        "triggered_orders": [
+            {
+                "symbol": "000975.SZ",
+                "name": "山金国际",
+                "theme": "黄金贵金属",
+                "last_close": 29.26,
+                "priority_score": 99.0,
+                "decision": "已触发",
+                "entry_plan": "已触发，次日开盘市价挂单。确认日 2026-08-24，确认价 28.92；原买入区 27.29-28.15；原信号日 2026-08-21。",
+                "execution_status": "triggered",
+                "entry_mode": "breakout_close_confirm",
+                "entry_zone_low": 27.29,
+                "entry_zone_high": 28.15,
+                "confirm_price": 28.92,
+                "stop_price": 26.61,
+                "signal_date": "2026-08-21",
+                "trigger_date": "2026-08-24",
+                "working_order_type": "market_on_open",
+            }
+        ],
+    }
+    report["strong_stocks"]["candidates"] = [
+        {
+            "symbol": "000975.SZ",
+            "name": "山金国际",
+            "theme": "黄金贵金属",
+            "last_close": 29.26,
+            "score": 90.0,
+            "status": "主升加速，等待回踩",
+        }
+    ]
+
+    bundle = build_storage_bundle(report)
+    symbol = {item["symbol"]: item for item in bundle["symbols"]}["000975.SZ"]
+
+    assert symbol["action_state"] == "已触发"
+    assert symbol["trade_plan"]["confirm_price"] == 28.92
+    assert symbol["trade_plan"]["execution_status"] == "triggered"
+    assert symbol["trade_plan"]["trigger_date"] == "2026-08-24"
+    assert symbol["trade_plan"]["signal_date"] == "2026-08-21"
+    assert "29.61" not in str(symbol["trade_plan"].get("entry_plan") or "")
+    assert all(item["symbol"] != "000975.SZ" for item in bundle["trade_plans"])

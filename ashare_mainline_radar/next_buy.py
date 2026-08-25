@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from .execution import TradeExecutionPlan, build_trade_execution_plan
 from .models import (
     MarketPulse,
@@ -12,6 +14,7 @@ from .models import (
     ThemeSnapshot,
     TradingGate,
 )
+from .paper_strategies import PRODUCTION_PAPER_STRATEGY
 
 
 def _fmt_price(value: float) -> str:
@@ -354,3 +357,175 @@ def build_next_buy_report(
         by_theme=by_theme,
         notes=notes,
     )
+
+
+def _fmt_optional_price(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def working_order_label(plan: dict[str, Any]) -> str:
+    payload = plan.get("cost_payload")
+    working = payload.get("working_order") if isinstance(payload, dict) else {}
+    working = working if isinstance(working, dict) else {}
+    order_type = str(working.get("working_order_type") or plan.get("working_order_type") or "")
+    if order_type == "overnight_limit":
+        limit = working.get("suggested_buy_price")
+        if limit not in (None, ""):
+            return f"次日隔夜限价挂单，建议购买价 {_fmt_optional_price(limit)}"
+        return "次日隔夜限价挂单"
+    note = str(working.get("working_order_note") or plan.get("working_order_note") or "")
+    if order_type == "market_on_open" or "开盘" in note:
+        return "次日开盘市价挂单"
+    return note or "次日开盘市价挂单"
+
+
+def select_triggered_working_orders(paper_plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prefer the live production working order when both strategies triggered."""
+    selected: dict[str, dict[str, Any]] = {}
+    for row in paper_plans:
+        if str(row.get("status") or "") != "triggered":
+            continue
+        symbol = str(row.get("symbol") or "")
+        if not symbol:
+            continue
+        current = selected.get(symbol)
+        if current is None:
+            selected[symbol] = row
+            continue
+        current_prod = str(current.get("strategy_version") or "") == PRODUCTION_PAPER_STRATEGY.version
+        row_prod = str(row.get("strategy_version") or "") == PRODUCTION_PAPER_STRATEGY.version
+        current_shadow = bool(current.get("is_shadow"))
+        row_shadow = bool(row.get("is_shadow"))
+        if row_prod and not current_prod:
+            selected[symbol] = row
+        elif row_prod == current_prod and (current_shadow and not row_shadow):
+            selected[symbol] = row
+        elif row_prod == current_prod and current_shadow == row_shadow:
+            if str(row.get("trigger_date") or "") > str(current.get("trigger_date") or ""):
+                selected[symbol] = row
+    return list(selected.values())
+
+
+def _plans_by_symbol(report: NextBuyReport) -> dict[str, NextBuyPlan]:
+    found: dict[str, NextBuyPlan] = {}
+    for plan in (report.primary, *report.alternatives, *report.triggered_orders):
+        if plan:
+            found[plan.symbol] = plan
+    for group in report.by_theme:
+        for plan in group.plans:
+            found.setdefault(plan.symbol, plan)
+    return found
+
+
+def _card_from_triggered(row: dict[str, Any], existing: NextBuyPlan | None) -> NextBuyPlan:
+    payload = row.get("cost_payload")
+    working = payload.get("working_order") if isinstance(payload, dict) else {}
+    working = working if isinstance(working, dict) else {}
+    order_type = str(working.get("working_order_type") or "market_on_open")
+    order_note = str(working.get("working_order_note") or "次日开盘价市价挂单")
+    label = working_order_label(row)
+    confirm = row.get("confirm_price")
+    zone_low = row.get("entry_zone_low")
+    zone_high = row.get("entry_zone_high")
+    trigger_date = row.get("trigger_date")
+    signal_date = row.get("signal_date")
+    entry_plan = (
+        f"已触发，{label}。"
+        f"确认日 {trigger_date or 'n/a'}，确认价 {_fmt_optional_price(confirm)}；"
+        f"原买入区 {_fmt_optional_price(zone_low)}-{_fmt_optional_price(zone_high)}；"
+        f"原信号日 {signal_date or 'n/a'}。"
+    )
+    last_close = existing.last_close if existing is not None else row.get("signal_price") or confirm or 0
+    evidence = list(existing.evidence) if existing is not None else []
+    evidence.append("纸面计划已触发：沿用原确认价与买入区，不改写为当日新确认价。")
+    return NextBuyPlan(
+        symbol=str(row["symbol"]),
+        name=str(row.get("name") or (existing.name if existing else row["symbol"])),
+        theme=str(row.get("theme") or (existing.theme if existing else "")),
+        decision="已触发",
+        priority_score=max(existing.priority_score if existing else 0.0, 99.0),
+        last_close=float(last_close),
+        entry_plan=entry_plan,
+        invalidation=(
+            existing.invalidation
+            if existing is not None
+            else (
+                f"下一交易日开盘封死涨停则取消；收盘跌破 {_fmt_optional_price(row.get('stop_price'))} "
+                "或主线连续两日退出前三，下一可成交交易日退出。"
+            )
+        ),
+        position_note=(
+            existing.position_note
+            if existing is not None
+            else "纸面计划已触发，按原计划仓位在下一交易日开盘执行；不是当日新买点。"
+        ),
+        evidence=evidence,
+        risk_notes=existing.risk_notes if existing is not None else ["这是纸面影子计划，不是实盘下单。"],
+        lifecycle_stage=existing.lifecycle_stage if existing is not None else "阶段未确认",
+        independence_status=existing.independence_status if existing is not None else "随市主线",
+        execution_status="triggered",
+        entry_mode=str(row.get("entry_mode") or (existing.entry_mode if existing else "breakout_close_confirm")),
+        entry_zone_low=float(zone_low) if zone_low is not None else (existing.entry_zone_low if existing else None),
+        entry_zone_high=float(zone_high) if zone_high is not None else (existing.entry_zone_high if existing else None),
+        confirm_price=float(confirm) if confirm is not None else (existing.confirm_price if existing else None),
+        stop_price=(
+            float(row["stop_price"]) if row.get("stop_price") is not None else (existing.stop_price if existing else None)
+        ),
+        valid_for_days=int(row["valid_for_days"]) if row.get("valid_for_days") is not None else (existing.valid_for_days if existing else 5),
+        max_hold_days=int(row["max_hold_days"]) if row.get("max_hold_days") is not None else (existing.max_hold_days if existing else 15),
+        max_position_fraction=(
+            float(row["max_position_fraction"])
+            if row.get("max_position_fraction") is not None
+            else (existing.max_position_fraction if existing else 0.25)
+        ),
+        initial_position_fraction=(
+            float(row["initial_position_fraction"])
+            if row.get("initial_position_fraction") is not None
+            else (existing.initial_position_fraction if existing else 1 / 12)
+        ),
+        signal_date=str(signal_date) if signal_date else None,
+        trigger_date=str(trigger_date) if trigger_date else None,
+        working_order_type=order_type,
+        working_order_note=order_note,
+    )
+
+
+def overlay_triggered_working_orders(
+    next_buy: NextBuyReport, paper_plans: list[dict[str, Any]]
+) -> NextBuyReport:
+    """Replace same-symbol watching cards with the live triggered working order."""
+    cards = [
+        _card_from_triggered(row, _plans_by_symbol(next_buy).get(str(row["symbol"])))
+        for row in select_triggered_working_orders(paper_plans)
+    ]
+    cards.sort(key=lambda item: item.priority_score, reverse=True)
+    next_buy.triggered_orders = cards
+    if not cards:
+        return next_buy
+
+    symbols = {card.symbol for card in cards}
+    leftovers = [
+        plan
+        for plan in (next_buy.primary, *next_buy.alternatives)
+        if plan is not None and plan.symbol not in symbols
+    ]
+    next_buy.primary = cards[0]
+    next_buy.alternatives = [*cards[1:], *leftovers]
+    for group in next_buy.by_theme:
+        replaced: list[NextBuyPlan] = []
+        seen: set[str] = set()
+        for plan in group.plans:
+            card = next((item for item in cards if item.symbol == plan.symbol), None)
+            chosen = card or plan
+            if chosen.symbol in seen:
+                continue
+            seen.add(chosen.symbol)
+            replaced.append(chosen)
+        group.plans = replaced
+    note = "已触发的纸面计划优先于当日新生成的等待回踩卡；下一交易日开盘成交，不把确认日收盘当成当天买入。"
+    if note not in next_buy.notes:
+        next_buy.notes.append(note)
+    return next_buy

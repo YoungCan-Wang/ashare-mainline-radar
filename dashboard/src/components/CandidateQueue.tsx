@@ -38,6 +38,9 @@ function roleMatches(row: SymbolRow, role: RoleFilter): boolean {
   if (role === "all") return true;
   if (role === "waiting") {
     const plan = row.trade_plan;
+    if (row.action_state === "已触发" || plan?.execution_status === "triggered" || plan?.decision === "已触发") {
+      return false;
+    }
     const text = `${row.action_state ?? ""} ${plan?.decision ?? ""} ${plan?.entry_plan ?? ""} ${plan?.confirmation ?? ""}`;
     return /等待|确认|回踩|观察/.test(text);
   }

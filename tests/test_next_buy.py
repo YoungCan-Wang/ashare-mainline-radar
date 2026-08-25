@@ -1,12 +1,15 @@
 from ashare_mainline_radar.models import (
     BacktestSummary,
+    NextBuyPlan,
+    NextBuyReport,
     StrongStockCandidate,
+    ThemeBuyGroup,
     ThemeLifecycleReport,
     ThemeLifecycleSignal,
     ThemeSnapshot,
     TradingGate,
 )
-from ashare_mainline_radar.next_buy import build_next_buy_report
+from ashare_mainline_radar.next_buy import build_next_buy_report, overlay_triggered_working_orders
 
 
 def test_build_next_buy_report_selects_primary() -> None:
@@ -245,3 +248,168 @@ def test_hot_uncovered_company_reports_both_chase_and_fundamental_blocks() -> No
 
     assert report.primary is None
     assert report.by_theme[0].plans[0].decision == "主升加速，禁止追高；基本面未覆盖"
+
+
+def _shanjin_watching_card() -> NextBuyPlan:
+    return NextBuyPlan(
+        symbol="000975.SZ",
+        name="山金国际",
+        theme="黄金贵金属",
+        decision="主升加速，等待回踩",
+        priority_score=88.0,
+        last_close=29.26,
+        entry_plan="未来5个交易日内，收盘站上 29.61 且当日收阳；下一交易日开盘未封涨停时执行首笔。",
+        invalidation="跌破 26.92 先降级观察。",
+        position_note="首笔只用计划仓位1/3。",
+        execution_status="watching",
+        entry_mode="breakout_close_confirm",
+        entry_zone_low=27.47,
+        entry_zone_high=28.33,
+        confirm_price=29.61,
+        stop_price=26.92,
+    )
+
+
+def _shanjin_triggered_plan(**overrides):
+    row = {
+        "plan_key": "2026-08-21:000975.SZ:mainline-v1-theme-exit-2d",
+        "symbol": "000975.SZ",
+        "name": "山金国际",
+        "theme": "黄金贵金属",
+        "signal_date": "2026-08-21",
+        "status": "triggered",
+        "trigger_date": "2026-08-24",
+        "entry_mode": "breakout_close_confirm",
+        "entry_zone_low": 27.29,
+        "entry_zone_high": 28.15,
+        "confirm_price": 28.92,
+        "stop_price": 26.61,
+        "strategy_version": "mainline-v1-theme-exit-2d",
+        "is_shadow": False,
+        "cost_payload": {
+            "working_order": {
+                "working_order_type": "market_on_open",
+                "working_order_note": "次日开盘价市价挂单",
+            }
+        },
+    }
+    row.update(overrides)
+    return row
+
+
+def test_triggered_plan_replaces_fresh_watching_card() -> None:
+    watching = _shanjin_watching_card()
+    next_buy = NextBuyReport(
+        primary=watching,
+        alternatives=[],
+        by_theme=[
+            ThemeBuyGroup(
+                theme="黄金贵金属",
+                theme_status="主线成立",
+                plans=[watching],
+                lifecycle_stage="主升加速",
+            )
+        ],
+    )
+
+    overlay_triggered_working_orders(next_buy, [_shanjin_triggered_plan()])
+
+    assert next_buy.primary is not None
+    assert next_buy.primary.symbol == "000975.SZ"
+    assert next_buy.primary.decision == "已触发"
+    assert next_buy.primary.execution_status == "triggered"
+    assert next_buy.primary.confirm_price == 28.92
+    assert next_buy.primary.entry_zone_low == 27.29
+    assert next_buy.primary.entry_zone_high == 28.15
+    assert next_buy.primary.trigger_date == "2026-08-24"
+    assert next_buy.primary.signal_date == "2026-08-21"
+    assert next_buy.primary.last_close == 29.26
+    assert "已触发" in next_buy.primary.entry_plan
+    assert "次日开盘市价挂单" in next_buy.primary.entry_plan
+    assert "29.61" not in next_buy.primary.entry_plan
+    assert next_buy.triggered_orders[0].symbol == "000975.SZ"
+    assert next_buy.by_theme[0].plans[0].decision == "已触发"
+
+
+def test_filled_plan_is_not_shown_as_next_open_working_order() -> None:
+    watching = _shanjin_watching_card()
+    next_buy = NextBuyReport(primary=watching)
+    overlay_triggered_working_orders(
+        next_buy,
+        [_shanjin_triggered_plan(status="open", entry_date="2026-08-25")],
+    )
+
+    assert next_buy.triggered_orders == []
+    assert next_buy.primary is watching
+    assert next_buy.primary.decision == "主升加速，等待回踩"
+    assert next_buy.primary.confirm_price == 29.61
+
+
+def test_daily_markdown_shows_triggered_working_order() -> None:
+    from ashare_mainline_radar.models import (
+        AccumulationReport,
+        ExpectationGapReport,
+        FundamentalReport,
+        GoldenPitReport,
+        MarketStructure,
+        NextBuyReport,
+        PolicySignalReport,
+        RadarReport,
+        StrongStockReport,
+        TargetPriceReport,
+        TradingGate,
+    )
+    from ashare_mainline_radar.report import render_markdown
+
+    watching = _shanjin_watching_card()
+    next_buy = NextBuyReport(
+        primary=watching,
+        alternatives=[],
+        by_theme=[],
+    )
+    overlay_triggered_working_orders(next_buy, [_shanjin_triggered_plan()])
+    markdown = render_markdown(
+        RadarReport(
+            generated_at="2026-08-24T08:00:00+00:00",
+            data_as_of="2026-08-24",
+            mode="universe",
+            universe="CN_Equity_A",
+            scanned_symbols=1,
+            data_source="test",
+            themes=[],
+            market_pulses=[],
+            market_structure=MarketStructure(
+                status="右侧确认",
+                score=80,
+                index_count=3,
+                above_ma5_ratio=1,
+                above_ma20_ratio=1,
+                bullish_alignment_ratio=1,
+                volume_confirmation_ratio=1,
+                higher_high_low_ratio=1,
+                confirmed_breakdown_ratio=0,
+                evidence=[],
+            ),
+            trading_gate=TradingGate("green", "允许寻找买点", 70, 0, [], []),
+            strong_stocks=StrongStockReport(selected_themes=[], hold_days=15, candidates=[]),
+            next_buy=next_buy,
+            accumulation=AccumulationReport(candidates=[]),
+            golden_pits=GoldenPitReport(candidates=[]),
+            policy_signals=PolicySignalReport(signals=[], total_policy_items=0, matched_policy_items=0),
+            target_prices=TargetPriceReport(estimates=[]),
+            fundamentals=FundamentalReport(snapshots=[], covered_symbols=0, requested_symbols=0),
+            expectation_gaps=ExpectationGapReport(signals=[]),
+            leader_tape=[],
+            market_watchlist=[],
+            intel_items=[],
+            source_statuses=[],
+            warnings=[],
+        )
+    )
+
+    assert "## 已触发，次日开盘挂单" in markdown
+    assert "山金国际 `000975.SZ`：已触发，次日开盘市价挂单" in markdown
+    assert "确认日 2026-08-24，确认价 28.92" in markdown
+    assert "原买入区 27.29-28.15" in markdown
+    assert "原信号日 2026-08-21" in markdown
+    assert "29.61" not in markdown

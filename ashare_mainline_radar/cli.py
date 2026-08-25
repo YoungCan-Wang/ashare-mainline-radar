@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
 from .feishu import FeishuStatus, build_feishu_card, build_shadow_feishu_card, post_feishu_card, write_feishu_status
+from .next_buy import overlay_triggered_working_orders, select_triggered_working_orders
 from .paper_trading import PaperTradeRefreshStatus, refresh_paper_trades
 from .report import write_report
 from .shadow_account import ShadowRefreshStatus, empty_snapshot, refresh_shadow_account
@@ -79,6 +80,18 @@ def main(argv: list[str] | None = None) -> int:
         accumulation_limit=args.accumulation_limit,
         as_of=args.as_of,
     )
+    active_themes = {
+        theme.name for theme in report.themes[:3] if theme.status in {"主线成立", "主线候选"}
+    }
+    paper_klines = {}
+    paper_plans: list[dict] = []
+    try:
+        paper_status = refresh_paper_trades(
+            active_themes, client=client, kline_out=paper_klines, plans_out=paper_plans
+        )
+    except Exception as exc:
+        paper_status = PaperTradeRefreshStatus("failed", 0, 0, 0, f"{type(exc).__name__}: {exc}")
+    overlay_triggered_working_orders(report.next_buy, paper_plans)
     markdown_path, json_path = write_report(report, args.output_dir)
     feishu_card = build_feishu_card(report, dashboard_url=args.dashboard_public_url)
     feishu_card_path = args.output_dir / "feishu_card.json"
@@ -91,14 +104,6 @@ def main(argv: list[str] | None = None) -> int:
         f"Storage: {storage_status.status} via {storage_status.backend}; "
         f"themes={storage_status.theme_records} symbols={storage_status.symbol_records}"
     )
-    active_themes = {
-        theme.name for theme in report.themes[:3] if theme.status in {"主线成立", "主线候选"}
-    }
-    paper_klines = {}
-    try:
-        paper_status = refresh_paper_trades(active_themes, client=client, kline_out=paper_klines)
-    except Exception as exc:
-        paper_status = PaperTradeRefreshStatus("failed", 0, 0, 0, f"{type(exc).__name__}: {exc}")
     (args.output_dir / "paper_trade_status.json").write_text(
         json.dumps(paper_status.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -125,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
         shadow_status.snapshot,
         status=shadow_status.status,
         message=shadow_status.message,
+        working_orders=select_triggered_working_orders(paper_plans),
     )
     shadow_card_path = args.output_dir / "shadow_card.json"
     shadow_card_path.write_text(json.dumps(shadow_card, ensure_ascii=False, indent=2), encoding="utf-8")
