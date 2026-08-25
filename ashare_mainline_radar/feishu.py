@@ -108,6 +108,12 @@ def build_feishu_text(report: RadarReport) -> str:
             lines.append(
                 f"{idx}. {item.symbol}｜{item.status}｜财务分 {item.score:.1f}｜营收同比 {item.revenue_yoy or 0:.1f}%｜净利同比 {item.net_income_yoy or 0:.1f}%"
             )
+    triggered = report.next_buy.triggered_orders if report.next_buy else []
+    if triggered:
+        lines.append("")
+        lines.append("已触发，次日开盘挂单：")
+        for item in triggered:
+            lines.append(f"{item.name} {item.symbol}｜已触发｜{item.entry_plan}")
     if report.next_buy and report.next_buy.primary:
         plan = report.next_buy.primary
         lines.append("")
@@ -189,12 +195,42 @@ def build_feishu_text(report: RadarReport) -> str:
 
 def _dedupe_plans(report: RadarReport) -> list[NextBuyPlan]:
     plans: list[NextBuyPlan] = []
+    plans.extend(report.next_buy.triggered_orders)
     if report.next_buy.primary:
         plans.append(report.next_buy.primary)
     plans.extend(report.next_buy.alternatives)
     for group in report.next_buy.by_theme:
         plans.extend(group.plans)
     return list({plan.symbol: plan for plan in plans}.values())
+
+
+def _is_triggered_plan(plan: NextBuyPlan) -> bool:
+    return plan.execution_status == "triggered" or plan.decision == "已触发"
+
+
+def _triggered_plans(report: RadarReport) -> list[NextBuyPlan]:
+    if report.next_buy.triggered_orders:
+        return report.next_buy.triggered_orders
+    return [plan for plan in _dedupe_plans(report) if _is_triggered_plan(plan)]
+
+
+def _triggered_block(plan: NextBuyPlan) -> str:
+    zone = (
+        f"{_fmt_price(plan.entry_zone_low)}-{_fmt_price(plan.entry_zone_high)}"
+        if plan.entry_zone_low is not None and plan.entry_zone_high is not None
+        else "n/a"
+    )
+    order = "次日开盘市价挂单"
+    if plan.working_order_type == "overnight_limit" or (plan.working_order_note and "限价" in plan.working_order_note):
+        order = plan.working_order_note or "次日隔夜限价挂单"
+    elif plan.working_order_note and "开盘" in plan.working_order_note:
+        order = "次日开盘市价挂单"
+    return (
+        f"**{plan.name} `{plan.symbol}`：已触发，{order}。**\n"
+        f"确认日 {plan.trigger_date or 'n/a'}｜确认价 {_fmt_price(plan.confirm_price)}｜"
+        f"原买入区 {zone}｜原信号日 {plan.signal_date or 'n/a'}\n"
+        f"{plan.entry_plan}"
+    )
 
 
 _ATTEMPT_DECISIONS = {
@@ -422,11 +458,16 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
         for plan in plans
         if (candidate := candidates.get(plan.symbol)) and _hold_ready(candidate, phase_by_theme.get(candidate.theme))
     ][:3]
-    attempt = [plan for plan in plans if _attempt_ready(candidates.get(plan.symbol), plan)][:2]
+    triggered = _triggered_plans(report)
+    attempt = [
+        plan
+        for plan in plans
+        if not _is_triggered_plan(plan) and _attempt_ready(candidates.get(plan.symbol), plan)
+    ][:2]
     if report.trading_gate.level == "red":
         attempt = []
-    occupied = {item.symbol for item in [*attempt, *hold]}
-    waiting = [plan for plan in plans if plan.symbol not in occupied][:3]
+    occupied = {item.symbol for item in [*triggered, *attempt, *hold]}
+    waiting = [plan for plan in plans if plan.symbol not in occupied and not _is_triggered_plan(plan)][:3]
 
     lifecycle_by_theme = {signal.theme: signal for signal in report.theme_lifecycle.signals}
     theme_ranking = ["<font color='blue'>**当前主线排名**</font>"]
@@ -534,6 +575,18 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
         [
             {"tag": "hr"},
             _gate_section(report),
+        ]
+    )
+    if triggered:
+        trigger_lines = [
+            "<font color='red'>**已触发，次日开盘市价挂单**</font>",
+            "收盘确认已成立；下一交易日开盘成交。不是当天新生成的等待回踩卡。",
+        ]
+        for plan in triggered:
+            trigger_lines.append(_triggered_block(plan))
+        elements.extend([{"tag": "hr"}, _div("\n\n".join(trigger_lines))])
+    elements.extend(
+        [
             {"tag": "hr"},
             _div("<font color='red'>**一、可尝试建仓（触发后）**</font>\n只在触发条件出现后分批，不等于开盘直接买。"),
         ]
@@ -685,11 +738,32 @@ def _shadow_block_label(event: dict[str, Any]) -> str:
     return _SHADOW_BLOCK_LABELS.get(reason, reason)
 
 
+def _shadow_working_order_lines(working_orders: list[dict[str, Any]]) -> list[str]:
+    lines = ["<font color='red'>**待成交挂单**</font>"]
+    for item in working_orders:
+        payload = item.get("cost_payload") if isinstance(item.get("cost_payload"), dict) else {}
+        working = payload.get("working_order") if isinstance(payload.get("working_order"), dict) else {}
+        order_type = str(working.get("working_order_type") or item.get("working_order_type") or "")
+        order = "次日开盘市价挂单"
+        if order_type == "overnight_limit":
+            limit = working.get("suggested_buy_price")
+            order = f"次日隔夜限价挂单，建议购买价 {limit}" if limit not in (None, "") else "次日隔夜限价挂单"
+        zone_low, zone_high = item.get("entry_zone_low"), item.get("entry_zone_high")
+        zone = f"{zone_low}-{zone_high}" if zone_low not in (None, "") and zone_high not in (None, "") else "n/a"
+        lines.append(
+            f"**{item.get('name') or ''} `{item.get('symbol')}`：已触发，{order}。**\n"
+            f"确认日 {item.get('trigger_date') or 'n/a'}｜确认价 {item.get('confirm_price')}｜"
+            f"原买入区 {zone}｜原信号日 {item.get('signal_date') or 'n/a'}"
+        )
+    return lines
+
+
 def build_shadow_feishu_card(
     snapshot: dict[str, Any],
     *,
     status: str | None = None,
     message: str | None = None,
+    working_orders: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
@@ -725,6 +799,8 @@ def build_shadow_feishu_card(
     else:
         hold_lines.append("当前空仓")
     elements.extend([{"tag": "hr"}, _div("\n".join(hold_lines))])
+    if working_orders:
+        elements.extend([{"tag": "hr"}, _div("\n".join(_shadow_working_order_lines(working_orders)))])
 
     fill_lines = ["<font color='green'>**今日成交**</font>"]
     if fills:

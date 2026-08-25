@@ -493,6 +493,7 @@ def refresh_paper_trades(
     cost_model: TradingCostModel | None = None,
     opener: Callable[..., Any] = urlopen,
     kline_out: dict[str, KlineSeries] | None = None,
+    plans_out: list[dict[str, Any]] | None = None,
 ) -> PaperTradeRefreshStatus:
     url = supabase_url or os.getenv("SUPABASE_URL")
     api_key = supabase_publishable_key or os.getenv("SUPABASE_PUBLISHABLE_KEY")
@@ -556,6 +557,8 @@ def refresh_paper_trades(
         plan["updated_at"] = datetime.now(timezone.utc).isoformat()
         updated.append(plan)
         events.extend(plan_events)
+    if plans_out is not None:
+        plans_out.extend(updated)
     upsert_rows(url, api_key, ingest_key, "radar_trade_plans", "plan_key", updated, opener)
     upsert_rows(url, api_key, ingest_key, "radar_trade_events", "event_key", events, opener)
     return PaperTradeRefreshStatus("refreshed", len(plans), len(updated), len(events), "paper-trade ledger refreshed")

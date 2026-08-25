@@ -215,6 +215,10 @@ class NextBuyPlan:
     max_hold_days: int = 15
     max_position_fraction: float = 0.25
     initial_position_fraction: float = 1 / 12
+    signal_date: str | None = None
+    trigger_date: str | None = None
+    working_order_type: str | None = None
+    working_order_note: str | None = None
 
 
 @dataclass
@@ -233,6 +237,7 @@ class NextBuyReport:
     alternatives: list[NextBuyPlan] = field(default_factory=list)
     by_theme: list[ThemeBuyGroup] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    triggered_orders: list[NextBuyPlan] = field(default_factory=list)
 
 
 @dataclass
