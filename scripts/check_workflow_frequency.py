@@ -5,7 +5,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -66,6 +66,8 @@ def main() -> int:
 
     try:
         runs = _fetch_runs(repository, args.workflow, branch, token)
+        raw_last_bar = (os.getenv("RADAR_LAST_BAR_DATE") or os.getenv("DATA_AS_OF") or "").strip()
+        last_bar_date = date.fromisoformat(raw_last_bar) if raw_last_bar else None
         should_run, reason = should_run_workflow(
             args.policy,
             runs,
@@ -74,6 +76,7 @@ def main() -> int:
             head_sha=os.getenv("GITHUB_SHA"),
             min_hours=args.min_hours,
             event_name=os.getenv("GITHUB_EVENT_NAME"),
+            last_bar_date=last_bar_date,
         )
     except Exception as exc:
         _write_output(False, f"frequency guard failed closed: {type(exc).__name__}: {exc}")

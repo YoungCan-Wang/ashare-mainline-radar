@@ -20,20 +20,38 @@ def previous_weekday(day: date) -> date:
     return previous
 
 
-def daily_session(now: datetime, *, scheduled: bool = False) -> tuple[date, bool]:
+def daily_session(now: datetime, *, last_bar_date: date | None = None) -> tuple[date, bool]:
     """Return (session_date, after_close) in Asia/Shanghai.
 
-    A weekday post-close Daily that slips past midnight is still that
-    session's post-close slot, not the next calendar day's pre-close.
+    A session's post-close window is T 15:00 through the next A-share open
+    (09:30 on the next trading day). Overnight, weekends, and holidays stay
+    on T. Calendar midnight does not start a new Daily identity.
     """
     market_now = now.astimezone(CN_TIMEZONE)
     market_date = market_now.date()
-    if market_now.time() >= MARKET_CLOSE:
-        return market_date, True
-    overnight_delay = scheduled or market_date.weekday() >= 5 or market_now.time() < MARKET_OPEN
-    if overnight_delay:
+    after_open = market_now.time() >= MARKET_OPEN
+    after_close = market_now.time() >= MARKET_CLOSE
+
+    if last_bar_date is not None:
+        if market_date == last_bar_date:
+            return last_bar_date, after_close
+        if market_date.weekday() >= 5 or not after_open:
+            return last_bar_date, True
+        if after_close and last_bar_date < market_date:
+            return last_bar_date, True
+        return market_date, after_close
+
+    if after_close:
+        if market_date.weekday() < 5:
+            return market_date, True
+        return previous_weekday(market_date), True
+    if market_date.weekday() >= 5 or not after_open:
         return previous_weekday(market_date), True
     return market_date, False
+
+
+def session_as_of(now: datetime, *, last_bar_date: date | None = None) -> date:
+    return daily_session(now, last_bar_date=last_bar_date)[0]
 
 
 def should_run_workflow(
@@ -45,7 +63,9 @@ def should_run_workflow(
     head_sha: str | None = None,
     min_hours: int = 24,
     event_name: str | None = None,
+    last_bar_date: date | None = None,
 ) -> tuple[bool, str]:
+    _ = event_name
     successful = [
         run
         for run in runs
@@ -55,15 +75,13 @@ def should_run_workflow(
     ]
 
     if policy == "daily":
-        scheduled = (event_name or "") == "schedule"
-        session_date, after_close = daily_session(now, scheduled=scheduled)
+        session_date, after_close = daily_session(now, last_bar_date=last_bar_date)
         for run in successful:
             created_at = run.get("created_at")
             if not created_at:
                 continue
             run_time = parse_github_timestamp(str(created_at))
-            run_scheduled = str(run.get("event") or "") == "schedule"
-            run_date, run_after_close = daily_session(run_time, scheduled=run_scheduled)
+            run_date, run_after_close = daily_session(run_time, last_bar_date=last_bar_date)
             if run_date == session_date and run_after_close == after_close:
                 session = "post-close" if after_close else "pre-close"
                 return False, f"a successful {session} daily run already exists for {session_date.isoformat()}"
