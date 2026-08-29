@@ -881,7 +881,7 @@ def test_past_as_of_does_not_mutate_live_book() -> None:
     assert not any(request.get_method() in {"POST", "DELETE"} and "shadow_" in request.full_url for request in store.requests)
 
 
-def test_failed_shadow_refresh_does_not_post_empty_card(tmp_path, monkeypatch) -> None:
+def test_failed_shadow_refresh_still_posts_error_card(tmp_path, monkeypatch) -> None:
     from ashare_mainline_radar import cli
     from ashare_mainline_radar.paper_trading import PaperTradeRefreshStatus
     from ashare_mainline_radar.shadow_account import ShadowRefreshStatus, empty_snapshot
@@ -936,11 +936,14 @@ def test_failed_shadow_refresh_does_not_post_empty_card(tmp_path, monkeypatch) -
         ]
     )
     assert code == 0
-    assert posted == [("https://example.invalid/radar", posted[0][1])]
-    assert all("影子账户" not in title for _url, title in posted)
+    assert [url for url, _title in posted] == [
+        "https://example.invalid/radar",
+        "https://example.invalid/shadow",
+    ]
+    assert "影子账户" in posted[1][1]
+    assert "未刷新" in posted[1][1]
     notify = json.loads((tmp_path / "shadow_notification_status.json").read_text(encoding="utf-8"))
-    assert notify["status"] == "skipped"
-    assert "ledger boom" in notify["message"]
+    assert notify["status"] == "sent"
     card = json.loads((tmp_path / "shadow_card.json").read_text(encoding="utf-8"))
     assert "未刷新" in card["header"]["title"]["content"]
     assert "ledger boom" in json.dumps(card, ensure_ascii=False)

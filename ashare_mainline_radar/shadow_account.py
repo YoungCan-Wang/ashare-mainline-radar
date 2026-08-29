@@ -1041,7 +1041,8 @@ def refresh_shadow_account(
         blocked = sum(
             1
             for item in today_events
-            if item.get("event_type") in {"entry_blocked", "exit_delayed", "skip_insufficient_cash", "skip_t1"}
+            if item.get("event_type")
+            in {"entry_blocked", "expired", "exit_delayed", "skip_insufficient_cash", "skip_t1"}
         )
         snapshot = _snapshot(account, [dict(item) for item in positions], today_events, pnl_day)
         return ShadowRefreshStatus(
@@ -1129,7 +1130,7 @@ def refresh_shadow_account(
     blocked = sum(
         1
         for item in events
-        if item["event_type"] in {"entry_blocked", "exit_delayed", "skip_insufficient_cash", "skip_t1"}
+        if item["event_type"] in {"entry_blocked", "expired", "exit_delayed", "skip_insufficient_cash", "skip_t1"}
     )
     snapshot = _snapshot(next_account, next_positions, events, pnl_day)
     return ShadowRefreshStatus("refreshed", fills, blocked, len(events), "shadow cash ledger refreshed", snapshot)

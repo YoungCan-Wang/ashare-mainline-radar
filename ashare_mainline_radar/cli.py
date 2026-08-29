@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
@@ -14,6 +15,7 @@ from .report import write_report
 from .shadow_account import ShadowRefreshStatus, empty_snapshot, refresh_shadow_account
 from .storage import persist_report
 from .tickflow import TickFlowClient
+from .workflow_frequency import session_as_of
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -68,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         theme_config=load_json(args.theme_config),
         intel_config=load_json(args.intel_config),
     )
+    as_of = args.as_of or session_as_of(datetime.now(timezone.utc)).isoformat()
     report = radar.run(
         mode=args.mode,
         max_symbols=args.max_symbols,
@@ -78,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         backtest_hold_days=args.backtest_hold_days,
         strong_stock_limit=args.strong_stock_limit,
         accumulation_limit=args.accumulation_limit,
-        as_of=args.as_of,
+        as_of=as_of,
     )
     active_themes = {
         theme.name for theme in report.themes[:3] if theme.status in {"主线成立", "主线候选"}
@@ -173,22 +176,15 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"Feishu notification failed: code={status.code} message={status.message}")
             shadow_webhook = args.shadow_feishu_webhook_url or args.feishu_webhook_url
-            if shadow_status.status == "refreshed":
-                shadow_notify = post_feishu_card(shadow_webhook, shadow_card)
-                write_feishu_status(args.output_dir / "shadow_notification_status.json", shadow_notify)
-                if shadow_notify.status == "sent":
-                    print("Sent shadow account Feishu notification.")
-                else:
-                    print(
-                        f"Shadow Feishu notification failed: code={shadow_notify.code} message={shadow_notify.message}"
-                    )
+            shadow_notify = post_feishu_card(shadow_webhook, shadow_card)
+            write_feishu_status(args.output_dir / "shadow_notification_status.json", shadow_notify)
+            if shadow_notify.status == "sent":
+                print(f"Sent shadow account Feishu notification ({shadow_status.status}).")
             else:
-                shadow_notify = FeishuStatus(status="skipped", message=shadow_status.message)
-                write_feishu_status(args.output_dir / "shadow_notification_status.json", shadow_notify)
-                print(f"Skipped shadow Feishu card: {shadow_status.status}; {shadow_status.message}")
-            if args.fail_on_feishu_error and (
-                status.status != "sent" or (shadow_status.status == "refreshed" and shadow_notify.status != "sent")
-            ):
+                print(
+                    f"Shadow Feishu notification failed: code={shadow_notify.code} message={shadow_notify.message}"
+                )
+            if args.fail_on_feishu_error and (status.status != "sent" or shadow_notify.status != "sent"):
                 return 2
     if args.fail_on_storage_error and storage_status.status == "failed":
         return 3

@@ -716,6 +716,8 @@ _SHADOW_BLOCK_LABELS = {
     "t1": "T+1 不能卖",
     "suspension": "停牌",
     "missing_bar": "缺行情不能成交",
+    "entry_not_triggered": "有效期内未触发，未开仓",
+    "expired": "有效期内未开仓",
 }
 
 
@@ -774,7 +776,7 @@ def build_shadow_feishu_card(
     blocked = [
         item
         for item in events
-        if item.get("event_type") in {"entry_blocked", "exit_delayed", "skip_insufficient_cash", "skip_t1"}
+        if item.get("event_type") in {"entry_blocked", "expired", "exit_delayed", "skip_insufficient_cash", "skip_t1"}
     ]
     lines = [
         f"**净值 {_cny(account.get('equity'))}**　现金 {_cny(account.get('cash'))}　市值 {_cny(account.get('market_value'))}",

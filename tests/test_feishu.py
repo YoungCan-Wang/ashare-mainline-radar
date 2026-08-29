@@ -860,3 +860,30 @@ def test_shadow_card_lists_triggered_working_order() -> None:
     assert "次日开盘市价挂单" in contents
     assert "确认日 2026-08-24" in contents
     assert "原信号日 2026-08-21" in contents
+
+
+def test_shadow_card_lists_expired_skip() -> None:
+    from ashare_mainline_radar.feishu import build_shadow_feishu_card
+
+    card = build_shadow_feishu_card(
+        {
+            "as_of": "2026-08-28",
+            "account": {"cash": 78026.82, "equity": 101322.82},
+            "positions": [],
+            "today_events": [
+                {
+                    "symbol": "600489.SH",
+                    "event_type": "expired",
+                    "payload": {"reason": "entry_not_triggered", "reason_note": "有效期内隔夜限价未成交，未开仓"},
+                }
+            ],
+        },
+        status="refreshed",
+    )
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    assert "今日阻断" in contents
+    assert "600489.SH" in contents
+    assert "有效期内未触发，未开仓" in contents
+    assert "影子账户未刷新" not in contents

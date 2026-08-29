@@ -1,7 +1,7 @@
 name: Daily A-share Mainline Radar
 
 concurrency:
-  group: tickflow-api-${{ github.repository }}
+  group: daily-mainline-${{ github.repository }}
   cancel-in-progress: false
 
 on:
