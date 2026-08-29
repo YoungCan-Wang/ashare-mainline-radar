@@ -73,6 +73,7 @@ def main() -> int:
             current_run_id=os.getenv("GITHUB_RUN_ID"),
             head_sha=os.getenv("GITHUB_SHA"),
             min_hours=args.min_hours,
+            event_name=os.getenv("GITHUB_EVENT_NAME"),
         )
     except Exception as exc:
         _write_output(False, f"frequency guard failed closed: {type(exc).__name__}: {exc}")
