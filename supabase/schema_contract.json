@@ -7,6 +7,7 @@
     "radar_symbol_quotes",
     "radar_trade_plans",
     "radar_trade_events",
+    "radar_board_snapshots",
     "shadow_account",
     "shadow_positions",
     "shadow_events",

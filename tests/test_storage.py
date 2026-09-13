@@ -157,6 +157,8 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
     bundle = build_storage_bundle(_report())
 
     assert bundle["run"]["run_key"] == "cn:2026-07-17:universe:CN_Equity_A"
+    assert bundle["boards"] == []
+    assert bundle["run"]["summary"]["board_coverage"]["hot_count"] == 0
     assert bundle["themes"][0]["lifecycle_stage"] == "主升加速"
     assert bundle["run"]["summary"]["price_limit_watch"]["closed_limit_up"] == 2
     assert len(bundle["symbols"]) == 1

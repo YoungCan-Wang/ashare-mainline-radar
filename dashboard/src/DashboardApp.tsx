@@ -6,6 +6,7 @@ import { CandidateQueue } from "./components/CandidateQueue";
 import { CollapsibleSection } from "./components/CollapsibleSection";
 import { SummaryStrip } from "./components/SummaryStrip";
 import { PriceLimitWatch } from "./components/PriceLimitWatch";
+import { BoardCoverage } from "./components/BoardCoverage";
 import { ThemeRanking } from "./components/ThemeRanking";
 import { ThemeTrendChart } from "./components/ThemeTrendChart";
 import { TopBar } from "./components/TopBar";
@@ -72,6 +73,7 @@ export function DashboardApp() {
             <ThemeRanking run={activeRun} themes={activeThemes} selectedTheme={themeFilter} onSelectTheme={setThemeFilter} />
             <ThemeTrendChart runs={data.runs} allThemes={data.themes} selectedThemes={activeThemes} />
           </div>
+          <BoardCoverage coverage={activeRun.summary?.board_coverage} />
         </CollapsibleSection>
         <CollapsibleSection
           className="price-limit-section"

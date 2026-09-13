@@ -13,7 +13,7 @@ from .next_buy import overlay_triggered_working_orders, select_triggered_working
 from .paper_trading import PaperTradeRefreshStatus, refresh_paper_trades
 from .report import write_report
 from .shadow_account import ShadowRefreshStatus, empty_snapshot, refresh_shadow_account
-from .storage import persist_report
+from .storage import load_board_snapshot_history, persist_report
 from .tickflow import TickFlowClient
 from .workflow_frequency import session_as_of
 
@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         intel_config=load_json(args.intel_config),
     )
     as_of = args.as_of or session_as_of(datetime.now(timezone.utc)).isoformat()
+    board_history = load_board_snapshot_history(as_of=as_of)
     report = radar.run(
         mode=args.mode,
         max_symbols=args.max_symbols,
@@ -82,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         strong_stock_limit=args.strong_stock_limit,
         accumulation_limit=args.accumulation_limit,
         as_of=as_of,
+        board_history=board_history,
     )
     active_themes = {
         theme.name for theme in report.themes[:3] if theme.status in {"主线成立", "主线候选"}

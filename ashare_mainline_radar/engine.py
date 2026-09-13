@@ -5,6 +5,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 from .accumulation import build_accumulation_report
+from .board_coverage import build_board_coverage_report, fetch_hot_boards
 from .config import (
     configured_symbols,
     sanitize_theme_config_instruments,
@@ -28,6 +29,7 @@ from .market import (
 from .market_context import build_market_pulses
 from .market_structure import build_market_structure
 from .models import (
+    BoardCoverageReport,
     DataSourceStatus,
     IntelItem,
     KlineSeries,
@@ -180,6 +182,8 @@ class MainlineRadar:
         strong_stock_limit: int = 12,
         accumulation_limit: int = 12,
         as_of: str | None = None,
+        fetch_boards=None,
+        board_history: list[dict[str, Any]] | None = None,
     ) -> RadarReport:
         as_of_date = _parse_as_of(as_of)
         universe_id, symbols = self._symbols_for_mode(mode, max_symbols)
@@ -429,6 +433,36 @@ class MainlineRadar:
             unmapped_strength=unmapped_strength,
             fundamentals=fundamentals,
         )
+        board_coverage = BoardCoverageReport()
+        board_status = "empty"
+        board_message = "eastmoney concept+industry hot set"
+        board_items = 0
+        try:
+            raw_boards = fetch_boards() if fetch_boards is not None else fetch_hot_boards()
+            board_coverage = build_board_coverage_report(
+                runtime_theme_config,
+                raw_boards,
+                market_date=data_as_of or (as_of_date.isoformat() if as_of_date else utc_now_iso()[:10]),
+                history=board_history,
+            )
+            board_items = len(board_coverage.snapshots)
+            board_status = "ok" if raw_boards else "empty"
+            board_message = (
+                f"hot={board_items} missing_basket={len(board_coverage.missing_basket)} "
+                f"scanned={board_coverage.scanned}"
+            )
+        except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
+            board_status = "unavailable"
+            board_message = str(exc)[:240]
+        source_statuses.append(
+            DataSourceStatus(
+                name="Eastmoney hot boards",
+                kind="board_coverage",
+                status=board_status,
+                items=board_items,
+                message=board_message,
+            )
+        )
         target_prices = build_target_price_report(
             strong_stocks=strong_stocks,
             accumulation=accumulation,
@@ -442,6 +476,7 @@ class MainlineRadar:
         warnings = [
             "本报告只用于研究和交易准备，不构成投资建议。",
             "预设主题与全市场未映射强势方向并行展示；自动发现项需人工确认归因后才能升级为可交易主线。",
+            "东财热板与缺篮候选只做覆盖观察，不写入主线成立，也不自动改 theme_baskets.json。",
             *theme_config_warnings,
         ]
         if self.client.api_key:
@@ -482,4 +517,5 @@ class MainlineRadar:
             unmapped_strength=unmapped_strength,
             unmapped_pullback=unmapped_pullback,
             price_limit_watch=price_limit_watch,
+            board_coverage=board_coverage,
         )

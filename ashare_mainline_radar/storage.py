@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.request import urlopen
 
-from .models import RadarReport
+from .board_coverage import coverage_summary, snapshot_rows
+from .models import BoardCoverageReport, BoardSnapshot, RadarReport
 from .paper_strategies import PAPER_STRATEGIES, PRODUCTION_PAPER_STRATEGY
 from .supabase_rest import fetch_rows, upsert_rows
 
@@ -60,6 +61,89 @@ def _list(value: Any) -> list[Any]:
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _board_coverage_from_payload(data: dict[str, Any]) -> BoardCoverageReport:
+    raw = data.get("board_coverage")
+    if isinstance(raw, BoardCoverageReport):
+        return raw
+    payload = _dict(raw)
+
+    def _row(item: Any) -> BoardSnapshot | None:
+        if isinstance(item, BoardSnapshot):
+            return item
+        if not isinstance(item, dict) or not item.get("board_code"):
+            return None
+        return BoardSnapshot(
+            market_date=str(item.get("market_date") or data.get("data_as_of") or ""),
+            source=str(item.get("source") or "eastmoney"),
+            board_kind=str(item.get("board_kind") or "concept"),
+            board_code=str(item["board_code"]),
+            board_name=str(item.get("board_name") or item["board_code"]),
+            change_pct=item.get("change_pct"),
+            amount=item.get("amount"),
+            mapped_theme=item.get("mapped_theme"),
+            coverage=str(item.get("coverage") or "unmapped"),
+            persistence_days=int(item.get("persistence_days") or 1),
+        )
+
+    snapshots = [row for row in (_row(item) for item in _list(payload.get("snapshots"))) if row]
+    missing = [row for row in (_row(item) for item in _list(payload.get("missing_basket"))) if row]
+    footnote = [row for row in (_row(item) for item in _list(payload.get("mapped_footnote"))) if row]
+    return BoardCoverageReport(
+        source=str(payload.get("source") or "eastmoney"),
+        scanned=int(payload.get("scanned") or len(snapshots)),
+        snapshots=snapshots,
+        missing_basket=missing or [item for item in snapshots if item.coverage == "unmapped" and item.persistence_days >= 3],
+        mapped_footnote=footnote,
+        notes=[str(item) for item in _list(payload.get("notes"))],
+    )
+
+
+def load_board_snapshot_history(
+    *,
+    as_of: str | None = None,
+    lookback_days: int = 21,
+    supabase_url: str | None = None,
+    supabase_secret_key: str | None = None,
+    supabase_publishable_key: str | None = None,
+    radar_ingest_key: str | None = None,
+    opener: Callable[..., Any] = urlopen,
+) -> list[dict[str, Any]]:
+    """Load recent hot-board snapshots so Daily can count persistence_days."""
+    url = supabase_url or os.getenv("SUPABASE_URL")
+    secret_key = (
+        supabase_secret_key
+        or os.getenv("SUPABASE_SECRET_KEY")
+        or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    )
+    publishable_key = supabase_publishable_key or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+    ingest_key = radar_ingest_key or os.getenv("RADAR_INGEST_KEY")
+    api_key = secret_key or publishable_key
+    if not url or not api_key:
+        return []
+    cutoff = None
+    if as_of:
+        try:
+            from datetime import date, timedelta
+
+            cutoff = (date.fromisoformat(as_of) - timedelta(days=lookback_days)).isoformat()
+        except ValueError:
+            cutoff = None
+    filters = {"market_date": f"gte.{cutoff}"} if cutoff else None
+    try:
+        return fetch_rows(
+            str(url),
+            str(api_key),
+            ingest_key,
+            "radar_board_snapshots",
+            order="market_date.desc",
+            max_rows=2000,
+            filters=filters,
+            opener=opener,
+        )
+    except Exception:
+        return []
 
 
 def _run_key(report: dict[str, Any]) -> str:
@@ -381,6 +465,7 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
             "cross_market": data.get("cross_market") or {},
             "price_limit_watch": data.get("price_limit_watch") or {},
             "source_statuses": data.get("source_statuses") or [],
+            "board_coverage": coverage_summary(_board_coverage_from_payload(data)),
         },
         "updated_at": generated_at,
     }
@@ -400,6 +485,7 @@ def build_storage_bundle(report: RadarReport | dict[str, Any]) -> dict[str, Any]
         "symbols": list(symbols.values()),
         "trade_plans": trade_plans,
         "trade_events": trade_events,
+        "boards": snapshot_rows(_board_coverage_from_payload(data), run_key=run_key, updated_at=generated_at),
     }
 
 
@@ -519,6 +605,15 @@ def persist_report(
                 "radar_symbol_snapshots",
                 "run_key,symbol",
                 bundle["symbols"],
+                opener,
+            )
+            upsert_rows(
+                str(url),
+                str(api_key),
+                ingest_key,
+                "radar_board_snapshots",
+                "market_date,source,board_code",
+                bundle["boards"],
                 opener,
             )
             status = PersistenceStatus(

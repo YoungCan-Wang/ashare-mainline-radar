@@ -74,7 +74,31 @@ export interface RadarRun {
     market_structure?: MarketStructure;
     gate_reasons?: string[];
     price_limit_watch?: PriceLimitWatchSummary;
+    board_coverage?: BoardCoverageSummary;
   };
+}
+
+export interface BoardSnapshotRow {
+  market_date?: string;
+  source?: string;
+  board_kind?: "concept" | "industry" | string;
+  board_code: string;
+  board_name: string;
+  change_pct?: number | null;
+  amount?: number | null;
+  mapped_theme?: string | null;
+  coverage?: "mapped" | "unmapped" | string;
+  persistence_days?: number;
+}
+
+export interface BoardCoverageSummary {
+  source?: string;
+  scanned?: number;
+  hot_count?: number;
+  missing_basket_count?: number;
+  missing_basket?: BoardSnapshotRow[];
+  mapped_footnote?: BoardSnapshotRow[];
+  notes?: string[];
 }
 
 export interface ThemeSnapshot {
