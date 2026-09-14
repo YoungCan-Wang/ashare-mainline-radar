@@ -129,6 +129,7 @@ def test_apply_shadow_day_probe_sends_named_arguments() -> None:
 def test_repo_contract_loads() -> None:
     contract = load_contract()
     assert "shadow_account" in contract["tables"]
+    assert "radar_board_snapshots" in contract["tables"]
     assert "apply_shadow_day" in contract["routines"]
 
 

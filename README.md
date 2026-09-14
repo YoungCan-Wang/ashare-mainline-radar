@@ -219,12 +219,20 @@ python3 scripts/run_daily.py --mode universe --max-symbols 0
 **消费医药**：大消费、创新药、医疗器械、传媒游戏  
 **金融防御**：券商金融、保险、高股息红利  
 
+产品分成三条线，不要混：
+
+1. **策划主线**：`theme_baskets.json` + `classify_theme` / 主线成立。身份不变。Daily 不会把东财热板倒进主线成立，也不会自动改篮子。
+2. **当日热板**：当天东财概念+行业板块，保留原名和 `BK` 代码，写入 `radar_board_snapshots`（只存成交额/涨跌幅 Top N，不是全量约 400 个）。
+3. **缺篮候选**：热板连续多日出现、且没有显式映射到现有雷达主题的板块。这是覆盖补全入口；人决定是否晋升到 `THEME_PRESETS`。
+
+映射由配置生成：`THEME_PRESETS.boards`、`theme_baskets` 源串里的 `白酒(BK0896)`，以及**精确**关键词/主题名兜底。未覆盖 ≠ 最近主题：化肥不会因为同属农业就被并进农业种植。表有 `source` 列，v1 只接东财；同花顺（taxonomy mismatch / 分类口径不一致）以后可加，不在 v1 抓。
+
 设计原则：
 
 1. 主题榜使用人工维护的可交易篮子；全市场模式同时输出“未映射强势发现”和“未映射相对强度回踩候选”，避免漏配方向静默消失；发现项必须人工归因后才能升级为主线，回踩候选给出条件化进出场，但不是自动下单。
 2. 主线强度同时结合绝对阈值和当日横截面分位，并对单一龙头贡献过度集中的篮子扣分。
 3. ETF 载体可配置名称关键词，运行时会用实时证券名称校验，明确错配的载体自动剔除并告警。
-4. 东财概念只作篮子刷新源，不直接把 500 个概念都当主线打分。
+4. 东财概念只作篮子刷新源，不直接把 500 个概念都当主线打分。日报另出「未入篮热板 / 缺篮候选」，只做覆盖观察。
 5. 每个主题有流动性龙头 `seed_symbols`，同步时优先保留，避免小票冲进广度分母。
 
 ```bash
@@ -239,7 +247,15 @@ python3 scripts/sync_theme_concepts.py --all-presets --offline --write
 python3 scripts/sync_theme_concepts.py --preset 航运港口 --write
 ```
 
-**要不要每天跑？** 不用。日报只读当前 `theme_baskets.json`；主题名单是配置，不是盘中行情。  
+**缺篮候选怎么晋升成策划主线（人工，禁止自动写篮子）：**
+
+1. 在日报 / 作战台「未入篮热板」里确认该东财板块连续出现、且确实是独立叙事，不是现有篮子的近邻改名。
+2. 在 `ashare_mainline_radar/eastmoney_concepts.py` 的 `THEME_PRESETS` 增加或改一条预设，把 `boards` 写成东财原代码，例如 `{"code": "BK0473", "name": "化肥行业", "kind": "industry"}`。多个东财板块可以挂到同一雷达主题（many-to-one）。
+3. 干跑看成分：`python3 scripts/sync_theme_concepts.py --preset <主题名> --dry-run`
+4. 人工确认后再写回：`python3 scripts/sync_theme_concepts.py --preset <主题名> --write`
+5. `theme_baskets.json` 有 diff 就开 PR，不要从热板脚本直接推 main。
+
+**要不要每天跑同步？** 不用。日报只读当前 `theme_baskets.json`；主题名单是配置，不是盘中行情。热板快照才是每天写。  
 合理节奏是**每周刷新一次流动性成分**，有 diff 再人工过目。仓库已加 `.github/workflows/sync-theme-baskets.yml`：
 
 - 每周日 20:00（北京时间）定时跑在线同步  
@@ -279,6 +295,7 @@ data/research_reports/inbox/
 
 - 市场闸门、指数结构、第一主线和作战标的数量。
 - 主线排名、生命周期、5/20日广度、成交热度和最近主线强度轨迹。
+- 未入篮热板 / 缺篮候选：覆盖观察，不是主线成立。
 - 建仓候选、持有观察、等待确认、黄金坑、低位资金和月线箱体筛选。
 - 首次入选时间、入选价、TickFlow 现价、入选以来涨跌和当日涨跌；支持按入选以来涨跌升降序排序。
 - 单个标的的参与条件、失效条件、目标价、赔率、15日回测和基本面兑现。

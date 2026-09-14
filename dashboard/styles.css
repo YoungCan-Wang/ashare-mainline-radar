@@ -397,6 +397,30 @@ select {
   margin-bottom: 18px;
 }
 
+.board-coverage-block {
+  margin: 0 14px 14px;
+}
+
+.board-footnote {
+  margin: 0;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.board-footnote strong {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.board-footnote ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
 .price-limit-section {
   margin-bottom: 18px;
 }

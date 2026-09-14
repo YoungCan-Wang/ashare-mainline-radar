@@ -129,6 +129,23 @@ def build_feishu_text(report: RadarReport) -> str:
                     f"- {group.theme}｜{group.theme_status}｜{group.lifecycle_stage}｜"
                     f"{group.independence_status}｜{names}"
                 )
+    coverage = report.board_coverage
+    if coverage.missing_basket or coverage.snapshots:
+        lines.append("")
+        lines.append("未入篮热板 / 缺篮候选（覆盖观察，不是主线成立，不是买入）：")
+        if coverage.missing_basket:
+            for item in coverage.missing_basket[:5]:
+                lines.append(
+                    f"- {item.board_name} {item.board_code}｜{item.board_kind}｜"
+                    f"持续 {item.persistence_days} 日｜未覆盖"
+                )
+        else:
+            lines.append("- 暂无未映射且持续满 3 个交易日的缺篮候选。")
+        if coverage.mapped_footnote:
+            mapped = "；".join(
+                f"{item.board_name}→{item.mapped_theme}" for item in coverage.mapped_footnote[:4]
+            )
+            lines.append(f"已在篮子中的热板对照：{mapped}")
     if report.unmapped_pullback.candidates:
         lines.append("")
         lines.append("未映射相对强度回踩（研究准备）：")
@@ -621,6 +638,28 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
             )
     else:
         elements.append(_div("暂无等待候选。"))
+
+    coverage = report.board_coverage
+    if coverage.missing_basket or coverage.snapshots:
+        lines = [
+            "<font color='grey'>**未入篮热板 / 缺篮候选**</font>（覆盖观察，不是主线成立，不是买入）",
+            f"热集合 {len(coverage.snapshots)}｜缺篮 {len(coverage.missing_basket)}｜扫描 {coverage.scanned}",
+        ]
+        if coverage.missing_basket:
+            for item in coverage.missing_basket[:5]:
+                change = "n/a" if item.change_pct is None else f"{item.change_pct:.2f}%"
+                lines.append(
+                    f"**{item.board_name} `{item.board_code}`**｜{item.board_kind}｜"
+                    f"持续 {item.persistence_days} 日｜{change}｜未覆盖"
+                )
+        else:
+            lines.append("暂无未映射且持续满 3 个交易日的缺篮候选。")
+        if coverage.mapped_footnote:
+            mapped = "；".join(
+                f"{item.board_name}→{item.mapped_theme}" for item in coverage.mapped_footnote[:4]
+            )
+            lines.append(f"已在篮子中的热板对照：{mapped}")
+        elements.extend([{"tag": "hr"}, _div("\n".join(lines))])
 
     unmapped = report.unmapped_pullback
     if unmapped.candidates:

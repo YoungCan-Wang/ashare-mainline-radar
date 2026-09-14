@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .models import (
     AccumulationCandidate,
+    BoardSnapshot,
     DataSourceStatus,
     FundamentalSnapshot,
     GoldenPitCandidate,
@@ -207,6 +208,31 @@ def _target_price_row(rank: int, item: TargetPriceEstimate) -> str:
     )
 
 
+def _board_amount(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    if abs(value) >= 1e8:
+        return f"{value / 1e8:.1f}亿"
+    if abs(value) >= 1e4:
+        return f"{value / 1e4:.1f}万"
+    return f"{value:.0f}"
+
+
+def _board_change(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}%"
+
+
+def _board_row(rank: int, item: BoardSnapshot) -> str:
+    mapped = item.mapped_theme or "未覆盖"
+    return (
+        f"| {rank} | {item.board_name} | `{item.board_code}` | {item.board_kind} | "
+        f"{item.source} | {_board_change(item.change_pct)} | {_board_amount(item.amount)} | "
+        f"{item.persistence_days} | {item.coverage} | {mapped} |"
+    )
+
+
 def _participation_note(theme: ThemeSnapshot) -> str:
     if theme.status == "主线成立":
         return "参与思路：优先等龙头或 ETF 在强势均线附近缩量回踩、再放量转强；若主题广度跌破半数或龙头连续放量滞涨，降低仓位。"
@@ -252,6 +278,43 @@ def render_markdown(report: RadarReport) -> str:
     )
     for rank, theme in enumerate(report.themes[:12], start=1):
         lines.append(_theme_row(rank, theme))
+    lines.append("")
+
+    lines.append("## 未入篮热板 / 缺篮候选")
+    lines.append("")
+    coverage = report.board_coverage
+    lines.append(
+        "覆盖观察，不是主线成立，也不是买入建议。"
+        "东财板块保持原名/原代码；未覆盖不等于最近主题。"
+    )
+    lines.append("")
+    lines.append(
+        f"当日热板扫描 {coverage.scanned} 个东财板块，写入热集合 {len(coverage.snapshots)} 个；"
+        f"缺篮候选 {len(coverage.missing_basket)} 个（未映射且持续至少 3 个交易日）。"
+    )
+    lines.append("")
+    if coverage.missing_basket:
+        lines.append(
+            "| 排名 | 板块原名 | 代码 | 类型 | 来源 | 涨跌幅 | 成交额 | 持续日 | 覆盖 | 映射主题 |"
+        )
+        lines.append("| ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |")
+        for rank, item in enumerate(coverage.missing_basket[:12], start=1):
+            lines.append(_board_row(rank, item))
+        lines.append("")
+    else:
+        lines.append("- 当前没有未映射且连续出现在热板集合满 3 个交易日的缺篮候选。")
+        lines.append("")
+    if coverage.mapped_footnote:
+        lines.append("已在篮子中的当日热板（对照，不是新发现）：")
+        lines.append("")
+        for item in coverage.mapped_footnote[:6]:
+            lines.append(
+                f"- {item.board_name} `{item.board_code}` → {item.mapped_theme}｜"
+                f"{_board_change(item.change_pct)}｜持续 {item.persistence_days} 日"
+            )
+        lines.append("")
+    for note in coverage.notes:
+        lines.append(f"- {note}")
     lines.append("")
 
     lines.append("## 未映射强势发现")

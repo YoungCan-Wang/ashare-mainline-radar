@@ -467,6 +467,37 @@ class UnmappedStrengthReport:
 
 
 @dataclass
+class BoardSnapshot:
+    """Native Eastmoney/later-source board row. Never renamed into a radar theme."""
+
+    market_date: str
+    source: str
+    board_kind: str
+    board_code: str
+    board_name: str
+    change_pct: float | None
+    amount: float | None
+    mapped_theme: str | None
+    coverage: str
+    persistence_days: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BoardCoverageReport:
+    """Coverage observation only — not 主线成立 and not a buy list."""
+
+    source: str = "eastmoney"
+    scanned: int = 0
+    snapshots: list[BoardSnapshot] = field(default_factory=list)
+    missing_basket: list[BoardSnapshot] = field(default_factory=list)
+    mapped_footnote: list[BoardSnapshot] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class UnmappedPullbackCandidate:
     symbol: str
     name: str
@@ -688,6 +719,7 @@ class RadarReport:
             floor_to_ceiling=0,
         )
     )
+    board_coverage: BoardCoverageReport = field(default_factory=BoardCoverageReport)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1,8 +1,7 @@
 """East Money concept/industry board helpers for theme basket curation.
 
-The radar scores only themes listed in `theme_baskets.json`. That file is a
-curated *tradable mainline* catalog (~20 themes), not a dump of every East Money
-concept. These helpers refresh baskets from BK boards and keep leader seeds stable.
+策划主线 stays in `theme_baskets.json`. Daily hot boards and 缺篮候选 live in
+`board_coverage.py` and never auto-insert themes here.
 """
 
 from __future__ import annotations
@@ -436,8 +435,22 @@ def _is_transient_http(exc: BaseException) -> bool:
     return isinstance(exc, urllib.error.HTTPError) and exc.code in TRANSIENT_HTTP_CODES
 
 
-def fetch_board_list(kind: str = "concept", pages: int = 8, page_size: int = 100) -> list[dict[str, Any]]:
-    """Return East Money board rows with code/name/change fields."""
+def _optional_float(value: Any) -> float | None:
+    if value in (None, "", "-"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_board_list(
+    kind: str = "concept",
+    pages: int = 8,
+    page_size: int = 100,
+    sort_fid: str = "f12",
+) -> list[dict[str, Any]]:
+    """Return East Money board rows with code/name/change/amount fields."""
     fs = BOARD_FS.get(kind)
     if not fs:
         raise ValueError(f"unsupported board kind: {kind}")
@@ -451,9 +464,9 @@ def fetch_board_list(kind: str = "concept", pages: int = 8, page_size: int = 100
                 "np": 1,
                 "fltt": 2,
                 "invt": 2,
-                "fid": "f12",
+                "fid": sort_fid,
                 "fs": fs,
-                "fields": "f12,f14,f3,f104,f105",
+                "fields": "f12,f14,f3,f6,f104,f105",
             }
         )
         payload = _request_json(f"{BOARD_LIST_URL}?{query}")
@@ -466,6 +479,7 @@ def fetch_board_list(kind: str = "concept", pages: int = 8, page_size: int = 100
                     "code": str(item.get("f12") or ""),
                     "name": str(item.get("f14") or ""),
                     "change_pct": item.get("f3"),
+                    "amount": _optional_float(item.get("f6")),
                     "up_count": item.get("f104"),
                     "down_count": item.get("f105"),
                     "kind": kind,
