@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from .config import theme_symbol_map
@@ -14,6 +15,7 @@ from .models import (
 
 
 EXECUTABLE_EVIDENCE_AS_OF = "2026-08-12"
+EVIDENCE_MAX_AGE_DAYS = 30
 EXECUTABLE_BACKTEST_CASES = [
     PriceLimitBacktestCase("首板确认后次日开盘追", "ceiling", 12_495, 0.4493, -0.0023, -0.0063, -0.1767, -0.0806),
     PriceLimitBacktestCase("主线首板确认后次日开盘追", "ceiling", 99, 0.4646, -0.0076, -0.0071, -0.1610, -0.0856),
@@ -22,6 +24,24 @@ EXECUTABLE_BACKTEST_CASES = [
     PriceLimitBacktestCase("主线跌停打开后次日开盘抄", "floor", 29, 0.4828, -0.0106, -0.0082, -0.1011, -0.0614),
     PriceLimitBacktestCase("封跌停后次日开盘抄", "floor", 4_321, 0.4016, -0.0124, -0.0163, -0.2021, -0.0976),
 ]
+
+
+def _evidence_staleness_note(
+    evidence_as_of: str, as_of: str | None, max_age_days: int = EVIDENCE_MAX_AGE_DAYS
+) -> str | None:
+    """证据过期返回提示文案，未过期返回 None。"""
+    if not as_of:
+        return None
+    try:
+        age_days = (date.fromisoformat(as_of) - date.fromisoformat(evidence_as_of)).days
+    except ValueError:
+        return None
+    if age_days <= max_age_days:
+        return None
+    return (
+        f"可执行证据已过期（{evidence_as_of}，距报告日期 {age_days} 天）："
+        "追板/抄底通道维持关闭，但所依据的样本外回测未更新，需刷新证据后重估。"
+    )
 
 
 def _verdict(signal_type: str) -> str:
@@ -260,6 +280,9 @@ def build_price_limit_watch(
         "当前所有可执行变体样本外期望均为负，追板与抄底通道保持关闭。",
         "若要重开通道，需分钟线影子盘同时通过成交率、封单质量、期望收益和尾部回撤门槛。",
     ]
+    staleness_note = _evidence_staleness_note(EXECUTABLE_EVIDENCE_AS_OF, as_of)
+    if staleness_note is not None:
+        notes.insert(0, staleness_note)
     return PriceLimitWatchReport(
         as_of=as_of,
         ceiling_verdict="关闭追板通道",
