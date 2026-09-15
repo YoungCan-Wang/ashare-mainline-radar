@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta, timezone
 
-from ashare_mainline_radar.models import KlineSeries
-from ashare_mainline_radar.price_limit_watch import build_price_limit_watch
+from ashare_mainline_radar.models import KlineSeries, PriceLimitWatchReport
+from ashare_mainline_radar.price_limit_watch import (
+    _evidence_staleness_note,
+    build_price_limit_watch,
+)
 
 
 def _timestamps(count: int) -> list[int]:
@@ -112,3 +115,55 @@ def test_daily_watch_lists_floor_to_ceiling_only_once() -> None:
     assert report.limit_up_touches == 1
     assert report.limit_down_touches == 1
     assert [signal.signal_type for signal in report.signals] == ["地天板"]
+
+
+def _timestamps_from(start: datetime, count: int) -> list[int]:
+    return [int((start + timedelta(days=index)).timestamp() * 1000) for index in range(count)]
+
+
+def _series_from(symbol: str, start: datetime, bars: list[tuple[float, float, float, float]]) -> KlineSeries:
+    return KlineSeries(
+        symbol=symbol,
+        timestamp=_timestamps_from(start, len(bars)),
+        open=[bar[0] for bar in bars],
+        high=[bar[1] for bar in bars],
+        low=[bar[2] for bar in bars],
+        close=[bar[3] for bar in bars],
+        volume=[1000.0] * len(bars),
+        amount=[bar[3] * 1000 for bar in bars],
+    )
+
+
+def _flat_report_ending(end: datetime) -> PriceLimitWatchReport:
+    bars = [(10, 10.1, 9.9, 10)] * 21
+    klines = {"000001.SZ": _series_from("000001.SZ", end - timedelta(days=20), bars)}
+    return build_price_limit_watch({"themes": []}, klines, {"000001.SZ": {"name": "测试"}})
+
+
+def test_evidence_staleness_note_flags_expired_evidence() -> None:
+    note = _evidence_staleness_note("2026-08-12", "2026-09-14")
+    assert note is not None
+    assert "2026-08-12" in note
+    assert "33" in note
+
+
+def test_evidence_staleness_note_accepts_fresh_evidence() -> None:
+    assert _evidence_staleness_note("2026-08-12", "2026-09-10") is None
+    assert _evidence_staleness_note("2026-08-12", "2026-09-11") is None
+
+
+def test_evidence_staleness_note_ignores_missing_or_bad_dates() -> None:
+    assert _evidence_staleness_note("2026-08-12", None) is None
+    assert _evidence_staleness_note("2026-08-12", "not-a-date") is None
+
+
+def test_report_flags_stale_evidence_in_notes() -> None:
+    report = _flat_report_ending(datetime(2026, 9, 14, tzinfo=timezone.utc))
+    assert report.as_of == "2026-09-14"
+    assert report.notes[0].startswith("可执行证据已过期")
+
+
+def test_report_omits_staleness_note_when_evidence_fresh() -> None:
+    report = _flat_report_ending(datetime(2026, 8, 20, tzinfo=timezone.utc))
+    assert report.as_of == "2026-08-20"
+    assert not any("过期" in note for note in report.notes)
