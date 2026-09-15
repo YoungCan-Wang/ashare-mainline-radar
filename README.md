@@ -76,6 +76,12 @@ python3 scripts/run_strategy_backtest.py --count 1800 --breadth-symbols 600 --ou
 python3 scripts/run_limit_up_backtest.py --count 1200 --max-symbols 0 --output reports/backtest/limit_up_backtest.json
 ```
 
+`volume_lag`（量先行/滞涨观察）是独立的研究回测，不是 Daily 角色，也不写入 `next_buy` / Supabase。它检验“放量但价格滞后”在低位与高位是否有扣费后的样本外（sample-out，留出检验）优势；结论见 `docs/volume_lag_backtest.md`。
+
+```bash
+python3 scripts/run_volume_lag_backtest.py --count 520 --max-symbols 360 --output reports/backtest/volume_lag_backtest.json
+```
+
 日K无法还原封单额、排队位置、首次触板时刻和开板次数；而“收盘仍封板”或“跌停已经打开”只能在收盘后确认，不能倒过来作为盘中买入条件。因此该回测只能决定是否值得进入分钟级影子盘，不能证明真实排板成交率或直接作为上线依据。
 
 成交成本按100万元模拟账户和实际成交金额逐笔计算，不再用一个固定往返费率代替：
