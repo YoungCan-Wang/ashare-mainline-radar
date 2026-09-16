@@ -887,3 +887,103 @@ def test_shadow_card_lists_expired_skip() -> None:
     assert "600489.SH" in contents
     assert "有效期内未触发，未开仓" in contents
     assert "影子账户未刷新" not in contents
+
+
+def test_shadow_card_lists_working_sell_preview() -> None:
+    from ashare_mainline_radar.feishu import build_shadow_feishu_card
+
+    card = build_shadow_feishu_card(
+        {
+            "as_of": "2026-09-15",
+            "account": {"cash": 80000, "equity": 100000},
+            "positions": [
+                {
+                    "symbol": "159698.SZ",
+                    "name": "粮食ETF鹏华",
+                    "shares": 1000,
+                    "sellable_shares": 1000,
+                    "avg_cost": 1.10,
+                    "last_mark": 1.08,
+                }
+            ],
+            "today_events": [],
+        },
+        sell_previews=[
+            {
+                "symbol": "159698.SZ",
+                "name": "粮食ETF鹏华",
+                "kind": "next_open",
+                "label": "次日开盘卖出挂单",
+                "reason": "主线连续两日退出前三",
+                "exit_signal_date": "2026-09-15",
+            }
+        ],
+    )
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    assert "明日退出 / 今日收盘退出" in contents
+    assert "粮食ETF鹏华" in contents
+    assert "次日开盘卖出挂单" in contents
+    assert "主线连续两日退出前三" in contents
+    assert "固定持有" not in contents
+
+
+def test_shadow_card_uses_same_day_close_wording_for_fixed_hold() -> None:
+    from ashare_mainline_radar.feishu import build_shadow_feishu_card
+
+    card = build_shadow_feishu_card(
+        {"as_of": "2026-09-04", "account": {"cash": 80000, "equity": 100000}, "positions": [], "today_events": []},
+        sell_previews=[
+            {
+                "symbol": "159698.SZ",
+                "name": "粮食ETF鹏华",
+                "kind": "same_day_close",
+                "label": "今日收盘退出",
+                "reason": "固定持有15日",
+                "entry_date": "2026-08-20",
+            }
+        ],
+    )
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    assert "今日收盘退出" in contents
+    assert "固定持有15日" in contents
+    assert "次日开盘" not in contents
+
+
+def test_combat_card_lists_pending_sell_preview() -> None:
+    report = _report()
+    card = build_feishu_card(
+        report,
+        sell_previews=[
+            {
+                "symbol": "159698.SZ",
+                "name": "粮食ETF鹏华",
+                "kind": "next_open",
+                "label": "次日开盘卖出挂单",
+                "reason": "收盘跌破失效位",
+            }
+        ],
+    )
+    contents = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"] if element.get("tag") == "markdown"
+    )
+    text = build_feishu_text(
+        report,
+        sell_previews=[
+            {
+                "symbol": "159698.SZ",
+                "name": "粮食ETF鹏华",
+                "kind": "next_open",
+                "label": "次日开盘卖出挂单",
+                "reason": "收盘跌破失效位",
+            }
+        ],
+    )
+    assert "明日退出 / 今日收盘退出" in contents
+    assert "次日开盘卖出挂单" in contents
+    assert "收盘跌破失效位" in contents
+    assert "明日退出 / 今日收盘退出" in text
+    assert "粮食ETF鹏华" in text

@@ -13,6 +13,7 @@ from .models import (
     ThemeLifecycleSignal,
     ThemeSnapshot,
     TradingGate,
+    cn_market_date_from_ms,
 )
 from .paper_strategies import PRODUCTION_PAPER_STRATEGY
 
@@ -406,6 +407,142 @@ def select_triggered_working_orders(paper_plans: list[dict[str, Any]]) -> list[d
         elif row_prod == current_prod and current_shadow == row_shadow:
             if str(row.get("trigger_date") or "") > str(current.get("trigger_date") or ""):
                 selected[symbol] = row
+    return list(selected.values())
+
+
+def _is_production_cash_book_plan(row: dict[str, Any]) -> bool:
+    if row.get("is_shadow") is True:
+        return False
+    version = str(row.get("strategy_version") or PRODUCTION_PAPER_STRATEGY.version)
+    return version == PRODUCTION_PAPER_STRATEGY.version
+
+
+def _working_sell_order(row: dict[str, Any]) -> dict[str, Any]:
+    payload = row.get("cost_payload")
+    working = payload.get("working_sell_order") if isinstance(payload, dict) else {}
+    return working if isinstance(working, dict) else {}
+
+
+def _theme_exit_reason(row: dict[str, Any]) -> str:
+    days = int(row.get("theme_exit_days") if row.get("theme_exit_days") is not None else PRODUCTION_PAPER_STRATEGY.theme_exit_days)
+    exit_days_text = "两" if days == 2 else str(days)
+    return f"主线连续{exit_days_text}日退出前三"
+
+
+def _sell_reason_from_plan(row: dict[str, Any]) -> str:
+    stored = str(row.get("exit_reason") or "").strip()
+    if stored:
+        return stored.split("；", 1)[0]
+    if row.get("exit_signal_date"):
+        return _theme_exit_reason(row)
+    return "收盘跌破失效位"
+
+
+def session_dates_from_klines(klines: dict[str, Any] | None) -> dict[str, list[str]]:
+    dates: dict[str, list[str]] = {}
+    for symbol, series in (klines or {}).items():
+        timestamps = getattr(series, "timestamp", None) or []
+        dates[str(symbol)] = [cn_market_date_from_ms(value) or "" for value in timestamps]
+    return dates
+
+
+def _held_sessions(row: dict[str, Any], as_of: str | None, session_dates: dict[str, list[str]] | None) -> int | None:
+    entry_date = str(row.get("entry_date") or "")
+    symbol = str(row.get("symbol") or "")
+    if not entry_date or not as_of or not symbol:
+        return None
+    dates = (session_dates or {}).get(symbol) or []
+    if entry_date not in dates or as_of not in dates:
+        return None
+    return dates.index(as_of) - dates.index(entry_date)
+
+
+def _sell_preview_from_open_plan(
+    row: dict[str, Any],
+    *,
+    as_of: str | None,
+    session_dates: dict[str, list[str]] | None,
+) -> dict[str, Any] | None:
+    working = _working_sell_order(row)
+    max_hold_days = int(row["max_hold_days"]) if row.get("max_hold_days") is not None else 0
+    if working:
+        return {
+            "symbol": str(row.get("symbol") or ""),
+            "name": str(row.get("name") or row.get("symbol") or ""),
+            "kind": "next_open",
+            "label": "次日开盘卖出挂单",
+            "reason": _sell_reason_from_plan(row),
+            "exit_signal_date": row.get("exit_signal_date"),
+            "stop_price": row.get("stop_price"),
+            "max_hold_days": max_hold_days or None,
+            "entry_date": row.get("entry_date"),
+            "working_sell_order": working,
+        }
+    held = _held_sessions(row, as_of, session_dates)
+    if held is None or max_hold_days <= 0:
+        return None
+    if held == max_hold_days:
+        return {
+            "symbol": str(row.get("symbol") or ""),
+            "name": str(row.get("name") or row.get("symbol") or ""),
+            "kind": "same_day_close",
+            "label": "今日收盘退出",
+            "reason": f"固定持有{max_hold_days}日",
+            "exit_signal_date": None,
+            "stop_price": row.get("stop_price"),
+            "max_hold_days": max_hold_days,
+            "hold_day": held,
+            "entry_date": row.get("entry_date"),
+        }
+    if held == max_hold_days - 1:
+        return {
+            "symbol": str(row.get("symbol") or ""),
+            "name": str(row.get("name") or row.get("symbol") or ""),
+            "kind": "watch",
+            "label": f"观察中（第 {held}/{max_hold_days} 日）",
+            "reason": f"固定持有{max_hold_days}日",
+            "exit_signal_date": None,
+            "stop_price": row.get("stop_price"),
+            "max_hold_days": max_hold_days,
+            "hold_day": held,
+            "entry_date": row.get("entry_date"),
+        }
+    return None
+
+
+def select_pending_sell_previews(
+    paper_plans: list[dict[str, Any]],
+    *,
+    as_of: str | None = None,
+    session_dates: dict[str, list[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """Display-only exit prep from open production plans. Does not change exit evaluation."""
+    selected: dict[str, dict[str, Any]] = {}
+    source: dict[str, dict[str, Any]] = {}
+    for row in paper_plans:
+        if str(row.get("status") or "") != "open":
+            continue
+        if not _is_production_cash_book_plan(row):
+            continue
+        symbol = str(row.get("symbol") or "")
+        if not symbol:
+            continue
+        preview = _sell_preview_from_open_plan(row, as_of=as_of, session_dates=session_dates)
+        if preview is None:
+            continue
+        current = source.get(symbol)
+        if current is None:
+            selected[symbol] = preview
+            source[symbol] = row
+            continue
+        current_sell = bool(_working_sell_order(current))
+        row_sell = bool(_working_sell_order(row))
+        if row_sell and not current_sell:
+            selected[symbol] = preview
+            source[symbol] = row
+        elif row_sell == current_sell and str(row.get("exit_signal_date") or "") > str(current.get("exit_signal_date") or ""):
+            selected[symbol] = preview
+            source[symbol] = row
     return list(selected.values())
 
 

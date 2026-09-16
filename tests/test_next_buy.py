@@ -9,7 +9,11 @@ from ashare_mainline_radar.models import (
     ThemeSnapshot,
     TradingGate,
 )
-from ashare_mainline_radar.next_buy import build_next_buy_report, overlay_triggered_working_orders
+from ashare_mainline_radar.next_buy import (
+    build_next_buy_report,
+    overlay_triggered_working_orders,
+    select_pending_sell_previews,
+)
 
 
 def test_build_next_buy_report_selects_primary() -> None:
@@ -413,3 +417,90 @@ def test_daily_markdown_shows_triggered_working_order() -> None:
     assert "原买入区 27.29-28.15" in markdown
     assert "原信号日 2026-08-21" in markdown
     assert "29.61" not in markdown
+
+
+def _grain_open_plan(**overrides):
+    row = {
+        "plan_key": "2026-08-20:159698.SZ:mainline-v1-theme-exit-2d",
+        "symbol": "159698.SZ",
+        "name": "粮食ETF鹏华",
+        "theme": "粮食种植",
+        "status": "open",
+        "entry_date": "2026-08-20",
+        "exit_signal_date": "2026-09-15",
+        "max_hold_days": 15,
+        "theme_exit_days": 2,
+        "stop_price": 0.92,
+        "strategy_version": "mainline-v1-theme-exit-2d",
+        "is_shadow": False,
+        "cost_payload": {
+            "working_sell_order": {
+                "working_order_type": "market_on_open",
+                "working_order_note": "次日开盘价卖出挂单",
+            }
+        },
+    }
+    row.update(overrides)
+    return row
+
+
+def test_select_pending_sell_previews_reads_working_sell_order() -> None:
+    previews = select_pending_sell_previews([_grain_open_plan()], as_of="2026-09-15")
+
+    assert len(previews) == 1
+    assert previews[0]["symbol"] == "159698.SZ"
+    assert previews[0]["kind"] == "next_open"
+    assert previews[0]["label"] == "次日开盘卖出挂单"
+    assert previews[0]["reason"] == "主线连续两日退出前三"
+
+
+def test_select_pending_sell_previews_uses_same_day_close_for_fixed_hold() -> None:
+    dates = [f"2026-08-{day:02d}" for day in range(20, 32)] + [f"2026-09-{day:02d}" for day in range(1, 5)]
+    plan = _grain_open_plan(
+        exit_signal_date=None,
+        cost_payload={},
+        max_hold_days=15,
+        entry_date="2026-08-20",
+    )
+    previews = select_pending_sell_previews(
+        [plan],
+        as_of="2026-09-04",
+        session_dates={"159698.SZ": dates},
+    )
+
+    assert len(previews) == 1
+    assert previews[0]["kind"] == "same_day_close"
+    assert previews[0]["label"] == "今日收盘退出"
+    assert previews[0]["reason"] == "固定持有15日"
+
+
+def test_select_pending_sell_previews_skips_shadow_and_challenger() -> None:
+    previews = select_pending_sell_previews(
+        [
+            _grain_open_plan(is_shadow=True, strategy_version="mainline-v2-theme-exit-3d-frozen-20260718"),
+            _grain_open_plan(symbol="510300.SH", name="沪深300ETF", is_shadow=False, strategy_version="mainline-v2-theme-exit-3d-frozen-20260718"),
+        ],
+        as_of="2026-09-15",
+    )
+    assert previews == []
+
+
+def test_select_pending_sell_previews_stop_uses_invalidation_reason() -> None:
+    previews = select_pending_sell_previews(
+        [_grain_open_plan(exit_signal_date=None)],
+        as_of="2026-09-15",
+    )
+    assert previews[0]["kind"] == "next_open"
+    assert previews[0]["reason"] == "收盘跌破失效位"
+
+
+def test_select_pending_sell_previews_watch_on_hold_minus_one() -> None:
+    dates = [f"2026-08-{day:02d}" for day in range(20, 32)] + [f"2026-09-{day:02d}" for day in range(1, 4)]
+    plan = _grain_open_plan(exit_signal_date=None, cost_payload={}, max_hold_days=15, entry_date="2026-08-20")
+    previews = select_pending_sell_previews(
+        [plan],
+        as_of="2026-09-03",
+        session_dates={"159698.SZ": dates},
+    )
+    assert previews[0]["kind"] == "watch"
+    assert previews[0]["label"] == "观察中（第 14/15 日）"
