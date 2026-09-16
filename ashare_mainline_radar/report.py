@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from .models import (
     AccumulationCandidate,
@@ -243,7 +244,37 @@ def _participation_note(theme: ThemeSnapshot) -> str:
     return "参与思路：暂不作为主线参与，只保留新闻或政策催化观察。"
 
 
-def render_markdown(report: RadarReport) -> str:
+def _sell_preview_markdown(sell_previews: list[dict[str, Any]]) -> list[str]:
+    action = [item for item in sell_previews if item.get("kind") in {"next_open", "same_day_close"}]
+    watch = [item for item in sell_previews if item.get("kind") == "watch"]
+    if not action and not watch:
+        return []
+    lines = ["## 明日退出 / 今日收盘退出", ""]
+    if action:
+        lines.append("纸面持仓已进入退出准备；主题/止损按次日开盘卖出，固定持有到期按当日收盘卖出。不是行为时间窗退出。")
+        lines.append("")
+        for item in action:
+            extras = [str(item.get("reason") or "")]
+            if item.get("kind") == "next_open" and item.get("exit_signal_date"):
+                extras.append(f"信号日 {item['exit_signal_date']}")
+            elif item.get("kind") == "same_day_close" and item.get("entry_date"):
+                extras.append(f"入场日 {item['entry_date']}")
+            detail = "｜".join(part for part in extras if part)
+            suffix = f"｜{detail}" if detail else ""
+            lines.append(f"- **{item.get('name')} `{item.get('symbol')}`：{item.get('label')}。**{suffix}")
+        lines.append("")
+    if watch:
+        lines.append("接近固定持有到期的观察仓：")
+        lines.append("")
+        for item in watch:
+            reason = item.get("reason") or ""
+            suffix = f"｜{reason}" if reason else ""
+            lines.append(f"- {item.get('name')} `{item.get('symbol')}`：{item.get('label')}{suffix}")
+        lines.append("")
+    return lines
+
+
+def render_markdown(report: RadarReport, sell_previews: list[dict[str, Any]] | None = None) -> str:
     lines: list[str] = []
     lines.append("# A股市场主线雷达")
     lines.append("")
@@ -510,6 +541,9 @@ def render_markdown(report: RadarReport) -> str:
             if item.entry_plan:
                 lines.append(f"  {item.entry_plan}")
         lines.append("")
+
+    if sell_previews:
+        lines.extend(_sell_preview_markdown(sell_previews))
 
     if report.next_buy.primary:
         primary = report.next_buy.primary
@@ -788,11 +822,15 @@ def render_markdown(report: RadarReport) -> str:
     return "\n".join(lines)
 
 
-def write_report(report: RadarReport, output_dir: str | Path) -> tuple[Path, Path]:
+def write_report(
+    report: RadarReport,
+    output_dir: str | Path,
+    sell_previews: list[dict[str, Any]] | None = None,
+) -> tuple[Path, Path]:
     output_path = Path(output_dir).expanduser()
     output_path.mkdir(parents=True, exist_ok=True)
     markdown_path = output_path / "mainline_report.md"
     json_path = output_path / "mainline_report.json"
-    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    markdown_path.write_text(render_markdown(report, sell_previews=sell_previews), encoding="utf-8")
     json_path.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
     return markdown_path, json_path

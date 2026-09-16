@@ -893,7 +893,7 @@ def test_failed_shadow_refresh_still_posts_error_card(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(
         cli,
         "write_report",
-        lambda report, output: (
+        lambda report, output, **_kwargs: (
             output.mkdir(parents=True, exist_ok=True),
             (output / "mainline_report.md").write_text("ok", encoding="utf-8"),
             (output / "mainline_report.json").write_text("{}", encoding="utf-8"),

@@ -33,7 +33,7 @@ def _ordered_lifecycle_signals(report: RadarReport) -> list[ThemeLifecycleSignal
     )
 
 
-def build_feishu_text(report: RadarReport) -> str:
+def build_feishu_text(report: RadarReport, sell_previews: list[dict[str, Any]] | None = None) -> str:
     lines = [
         "A股市场主线雷达",
         f"行情日期：{report.data_as_of or 'n/a'}",
@@ -114,6 +114,23 @@ def build_feishu_text(report: RadarReport) -> str:
         lines.append("已触发，次日开盘挂单：")
         for item in triggered:
             lines.append(f"{item.name} {item.symbol}｜已触发｜{item.entry_plan}")
+    if sell_previews:
+        action = _actionable_sell_previews(sell_previews)
+        watch = _watch_sell_previews(sell_previews)
+        if action:
+            lines.append("")
+            lines.append("明日退出 / 今日收盘退出：")
+            for item in action:
+                detail = _sell_preview_detail(item)
+                suffix = f"｜{detail}" if detail else ""
+                lines.append(f"{item.get('name')} {item.get('symbol')}｜{item.get('label')}{suffix}")
+        if watch:
+            lines.append("")
+            lines.append("持仓观察：")
+            for item in watch:
+                detail = _sell_preview_detail(item)
+                suffix = f"｜{detail}" if detail else ""
+                lines.append(f"{item.get('name')} {item.get('symbol')}｜{item.get('label')}{suffix}")
     if report.next_buy and report.next_buy.primary:
         plan = report.next_buy.primary
         lines.append("")
@@ -465,7 +482,11 @@ def _dashboard_button(url: str) -> dict[str, Any]:
     }
 
 
-def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> dict[str, Any]:
+def build_feishu_card(
+    report: RadarReport,
+    dashboard_url: str | None = None,
+    sell_previews: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     candidates = {item.symbol: item for item in report.strong_stocks.candidates}
     targets = {item.symbol: item for item in report.target_prices.estimates}
     phase_by_theme = {item.name: item.price_phase for item in report.themes}
@@ -602,6 +623,10 @@ def build_feishu_card(report: RadarReport, dashboard_url: str | None = None) -> 
         for plan in triggered:
             trigger_lines.append(_triggered_block(plan))
         elements.extend([{"tag": "hr"}, _div("\n\n".join(trigger_lines))])
+    if sell_previews:
+        sell_lines = _sell_preview_lines(sell_previews, include_watch=True)
+        if sell_lines:
+            elements.extend([{"tag": "hr"}, _div("\n\n".join(sell_lines))])
     elements.extend(
         [
             {"tag": "hr"},
@@ -799,12 +824,57 @@ def _shadow_working_order_lines(working_orders: list[dict[str, Any]]) -> list[st
     return lines
 
 
+def _actionable_sell_previews(sell_previews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in sell_previews if item.get("kind") in {"next_open", "same_day_close"}]
+
+
+def _watch_sell_previews(sell_previews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in sell_previews if item.get("kind") == "watch"]
+
+
+def _sell_preview_detail(item: dict[str, Any]) -> str:
+    reason = str(item.get("reason") or "").strip()
+    extras: list[str] = []
+    if item.get("kind") == "next_open" and item.get("exit_signal_date"):
+        extras.append(f"信号日 {item['exit_signal_date']}")
+    elif item.get("kind") == "same_day_close" and item.get("entry_date"):
+        extras.append(f"入场日 {item['entry_date']}")
+    detail = reason
+    if extras:
+        detail = f"{reason}｜{'｜'.join(extras)}" if reason else "｜".join(extras)
+    return detail
+
+
+def _sell_preview_lines(sell_previews: list[dict[str, Any]], *, include_watch: bool = True) -> list[str]:
+    action = _actionable_sell_previews(sell_previews)
+    watch = _watch_sell_previews(sell_previews) if include_watch else []
+    lines: list[str] = []
+    if action:
+        lines.append("<font color='red'>**明日退出 / 今日收盘退出**</font>")
+        for item in action:
+            detail = _sell_preview_detail(item)
+            block = f"**{item.get('name') or ''} `{item.get('symbol')}`：{item.get('label')}。**"
+            if detail:
+                block = f"{block}\n{detail}"
+            lines.append(block)
+    if watch:
+        if lines:
+            lines.append("")
+        lines.append("<font color='grey'>**持仓观察**</font>")
+        for item in watch:
+            detail = _sell_preview_detail(item)
+            suffix = f"｜{detail}" if detail else ""
+            lines.append(f"{item.get('name') or ''} `{item.get('symbol')}`　{item.get('label')}{suffix}")
+    return lines
+
+
 def build_shadow_feishu_card(
     snapshot: dict[str, Any],
     *,
     status: str | None = None,
     message: str | None = None,
     working_orders: list[dict[str, Any]] | None = None,
+    sell_previews: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
@@ -842,6 +912,10 @@ def build_shadow_feishu_card(
     elements.extend([{"tag": "hr"}, _div("\n".join(hold_lines))])
     if working_orders:
         elements.extend([{"tag": "hr"}, _div("\n".join(_shadow_working_order_lines(working_orders)))])
+    if sell_previews:
+        sell_lines = _sell_preview_lines(sell_previews, include_watch=True)
+        if sell_lines:
+            elements.extend([{"tag": "hr"}, _div("\n".join(sell_lines))])
 
     fill_lines = ["<font color='green'>**今日成交**</font>"]
     if fills:

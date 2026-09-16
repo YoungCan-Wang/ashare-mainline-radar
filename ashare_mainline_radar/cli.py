@@ -9,7 +9,12 @@ from pathlib import Path
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
 from .feishu import FeishuStatus, build_feishu_card, build_shadow_feishu_card, post_feishu_card, write_feishu_status
-from .next_buy import overlay_triggered_working_orders, select_triggered_working_orders
+from .next_buy import (
+    overlay_triggered_working_orders,
+    select_pending_sell_previews,
+    select_triggered_working_orders,
+    session_dates_from_klines,
+)
 from .paper_trading import PaperTradeRefreshStatus, refresh_paper_trades
 from .report import write_report
 from .shadow_account import ShadowRefreshStatus, empty_snapshot, refresh_shadow_account
@@ -97,8 +102,17 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         paper_status = PaperTradeRefreshStatus("failed", 0, 0, 0, f"{type(exc).__name__}: {exc}")
     overlay_triggered_working_orders(report.next_buy, paper_plans)
-    markdown_path, json_path = write_report(report, args.output_dir)
-    feishu_card = build_feishu_card(report, dashboard_url=args.dashboard_public_url)
+    sell_previews = select_pending_sell_previews(
+        paper_plans,
+        as_of=report.data_as_of,
+        session_dates=session_dates_from_klines(paper_klines),
+    )
+    markdown_path, json_path = write_report(report, args.output_dir, sell_previews=sell_previews)
+    feishu_card = build_feishu_card(
+        report,
+        dashboard_url=args.dashboard_public_url,
+        sell_previews=sell_previews,
+    )
     feishu_card_path = args.output_dir / "feishu_card.json"
     feishu_card_path.write_text(json.dumps(feishu_card, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {markdown_path}")
@@ -136,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         status=shadow_status.status,
         message=shadow_status.message,
         working_orders=select_triggered_working_orders(paper_plans),
+        sell_previews=sell_previews,
     )
     shadow_card_path = args.output_dir / "shadow_card.json"
     shadow_card_path.write_text(json.dumps(shadow_card, ensure_ascii=False, indent=2), encoding="utf-8")
