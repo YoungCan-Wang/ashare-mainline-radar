@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
+"""Backtest A-share price-limit ceiling and floor events.
+
+Writes the full JSON + Markdown reports (also uploaded as a workflow artifact).
+"""
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +20,10 @@ from ashare_mainline_radar.limit_up_backtest import (
     collect_limit_up_events,
     prepare_limit_event_context,
     render_limit_up_backtest,
+)
+from ashare_mainline_radar.backtest_summary import (
+    print_executable_summary,
+    render_step_summary,
 )
 from ashare_mainline_radar.tickflow import TickFlowClient
 
@@ -65,11 +74,18 @@ def main() -> int:
     print(f"Wrote {markdown_path}")
     strict = report["variants"]["mainline_first_board_close_sealed_conditional"]["test"]
     print(
-        "mainline first-board test: "
+        "naive mainline first-board test (assumes fill at limit price, not executable): "
         f"signals={strict['signals']}, "
         f"next_open={strict['horizons']['next_open']['average_return']}, "
         f"day5={strict['horizons']['day5_close']['average_return']}"
     )
+    # Executable entry: the numbers the price-limit watch evidence rests on.
+    print_executable_summary(report)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write(render_step_summary(report))
+        print(f"Appended executable summary to {summary_path}")
     return 0
 
 
