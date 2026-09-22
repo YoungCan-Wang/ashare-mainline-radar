@@ -4,6 +4,7 @@ export type RadarRole =
   | "golden_pit"
   | "accumulation"
   | "monthly_base"
+  | "fib_profit_space"
   | "expectation_gap"
   | "leader_tape"
   | "market_watchlist"

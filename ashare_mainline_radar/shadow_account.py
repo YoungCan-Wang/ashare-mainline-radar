@@ -15,7 +15,7 @@ from .execution import (
     is_sealed_limit_up,
 )
 from .models import KlineSeries, cn_market_date_from_ms
-from .paper_strategies import PRODUCTION_PAPER_STRATEGY
+from .paper_strategies import FIB_SHADOW_STRATEGY, PRODUCTION_PAPER_STRATEGY
 from .supabase_rest import call_rpc, fetch_rows, upsert_rows
 from .tickflow import TickFlowClient
 
@@ -847,9 +847,23 @@ def execute_shadow_day(
     return state, held, events
 
 
+SHADOW_BOOK_VERSIONS = (
+    PRODUCTION_PAPER_STRATEGY.version,
+    FIB_SHADOW_STRATEGY.version,
+)
+
+
+def _shadow_strategy_filter() -> str:
+    return "in.(" + ",".join(SHADOW_BOOK_VERSIONS) + ")"
+
+
 def _production_event(row: dict[str, Any]) -> bool:
     version = str(row.get("strategy_version") or PRODUCTION_PAPER_STRATEGY.version)
     return version == PRODUCTION_PAPER_STRATEGY.version
+
+
+def _shadow_book_event(row: dict[str, Any]) -> bool:
+    return str(row.get("strategy_version") or "") in SHADOW_BOOK_VERSIONS
 
 
 def _intents_from_paper(
@@ -857,12 +871,21 @@ def _intents_from_paper(
     plans: list[dict[str, Any]],
     positions: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    plans_by_symbol = {str(row["symbol"]): row for row in plans if row.get("symbol")}
+    plans_by_symbol: dict[str, dict[str, Any]] = {}
+    for plan_row in plans:
+        plan_symbol = str(plan_row.get("symbol") or "")
+        if not plan_symbol:
+            continue
+        current = plans_by_symbol.get(plan_symbol)
+        if current is None or _production_event(plan_row):
+            plans_by_symbol[plan_symbol] = plan_row
     buy_intents: list[dict[str, Any]] = []
     sell_intents: list[dict[str, Any]] = []
     sell_symbols: set[str] = set()
-    for row in events:
-        if not _production_event(row):
+    buy_symbols: set[str] = set()
+    ordered = sorted(events, key=lambda row: 0 if _production_event(row) else 1)
+    for row in ordered:
+        if not _shadow_book_event(row):
             continue
         event_type = str(row.get("event_type") or "")
         symbol = str(row.get("symbol") or "")
@@ -871,6 +894,9 @@ def _intents_from_paper(
         plan = plans_by_symbol.get(symbol, {})
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         if event_type in {"opened", "entry_blocked", "expired"}:
+            if symbol in buy_symbols:
+                continue
+            buy_symbols.add(symbol)
             buy_intents.append(
                 {
                     "symbol": symbol,
@@ -964,6 +990,7 @@ def refresh_shadow_account(
     radar_ingest_key: str | None = None,
     cost_model: TradingCostModel | None = None,
     opener: Callable[..., Any] = urlopen,
+    kline_out: dict[str, KlineSeries] | None = None,
 ) -> ShadowRefreshStatus:
     url = supabase_url or os.getenv("SUPABASE_URL")
     api_key = supabase_publishable_key or os.getenv("SUPABASE_PUBLISHABLE_KEY")
@@ -1063,7 +1090,7 @@ def refresh_shadow_account(
         max_rows=1000,
         filters={
             "event_date": f"eq.{as_of}",
-            "strategy_version": f"eq.{PRODUCTION_PAPER_STRATEGY.version}",
+            "strategy_version": _shadow_strategy_filter(),
         },
         opener=opener,
     )
@@ -1076,7 +1103,7 @@ def refresh_shadow_account(
         max_rows=1000,
         filters={
             "last_evaluated_date": f"eq.{as_of}",
-            "strategy_version": f"eq.{PRODUCTION_PAPER_STRATEGY.version}",
+            "strategy_version": _shadow_strategy_filter(),
         },
         opener=opener,
     )
@@ -1089,6 +1116,8 @@ def refresh_shadow_account(
     if missing:
         provider = client or TickFlowClient()
         series_map.update(provider.get_klines_batch(missing, period="1d", count=120, adjust="forward"))
+    if kline_out is not None:
+        kline_out.update(series_map)
 
     model = cost_model or TradingCostModel(account_capital=SHADOW_INITIAL_CAPITAL)
     next_account, next_positions, events = execute_shadow_day(

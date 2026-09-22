@@ -11,7 +11,7 @@ from .supabase_rest import fetch_rows, upsert_rows
 from .tickflow import TickFlowClient
 
 ACTIONABLE_ROLES = frozenset(
-    {"next_buy", "strong_stock", "golden_pit", "accumulation", "monthly_base"}
+    {"next_buy", "strong_stock", "golden_pit", "accumulation", "monthly_base", "fib_profit_space"}
 )
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 

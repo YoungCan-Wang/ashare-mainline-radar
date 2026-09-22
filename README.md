@@ -353,6 +353,13 @@ RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写 `radar_*` 研�
 把排名写入 `fib_profit_space_daily`，把运行结果写入 `fib_profit_space_run_status`。
 没有成功状态时读作「未运行」，不会把空表当成「当天没有赚钱空间」。分支上手动运行只用很小的股票池。
 
+日报主线漏斗会用同一套几何，把当日赚钱空间放进作战卡、Markdown 和 `radar_symbol_snapshots.roles=fib_profit_space`。
+16:45 的日报先用本轮已经抓到的日 K 排名；若同一 `asof_date` 已有成功榜，则改用已发布的 `fib_profit_space_daily`。
+报价刷新把这个角色当作可跟踪池，作战台沿用 `radar_symbol_quotes.daily_change_pct`。卡片在线上路径已经带出当日涨跌时，会在标的后面写「当日 ±x.xx%」。
+
+影子账户现金账本仍然只跟纸面事件走，不下实盘单。生产策略 `mainline-v1-theme-exit-2d` 的买入来自 `next_buy` 主池。
+斐波那契名字另写 `fib-profit-space-shadow-v1`（`is_shadow=true`，不跟主题退出）：有效几何、剩余空间不低于 8%、非 ST、非基金、不与当日 next_buy 主池重复，且交易闸门不是「暂停新仓」。最多 5 只，回踩确认后才由影子现金账本模拟成交。
+
 数据库只保存进入研究清单的标的，不重复保存全市场原始K线。未配置 Supabase 时任务不会丢报告：
 规范化的 `storage_bundle.json` 会随 GitHub Artifact 保留，配置完成后可再导入。
 

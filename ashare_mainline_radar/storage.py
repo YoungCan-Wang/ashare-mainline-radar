@@ -8,8 +8,9 @@ from typing import Any, Callable
 from urllib.request import urlopen
 
 from .board_coverage import coverage_summary, snapshot_rows
+from .fib_online import FIB_POOL_ROLE
 from .models import BoardCoverageReport, BoardSnapshot, RadarReport
-from .paper_strategies import PAPER_STRATEGIES, PRODUCTION_PAPER_STRATEGY
+from .paper_strategies import FIB_SHADOW_STRATEGY, PAPER_STRATEGIES, PRODUCTION_PAPER_STRATEGY
 from .supabase_rest import fetch_rows, upsert_rows
 
 SCHEMA_VERSION = "radar-storage-v4"
@@ -19,6 +20,7 @@ ROLE_ORDER = (
     "golden_pit",
     "accumulation",
     "monthly_base",
+    "fib_profit_space",
     "expectation_gap",
     "leader_tape",
     "market_watchlist",
@@ -26,7 +28,7 @@ ROLE_ORDER = (
 # Persist only a small ranked actionable set that drives paper trades / quote tracking.
 # expectation_gap full scans, leader_tape, market_watchlist, and unmapped_pullback stay
 # in daily report artifacts (JSON/MD/Feishu) and can be regenerated from TickFlow.
-ACTIONABLE_ROLES = ROLE_ORDER[:5]
+ACTIONABLE_ROLES = ROLE_ORDER[:6]
 ARTIFACT_ONLY_ROLES = ("expectation_gap", "leader_tape", "market_watchlist", "unmapped_pullback")
 # Hard per-role caps after ranking by priority_score/score (descending).
 ROLE_PERSISTENCE_CAPS: dict[str, int] = {
@@ -35,6 +37,7 @@ ROLE_PERSISTENCE_CAPS: dict[str, int] = {
     "golden_pit": 10,
     "accumulation": 12,
     "monthly_base": 12,
+    "fib_profit_space": 12,
 }
 
 
@@ -167,6 +170,7 @@ def _candidate_sections(report: dict[str, Any]) -> list[tuple[str, list[dict[str
         ("golden_pit", _list(_dict(report.get("golden_pits")).get("candidates"))),
         ("accumulation", _list(_dict(report.get("accumulation")).get("candidates"))),
         ("monthly_base", _list(_dict(report.get("monthly_bases")).get("candidates"))),
+        (FIB_POOL_ROLE, _list(_dict(report.get("fib_profit_space")).get("candidates"))),
         ("expectation_gap", _list(_dict(report.get("expectation_gaps")).get("signals"))),
         ("leader_tape", _list(report.get("leader_tape"))),
         ("market_watchlist", _list(report.get("market_watchlist"))),
@@ -281,6 +285,62 @@ def _paper_trade_records(
                     "created_at": generated_at,
                 }
             )
+    fib_pool = _dict(report.get("fib_profit_space"))
+    for candidate in _list(fib_pool.get("shadow_candidates")):
+        if not isinstance(candidate, dict) or any(candidate.get(key) in (None, "") for key in required):
+            continue
+        symbol = str(candidate["symbol"])
+        if symbol in seen_symbols:
+            continue
+        if str(candidate.get("execution_status") or "") == "triggered":
+            continue
+        seen_symbols.add(symbol)
+        strategy = FIB_SHADOW_STRATEGY
+        plan_key = f"{market_date}:{symbol}:{strategy.version}"
+        plans.append(
+            {
+                "plan_key": plan_key,
+                "source_run_key": run_key,
+                "symbol": symbol,
+                "name": candidate["name"],
+                "theme": candidate.get("theme") or "斐波那契赚钱空间",
+                "signal_date": market_date,
+                "signal_price": candidate["last_close"],
+                "status": candidate.get("execution_status") or "watching",
+                "entry_mode": candidate["entry_mode"],
+                "entry_zone_low": candidate["entry_zone_low"],
+                "entry_zone_high": candidate["entry_zone_high"],
+                "confirm_price": candidate["confirm_price"],
+                "stop_price": candidate["stop_price"],
+                "valid_for_days": candidate.get("valid_for_days") or 5,
+                "max_hold_days": candidate.get("max_hold_days") or 15,
+                "max_position_fraction": candidate.get("max_position_fraction") or 0.12,
+                "initial_position_fraction": candidate.get("initial_position_fraction") or 0.04,
+                "strategy_version": strategy.version,
+                "strategy_label": strategy.label,
+                "theme_exit_days": strategy.theme_exit_days,
+                "is_shadow": True,
+                "created_at": generated_at,
+                "updated_at": generated_at,
+            }
+        )
+        events.append(
+            {
+                "event_key": f"{plan_key}:created",
+                "plan_key": plan_key,
+                "symbol": symbol,
+                "strategy_version": strategy.version,
+                "event_type": "created",
+                "event_date": market_date,
+                "price": candidate["last_close"],
+                "payload": {
+                    "decision": candidate.get("decision"),
+                    "strategy_label": strategy.label,
+                    "pool": "fib_profit_space",
+                },
+                "created_at": generated_at,
+            }
+        )
     return plans, events
 
 
@@ -342,6 +402,7 @@ def _market_metrics(candidate: dict[str, Any]) -> dict[str, Any]:
         "amount_ratio_1_5",
         "amount_ratio_5_20",
         "amount_ratio_10_30",
+        "daily_change_pct",
         "high_proximity_20d",
         "ma20_distance",
         "box_low",

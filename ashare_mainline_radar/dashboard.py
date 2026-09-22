@@ -176,6 +176,9 @@ def build_dashboard_payload(
             )
         else:
             enriched["latest_price"] = row.get("last_close")
+            metrics = row.get("market_metrics") if isinstance(row.get("market_metrics"), dict) else {}
+            if metrics.get("daily_change_pct") is not None:
+                enriched["daily_change_pct"] = metrics.get("daily_change_pct")
         if paper_plan:
             enriched["paper_trade_plan"] = paper_plan
         if shadow_plan:
