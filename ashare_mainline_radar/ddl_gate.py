@@ -16,7 +16,13 @@ RPC_PROBE_PAYLOADS = {
         "p_positions": [],
         "p_events": [],
         "p_nav": {},
-    }
+    },
+    "apply_fib_profit_space_day": {
+        "p_asof": None,
+        "p_rows": [],
+        "p_status": "未运行",
+        "p_message": None,
+    },
 }
 
 

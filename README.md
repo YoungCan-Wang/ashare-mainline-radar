@@ -348,6 +348,11 @@ RLS 会校验入库密钥的 SHA-256 摘要，只允许它读写 `radar_*` 研�
 只刷新当前可执行研究池，不重跑全市场。若 TickFlow 返回的行情日期不是当天，任务会跳过写入和部署；
 手动诊断时可显式设置 `allow_stale=true`。
 
+`.github/workflows/fib-profit-space.yml` 在工作日北京时间 19:30 计算全 A 股（含 ST）斐波那契赚钱空间，
+06:30 只在当晚没有成功记录时补跑，并在次一交易日 07:50 前结束。任务复用 TickFlow `CN_Equity_A` 日 K，
+把排名写入 `fib_profit_space_daily`，把运行结果写入 `fib_profit_space_run_status`。
+没有成功状态时读作「未运行」，不会把空表当成「当天没有赚钱空间」。分支上手动运行只用很小的股票池。
+
 数据库只保存进入研究清单的标的，不重复保存全市场原始K线。未配置 Supabase 时任务不会丢报告：
 规范化的 `storage_bundle.json` 会随 GitHub Artifact 保留，配置完成后可再导入。
 

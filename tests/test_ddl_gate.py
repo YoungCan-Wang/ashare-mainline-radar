@@ -126,11 +126,30 @@ def test_apply_shadow_day_probe_sends_named_arguments() -> None:
     }
 
 
+def test_fib_profit_space_probe_sends_named_arguments() -> None:
+    seen: list[Request] = []
+
+    def opener(request: Request, timeout: float):
+        seen.append(request)
+        raise HTTPError(request.full_url, 400, "radar ingest unauthorized", hdrs=None, fp=None)
+
+    assert object_exists("https://example.supabase.co", "key", "routine", "apply_fib_profit_space_day", opener)
+    assert json.loads(seen[0].data.decode("utf-8")) == {
+        "p_asof": None,
+        "p_rows": [],
+        "p_status": "未运行",
+        "p_message": None,
+    }
+
+
 def test_repo_contract_loads() -> None:
     contract = load_contract()
     assert "shadow_account" in contract["tables"]
     assert "radar_board_snapshots" in contract["tables"]
+    assert "fib_profit_space_daily" in contract["tables"]
+    assert "fib_profit_space_run_status" in contract["tables"]
     assert "apply_shadow_day" in contract["routines"]
+    assert "apply_fib_profit_space_day" in contract["routines"]
 
 
 def test_live_schema_error_lists_missing_objects() -> None:

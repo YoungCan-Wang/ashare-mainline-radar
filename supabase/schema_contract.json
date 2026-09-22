@@ -11,9 +11,12 @@
     "shadow_account",
     "shadow_positions",
     "shadow_events",
-    "shadow_nav_daily"
+    "shadow_nav_daily",
+    "fib_profit_space_daily",
+    "fib_profit_space_run_status"
   ],
   "routines": [
-    "apply_shadow_day"
+    "apply_shadow_day",
+    "apply_fib_profit_space_day"
   ]
 }
