@@ -127,6 +127,7 @@ def call_rpc(
     function_name: str,
     payload: dict[str, Any],
     opener: Callable[..., Any] = urlopen,
+    timeout: float = 30,
 ) -> Any:
     headers = request_headers(api_key, ingest_key)
     headers["Content-Type"] = "application/json"
@@ -137,7 +138,7 @@ def call_rpc(
         headers=headers,
     )
     try:
-        with opener(request, timeout=30) as response:
+        with opener(request, timeout=timeout) as response:
             if not 200 <= response.status < 300:
                 raise RuntimeError(f"Supabase rpc {function_name} returned HTTP {response.status}")
             raw = response.read()

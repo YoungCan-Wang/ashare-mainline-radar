@@ -398,6 +398,7 @@ def _trade_block(
     candidate: StrongStockCandidate | None,
     target: TargetPriceEstimate | None,
     include_entry: bool,
+    daily_changes: dict[str, float] | None = None,
 ) -> str:
     backtest = candidate.backtest if candidate else None
     win = "n/a" if not backtest or backtest.win_rate is None else f"{backtest.win_rate * 100:.0f}%"
@@ -405,7 +406,7 @@ def _trade_block(
     is_fund = bool(candidate and ("ETF" in candidate.name.upper() or "基金" in candidate.name))
     fundamental = "ETF分散载体" if is_fund else candidate.fundamental_status if candidate else "基本面未覆盖"
     lines = [
-        f"**{plan.name} `{plan.symbol}`**｜{plan.theme}｜{plan.lifecycle_stage}｜优先级 {plan.priority_score:.1f}",
+        f"**{plan.name} `{plan.symbol}`**｜{plan.theme}｜{plan.lifecycle_stage}｜优先级 {plan.priority_score:.1f}{_same_day_label(plan, changes=daily_changes)}",
         f"{report_hold_days(candidate)}日回测：胜率 {win}｜均值 {avg}｜{fundamental}",
         _target_text(target),
     ]
@@ -427,6 +428,71 @@ def _div(content: str) -> dict[str, Any]:
 
 def _fmt_price(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.2f}"
+
+
+def _same_day_label(
+    item: Any = None,
+    *,
+    symbol: str | None = None,
+    changes: dict[str, float] | None = None,
+) -> str:
+    """Append same-day percent when the online path already emitted it."""
+    value = None
+    if isinstance(item, dict):
+        value = item.get("daily_change_pct")
+        if value is None:
+            value = item.get("ret_1d")
+        if symbol is None and item.get("symbol"):
+            symbol = str(item["symbol"])
+    elif item is not None:
+        value = getattr(item, "daily_change_pct", None)
+        if value is None:
+            value = getattr(item, "ret_1d", None)
+        if symbol is None and getattr(item, "symbol", None):
+            symbol = str(item.symbol)
+    if value is None and changes and symbol:
+        value = changes.get(symbol)
+    if value is None:
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    return f"｜当日 {number * 100:+.2f}%"
+
+
+def collect_daily_changes(report: RadarReport, klines: dict[str, Any] | None = None) -> dict[str, float]:
+    changes: dict[str, float] = {}
+
+    def take(symbol: str | None, value: Any) -> None:
+        if not symbol or value is None or symbol in changes:
+            return
+        try:
+            changes[str(symbol)] = float(value)
+        except (TypeError, ValueError):
+            return
+
+    groups = [
+        report.strong_stocks.candidates,
+        report.accumulation.candidates,
+        report.golden_pits.candidates,
+        report.monthly_bases.candidates,
+        report.unmapped_pullback.candidates,
+        report.fib_profit_space.candidates,
+        report.fib_profit_space.shadow_candidates,
+        [plan for plan in (report.next_buy.primary, *report.next_buy.alternatives, *report.next_buy.triggered_orders) if plan],
+    ]
+    for group in groups:
+        for item in group:
+            value = getattr(item, "daily_change_pct", None)
+            if value is None:
+                value = getattr(item, "ret_1d", None)
+            take(getattr(item, "symbol", None), value)
+    for symbol, series in (klines or {}).items():
+        closes = getattr(series, "close", None) or []
+        if len(closes) >= 2 and closes[-2]:
+            take(str(symbol), closes[-1] / closes[-2] - 1)
+    return changes
 
 
 def _gate_section(report: RadarReport) -> dict[str, Any]:
@@ -486,6 +552,7 @@ def build_feishu_card(
     report: RadarReport,
     dashboard_url: str | None = None,
     sell_previews: list[dict[str, Any]] | None = None,
+    daily_changes: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     candidates = {item.symbol: item for item in report.strong_stocks.candidates}
     targets = {item.symbol: item for item in report.target_prices.estimates}
@@ -606,7 +673,7 @@ def build_feishu_card(
         for signal in watch.signals[:6]:
             themes = "、".join(signal.themes) if signal.themes else "未映射"
             watch_lines.append(
-                f"**{signal.signal_type}｜{signal.name} `{signal.symbol}`｜{signal.verdict}**｜{themes}\n{signal.action}"
+                f"**{signal.signal_type}｜{signal.name} `{signal.symbol}`｜{signal.verdict}**｜{themes}{_same_day_label(signal, changes=daily_changes)}\n{signal.action}"
             )
         elements.extend([{"tag": "hr"}, _div("\n\n".join(watch_lines))])
     elements.extend(
@@ -621,10 +688,10 @@ def build_feishu_card(
             "收盘确认已成立；下一交易日开盘成交。不是当天新生成的等待回踩卡。",
         ]
         for plan in triggered:
-            trigger_lines.append(_triggered_block(plan))
+            trigger_lines.append(_triggered_block(plan) + _same_day_label(plan, changes=daily_changes))
         elements.extend([{"tag": "hr"}, _div("\n\n".join(trigger_lines))])
     if sell_previews:
-        sell_lines = _sell_preview_lines(sell_previews, include_watch=True)
+        sell_lines = _sell_preview_lines(sell_previews, include_watch=True, daily_changes=daily_changes)
         if sell_lines:
             elements.extend([{"tag": "hr"}, _div("\n\n".join(sell_lines))])
     elements.extend(
@@ -635,7 +702,7 @@ def build_feishu_card(
     )
     if attempt:
         for plan in attempt:
-            elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), True)))
+            elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), True, daily_changes)))
     else:
         elements.append(_div(_empty_attempt_copy(report, candidates)))
 
@@ -648,7 +715,7 @@ def build_feishu_card(
     )
     if hold:
         for plan in hold:
-            elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), False)))
+            elements.append(_div(_trade_block(plan, candidates.get(plan.symbol), targets.get(plan.symbol), False, daily_changes)))
     else:
         elements.append(_div("当前没有达到继续持有标准的顺势候选。"))
 
@@ -657,7 +724,7 @@ def build_feishu_card(
         for plan in waiting:
             elements.append(
                 _div(
-                    f"**{plan.name} `{plan.symbol}`**｜{plan.theme}｜{plan.lifecycle_stage}\n"
+                    f"**{plan.name} `{plan.symbol}`**｜{plan.theme}｜{plan.lifecycle_stage}{_same_day_label(plan, changes=daily_changes)}\n"
                     f"{_waiting_note(plan, report.trading_gate.level, candidates.get(plan.symbol))}"
                 )
             )
@@ -700,7 +767,7 @@ def build_feishu_card(
             )
             status = "可买" if item.buyable_now else "观察"
             lines.append(
-                f"**{item.name} `{item.symbol}`**｜{status}｜{item.style_tag}｜优先级 {item.priority_score:.0f}\n"
+                f"**{item.name} `{item.symbol}`**｜{status}｜{item.style_tag}｜优先级 {item.priority_score:.0f}{_same_day_label(item, changes=daily_changes)}\n"
                 f"{item.decision}｜买入区 {zone}｜确认 {_fmt_price(item.confirm_price)}｜止损 {_fmt_price(item.stop_price)}\n"
                 f"{item.gate_action}"
             )
@@ -711,7 +778,7 @@ def build_feishu_card(
         lines = ["<font color='orange'>**四、主线黄金坑（先等确认）**</font>"]
         for item in golden_pits:
             lines.append(
-                f"**{item.name} `{item.symbol}`**｜{item.theme}｜{item.stage}｜评分 {item.score:.1f}\n"
+                f"**{item.name} `{item.symbol}`**｜{item.theme}｜{item.stage}｜评分 {item.score:.1f}{_same_day_label(item, changes=daily_changes)}\n"
                 f"动作：{item.action}\n确认：{item.confirmation}\n失效：{item.invalidation}"
             )
         elements.extend([{"tag": "hr"}, _div("\n\n".join(lines))])
@@ -722,7 +789,7 @@ def build_feishu_card(
         for item in monthly_bases:
             themes = "、".join(item.themes) if item.themes else "未映射"
             lines.append(
-                f"**{item.name} `{item.symbol}`**｜{themes}｜{item.stage}｜评分 {item.score:.1f}\n"
+                f"**{item.name} `{item.symbol}`**｜{themes}｜{item.stage}｜评分 {item.score:.1f}{_same_day_label(item, changes=daily_changes)}\n"
                 f"箱体：{item.box_low:.2f}-{item.box_high:.2f}（{item.box_months}个月）｜当前位置 {item.box_position * 100:.0f}%\n"
                 f"动作：{item.action}\n确认：{item.confirmation}\n失效：{item.invalidation}"
             )
@@ -733,10 +800,38 @@ def build_feishu_card(
         lines = ["<font color='grey'>**六、低位资金观察（不是立即建仓）**</font>"]
         for item in low_position:
             lines.append(
-                f"{item.name} `{item.symbol}`｜{item.primary_theme}｜{item.status}｜"
+                f"{item.name} `{item.symbol}`｜{item.primary_theme}｜{item.status}"
+                f"{_same_day_label(item, changes=daily_changes)}｜"
                 f"评分 {item.score:.1f}｜成交5/20 {item.amount_ratio_5_20 or 0:.2f}x"
             )
         elements.extend([{"tag": "hr"}, _div("\n".join(lines))])
+
+    fib = report.fib_profit_space
+    fib_lines = [
+        "<font color='grey'>**斐波那契赚钱空间**</font>（观察池；合适标的只进影子账户，不下实盘单）",
+        f"状态 {fib.state}｜扫描 {fib.scanned}｜上榜 {len(fib.candidates)}｜影子候选 {len(fib.shadow_candidates)}",
+    ]
+    if fib.state != "成功":
+        fib_lines.append("当日赚钱空间未运行，不把空榜当成没有空间。")
+    else:
+        shadow_symbols = {item.symbol for item in fib.shadow_candidates}
+        listed = list(fib.candidates[:8])
+        seen = {item.symbol for item in listed}
+        listed.extend(item for item in fib.shadow_candidates if item.symbol not in seen)
+        for item in listed:
+            space = f"{item.remaining_space_pct * 100:.1f}%"
+            flags = ""
+            if item.is_st:
+                flags += "｜ST"
+            if item.symbol in shadow_symbols:
+                flags += "｜影子池"
+            fib_lines.append(
+                f"**{item.name} `{item.symbol}`**｜排名 {item.rank}｜剩余空间 {space}"
+                f"{_same_day_label(item, changes=daily_changes)}{flags}"
+            )
+    for note in fib.notes[:3]:
+        fib_lines.append(note)
+    elements.extend([{"tag": "hr"}, _div("\n".join(fib_lines))])
 
     elements.extend(
         [
@@ -804,7 +899,10 @@ def _shadow_block_label(event: dict[str, Any]) -> str:
     return _SHADOW_BLOCK_LABELS.get(reason, reason)
 
 
-def _shadow_working_order_lines(working_orders: list[dict[str, Any]]) -> list[str]:
+def _shadow_working_order_lines(
+    working_orders: list[dict[str, Any]],
+    daily_changes: dict[str, float] | None = None,
+) -> list[str]:
     lines = ["<font color='red'>**待成交挂单**</font>"]
     for item in working_orders:
         payload = item.get("cost_payload") if isinstance(item.get("cost_payload"), dict) else {}
@@ -817,7 +915,8 @@ def _shadow_working_order_lines(working_orders: list[dict[str, Any]]) -> list[st
         zone_low, zone_high = item.get("entry_zone_low"), item.get("entry_zone_high")
         zone = f"{zone_low}-{zone_high}" if zone_low not in (None, "") and zone_high not in (None, "") else "n/a"
         lines.append(
-            f"**{item.get('name') or ''} `{item.get('symbol')}`：已触发，{order}。**\n"
+            f"**{item.get('name') or ''} `{item.get('symbol')}`：已触发，{order}。**"
+            f"{_same_day_label(item, changes=daily_changes)}\n"
             f"确认日 {item.get('trigger_date') or 'n/a'}｜确认价 {item.get('confirm_price')}｜"
             f"原买入区 {zone}｜原信号日 {item.get('signal_date') or 'n/a'}"
         )
@@ -845,7 +944,12 @@ def _sell_preview_detail(item: dict[str, Any]) -> str:
     return detail
 
 
-def _sell_preview_lines(sell_previews: list[dict[str, Any]], *, include_watch: bool = True) -> list[str]:
+def _sell_preview_lines(
+    sell_previews: list[dict[str, Any]],
+    *,
+    include_watch: bool = True,
+    daily_changes: dict[str, float] | None = None,
+) -> list[str]:
     action = _actionable_sell_previews(sell_previews)
     watch = _watch_sell_previews(sell_previews) if include_watch else []
     lines: list[str] = []
@@ -853,7 +957,10 @@ def _sell_preview_lines(sell_previews: list[dict[str, Any]], *, include_watch: b
         lines.append("<font color='red'>**明日退出 / 今日收盘退出**</font>")
         for item in action:
             detail = _sell_preview_detail(item)
-            block = f"**{item.get('name') or ''} `{item.get('symbol')}`：{item.get('label')}。**"
+            block = (
+                f"**{item.get('name') or ''} `{item.get('symbol')}`：{item.get('label')}。**"
+                f"{_same_day_label(item, changes=daily_changes)}"
+            )
             if detail:
                 block = f"{block}\n{detail}"
             lines.append(block)
@@ -864,7 +971,10 @@ def _sell_preview_lines(sell_previews: list[dict[str, Any]], *, include_watch: b
         for item in watch:
             detail = _sell_preview_detail(item)
             suffix = f"｜{detail}" if detail else ""
-            lines.append(f"{item.get('name') or ''} `{item.get('symbol')}`　{item.get('label')}{suffix}")
+            lines.append(
+                f"{item.get('name') or ''} `{item.get('symbol')}`　{item.get('label')}"
+                f"{_same_day_label(item, changes=daily_changes)}{suffix}"
+            )
     return lines
 
 
@@ -875,6 +985,7 @@ def build_shadow_feishu_card(
     message: str | None = None,
     working_orders: list[dict[str, Any]] | None = None,
     sell_previews: list[dict[str, Any]] | None = None,
+    daily_changes: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
@@ -904,16 +1015,17 @@ def build_shadow_feishu_card(
             sellable = int(item.get("sellable_shares") or 0)
             hold_lines.append(
                 f"**{item.get('name') or ''} `{item.get('symbol')}`**　{shares}股"
-                f"{'（T+1）' if sellable < shares else ''}\n"
+                f"{'（T+1）' if sellable < shares else ''}"
+                f"{_same_day_label(symbol=str(item.get('symbol') or ''), changes=daily_changes)}\n"
                 f"成本 {_cny(avg_cost)}　现价 {_cny(mark)}　浮盈亏 {_signed_cny(unrealized)}"
             )
     else:
         hold_lines.append("当前空仓")
     elements.extend([{"tag": "hr"}, _div("\n".join(hold_lines))])
     if working_orders:
-        elements.extend([{"tag": "hr"}, _div("\n".join(_shadow_working_order_lines(working_orders)))])
+        elements.extend([{"tag": "hr"}, _div("\n".join(_shadow_working_order_lines(working_orders, daily_changes)))])
     if sell_previews:
-        sell_lines = _sell_preview_lines(sell_previews, include_watch=True)
+        sell_lines = _sell_preview_lines(sell_previews, include_watch=True, daily_changes=daily_changes)
         if sell_lines:
             elements.extend([{"tag": "hr"}, _div("\n".join(sell_lines))])
 
@@ -925,7 +1037,7 @@ def build_shadow_feishu_card(
             payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
             fill_lines.append(
                 f"{side} `{item.get('symbol')}`　{item.get('qty') or 0}股 @ {_cny(item.get('price'))}"
-                f"　费用 {_cny(fees.get('total'))}"
+                f"　费用 {_cny(fees.get('total'))}{_same_day_label(item, changes=daily_changes)}"
             )
             reason_note = payload.get("reason_note")
             price_note = payload.get("price_note")
@@ -941,7 +1053,9 @@ def build_shadow_feishu_card(
     if blocked:
         for item in blocked:
             payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-            block_lines.append(f"`{item.get('symbol')}`　{_shadow_block_label(item)}")
+            block_lines.append(
+                f"`{item.get('symbol')}`　{_shadow_block_label(item)}{_same_day_label(item, changes=daily_changes)}"
+            )
             if payload.get("reason_note"):
                 block_lines.append(f"成交理由：{payload['reason_note']}")
             if payload.get("price_note"):

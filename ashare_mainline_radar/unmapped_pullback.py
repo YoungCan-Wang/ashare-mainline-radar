@@ -350,6 +350,7 @@ def _build_candidate(
         max_hold_days=execution.max_hold_days,
         max_position_fraction=max_pos,
         initial_position_fraction=initial_pos,
+        daily_change_pct=snapshot.ret_1d,
     )
 
 

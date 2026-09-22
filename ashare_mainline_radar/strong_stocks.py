@@ -233,6 +233,7 @@ def build_strong_stock_report(
                     high_proximity_20d=snapshot.high_proximity_20d,
                     reasons=_candidate_reasons(snapshot, backtest),
                     backtest=backtest,
+                    daily_change_pct=snapshot.ret_1d,
                 )
             )
     theme_order = [theme.name for theme in selected_themes]

@@ -15,7 +15,7 @@ from .models import (
     TradingGate,
     cn_market_date_from_ms,
 )
-from .paper_strategies import PRODUCTION_PAPER_STRATEGY
+from .paper_strategies import FIB_SHADOW_STRATEGY, PRODUCTION_PAPER_STRATEGY
 
 
 def _fmt_price(value: float) -> str:
@@ -263,6 +263,7 @@ def _build_plan(
         max_hold_days=execution.max_hold_days,
         max_position_fraction=execution.max_position_fraction,
         initial_position_fraction=execution.initial_position_fraction,
+        daily_change_pct=candidate.daily_change_pct,
     )
 
 
@@ -383,11 +384,20 @@ def working_order_label(plan: dict[str, Any]) -> str:
     return note or "次日开盘市价挂单"
 
 
-def select_triggered_working_orders(paper_plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Prefer the live production working order when both strategies triggered."""
+def select_triggered_working_orders(
+    paper_plans: list[dict[str, Any]],
+    *,
+    include_fib_shadow: bool = False,
+) -> list[dict[str, Any]]:
+    """Prefer the live production working order when both strategies triggered.
+
+    Fib shadow plans stay off the mainline card unless the shadow card asks for them.
+    """
     selected: dict[str, dict[str, Any]] = {}
     for row in paper_plans:
         if str(row.get("status") or "") != "triggered":
+            continue
+        if str(row.get("strategy_version") or "") == FIB_SHADOW_STRATEGY.version and not include_fib_shadow:
             continue
         symbol = str(row.get("symbol") or "")
         if not symbol:
@@ -627,6 +637,7 @@ def _card_from_triggered(row: dict[str, Any], existing: NextBuyPlan | None) -> N
         trigger_date=str(trigger_date) if trigger_date else None,
         working_order_type=order_type,
         working_order_note=order_note,
+        daily_change_pct=existing.daily_change_pct if existing is not None else None,
     )
 
 

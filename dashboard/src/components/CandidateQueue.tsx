@@ -23,6 +23,7 @@ const ROLE_DEFINITIONS: ReadonlyArray<{ id: RoleFilter; label: string }> = [
   { id: "golden_pit", label: "黄金坑" },
   { id: "accumulation", label: "低位资金" },
   { id: "monthly_base", label: "月线箱体" },
+  { id: "fib_profit_space", label: "赚钱空间" },
 ] as const;
 
 const PAPER_STATUS_LABELS: Record<string, string> = {

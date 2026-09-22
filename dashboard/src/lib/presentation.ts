@@ -6,6 +6,7 @@ export const ROLE_LABELS: Readonly<Record<string, string>> = {
   golden_pit: "黄金坑",
   accumulation: "低位资金",
   monthly_base: "月线箱体",
+  fib_profit_space: "赚钱空间",
   expectation_gap: "预期差",
   leader_tape: "龙头带",
   market_watchlist: "观察池",

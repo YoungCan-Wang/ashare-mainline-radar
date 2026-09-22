@@ -587,6 +587,34 @@ def render_markdown(report: RadarReport, sell_previews: list[dict[str, Any]] | N
             lines.append(_theme_buy_group_row(rank, group))
         lines.append("")
 
+    fib = report.fib_profit_space
+    lines.append("## 斐波那契赚钱空间")
+    lines.append("")
+    lines.append(
+        "这是日报选股里的观察池，几何与 `fib_profit_space_daily` 相同。ST 留在榜内。"
+        "只有影子候选会进入影子账户买入池，不写生产纸面计划，也不下实盘单。"
+    )
+    lines.append("")
+    lines.append(f"状态：{fib.state}。扫描 {fib.scanned} 只，上榜 {len(fib.candidates)} 只，影子候选 {len(fib.shadow_candidates)} 只。")
+    if fib.state != "成功":
+        lines.append("")
+        lines.append("- 当日赚钱空间未运行，不把空榜当成没有空间。")
+    elif fib.candidates:
+        lines.append("")
+        lines.append("| 排名 | 标的 | 剩余空间 | 整段空间 | 当日 | 下沿 | 影子池 |")
+        lines.append("| ---: | --- | ---: | ---: | ---: | --- | --- |")
+        shadow_symbols = {item.symbol for item in fib.shadow_candidates}
+        for item in fib.candidates:
+            lines.append(
+                f"| {item.rank} | {item.name} `{item.symbol}` | {pct(item.remaining_space_pct)} | {pct(item.full_box_pct)} | "
+                f"{pct(item.daily_change_pct)} | {item.lower_source or 'n/a'} | "
+                f"{'是' if item.symbol in shadow_symbols else '否'} |"
+            )
+    lines.append("")
+    for note in fib.notes:
+        lines.append(f"- {note}")
+    lines.append("")
+
     lines.append("## 主线黄金坑雷达")
     lines.append("")
     lines.append("黄金坑只扫描前三主线核心股；先识别坑位，再等待止跌确认。市场闸门关闭时一律不把候选写成买点。")

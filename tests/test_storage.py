@@ -180,6 +180,7 @@ def test_storage_bundle_merges_roles_for_each_symbol() -> None:
         "golden_pit",
         "accumulation",
         "monthly_base",
+        "fib_profit_space",
     )
     assert bundle["tracking_policy"]["selection_roles"] == list(ACTIONABLE_ROLES)
     assert bundle["tracking_policy"]["role_caps"] == ROLE_PERSISTENCE_CAPS

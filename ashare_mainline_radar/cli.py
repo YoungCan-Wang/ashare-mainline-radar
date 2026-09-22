@@ -8,7 +8,15 @@ from pathlib import Path
 
 from .config import DEFAULT_INTEL_CONFIG, DEFAULT_THEME_CONFIG, load_json
 from .engine import MainlineRadar
-from .feishu import FeishuStatus, build_feishu_card, build_shadow_feishu_card, post_feishu_card, write_feishu_status
+from .feishu import (
+    FeishuStatus,
+    build_feishu_card,
+    build_shadow_feishu_card,
+    collect_daily_changes,
+    post_feishu_card,
+    write_feishu_status,
+)
+from .fib_online import apply_published_fib_board
 from .next_buy import (
     overlay_triggered_working_orders,
     select_pending_sell_previews,
@@ -90,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         as_of=as_of,
         board_history=board_history,
     )
+    apply_published_fib_board(report)
     active_themes = {
         theme.name for theme in report.themes[:3] if theme.status in {"主线成立", "主线候选"}
     }
@@ -108,10 +117,12 @@ def main(argv: list[str] | None = None) -> int:
         session_dates=session_dates_from_klines(paper_klines),
     )
     markdown_path, json_path = write_report(report, args.output_dir, sell_previews=sell_previews)
+    daily_changes = collect_daily_changes(report, paper_klines)
     feishu_card = build_feishu_card(
         report,
         dashboard_url=args.dashboard_public_url,
         sell_previews=sell_previews,
+        daily_changes=daily_changes,
     )
     feishu_card_path = args.output_dir / "feishu_card.json"
     feishu_card_path.write_text(json.dumps(feishu_card, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -130,11 +141,13 @@ def main(argv: list[str] | None = None) -> int:
         f"Paper trades: {paper_status.status}; checked={paper_status.plans_checked} "
         f"updated={paper_status.plans_updated} events={paper_status.events_written}"
     )
+    shadow_klines: dict = {}
     try:
         shadow_status = refresh_shadow_account(
             as_of=report.data_as_of,
             client=client,
             klines=paper_klines,
+            kline_out=shadow_klines,
         )
     except Exception as exc:
         shadow_status = ShadowRefreshStatus(
@@ -145,12 +158,14 @@ def main(argv: list[str] | None = None) -> int:
             f"{type(exc).__name__}: {exc}",
             empty_snapshot(report.data_as_of),
         )
+    daily_changes.update(collect_daily_changes(report, shadow_klines))
     shadow_card = build_shadow_feishu_card(
         shadow_status.snapshot,
         status=shadow_status.status,
         message=shadow_status.message,
-        working_orders=select_triggered_working_orders(paper_plans),
+        working_orders=select_triggered_working_orders(paper_plans, include_fib_shadow=True),
         sell_previews=sell_previews,
+        daily_changes=daily_changes,
     )
     shadow_card_path = args.output_dir / "shadow_card.json"
     shadow_card_path.write_text(json.dumps(shadow_card, ensure_ascii=False, indent=2), encoding="utf-8")

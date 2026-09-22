@@ -425,6 +425,26 @@ class MainlineRadar:
             trading_gate,
             theme_lifecycle=theme_lifecycle,
         )
+        from .fib_online import build_online_fib_pool, purchase_pool_symbols
+
+        fib_as_of = date.fromisoformat(data_as_of) if data_as_of else None
+        fib_profit_space = build_online_fib_pool(
+            klines=klines,
+            instruments=instruments,
+            as_of=fib_as_of,
+            gate_level=trading_gate.level,
+            occupied_symbols=purchase_pool_symbols(next_buy),
+            partial=mode != "universe",
+        )
+        source_statuses.append(
+            DataSourceStatus(
+                name="Fibonacci profit space",
+                kind="selection",
+                status="ok" if fib_profit_space.state == "成功" else "empty",
+                items=len(fib_profit_space.candidates),
+                message=fib_profit_space.notes[0] if fib_profit_space.notes else fib_profit_space.state,
+            )
+        )
         unmapped_pullback = build_unmapped_pullback_report(
             snapshots=snapshots,
             klines=klines,
@@ -477,6 +497,7 @@ class MainlineRadar:
             "本报告只用于研究和交易准备，不构成投资建议。",
             "预设主题与全市场未映射强势方向并行展示；自动发现项需人工确认归因后才能升级为可交易主线。",
             "东财热板与缺篮候选只做覆盖观察，不写入主线成立，也不自动改 theme_baskets.json。",
+            "斐波那契赚钱空间进入日报选股和飞书卡片；只有通过保守门槛的非 ST 标的写入影子买入池，不写生产纸面计划，也不下实盘单。",
             *theme_config_warnings,
         ]
         if self.client.api_key:
@@ -518,4 +539,5 @@ class MainlineRadar:
             unmapped_pullback=unmapped_pullback,
             price_limit_watch=price_limit_watch,
             board_coverage=board_coverage,
+            fib_profit_space=fib_profit_space,
         )

@@ -25,4 +25,13 @@ FROZEN_EXIT_CHALLENGER = PaperStrategy(
     is_shadow=True,
 )
 
+FIB_SHADOW_STRATEGY = PaperStrategy(
+    version="fib-profit-space-shadow-v1",
+    label="影子观察｜斐波那契赚钱空间",
+    theme_exit_days=0,
+    is_shadow=True,
+)
+
+# Production and the frozen 3-day challenger only. The Fib shadow book is
+# attached separately so it never becomes a mainline-v1 plan.
 PAPER_STRATEGIES = (PRODUCTION_PAPER_STRATEGY, FROZEN_EXIT_CHALLENGER)

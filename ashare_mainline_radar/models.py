@@ -181,6 +181,7 @@ class StrongStockCandidate:
     expectation_status: str = "未覆盖"
     reasons: list[str] = field(default_factory=list)
     backtest: BacktestSummary | None = None
+    daily_change_pct: float | None = None
 
 
 @dataclass
@@ -219,6 +220,7 @@ class NextBuyPlan:
     trigger_date: str | None = None
     working_order_type: str | None = None
     working_order_note: str | None = None
+    daily_change_pct: float | None = None
 
 
 @dataclass
@@ -261,6 +263,7 @@ class AccumulationCandidate:
     fundamental_score: float | None = None
     fundamental_status: str = "未覆盖"
     reasons: list[str] = field(default_factory=list)
+    daily_change_pct: float | None = None
 
 
 @dataclass
@@ -321,6 +324,7 @@ class MonthlyBaseCandidate:
     confirmation: str
     invalidation: str
     reasons: list[str] = field(default_factory=list)
+    daily_change_pct: float | None = None
 
 
 @dataclass
@@ -533,6 +537,7 @@ class UnmappedPullbackCandidate:
     max_hold_days: int = 15
     max_position_fraction: float = 0.12
     initial_position_fraction: float = 0.04
+    daily_change_pct: float | None = None
 
 
 @dataclass
@@ -540,6 +545,52 @@ class UnmappedPullbackReport:
     candidates: list[UnmappedPullbackCandidate]
     buyable_now: list[UnmappedPullbackCandidate] = field(default_factory=list)
     scanned: int = 0
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FibProfitSpaceCandidate:
+    symbol: str
+    name: str
+    rank: int
+    last_close: float
+    remaining_space_pct: float
+    full_box_pct: float | None = None
+    valid_flag: bool = False
+    is_st: bool = False
+    lower_source: str | None = None
+    daily_change_pct: float | None = None
+    theme: str = "斐波那契赚钱空间"
+    score: float = 0.0
+    priority_score: float = 0.0
+    decision: str = "赚钱空间观察"
+    execution_status: str = "watching"
+    entry_mode: str | None = None
+    entry_zone_low: float | None = None
+    entry_zone_high: float | None = None
+    confirm_price: float | None = None
+    stop_price: float | None = None
+    valid_for_days: int = 5
+    max_hold_days: int = 15
+    max_position_fraction: float = 0.12
+    initial_position_fraction: float = 0.04
+
+
+@dataclass
+class FibProfitSpacePool:
+    """Online selection slice of the Fibonacci profit-space ranking.
+
+    `state` is 成功 only when this session actually ranked bars, or when the
+    published `fib_profit_space_run_status` row for the same as-of is 成功.
+    Anything else stays 未运行 so an empty list is not read as "no space".
+    """
+
+    state: str = "未运行"
+    as_of: str | None = None
+    source: str = "unrun"
+    scanned: int = 0
+    candidates: list[FibProfitSpaceCandidate] = field(default_factory=list)
+    shadow_candidates: list[FibProfitSpaceCandidate] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -720,6 +771,7 @@ class RadarReport:
         )
     )
     board_coverage: BoardCoverageReport = field(default_factory=BoardCoverageReport)
+    fib_profit_space: FibProfitSpacePool = field(default_factory=FibProfitSpacePool)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -1,0 +1,70 @@
+name: Fibonacci profit space
+
+concurrency:
+  group: tickflow-api-${{ github.repository }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_symbols:
+        description: "0 scans the full A-share universe on main. Other branches stay on the tiny CI cap."
+        required: false
+        default: "0"
+      force:
+        description: "Run even if this post-close session already succeeded"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # 19:30 Asia/Shanghai on weekdays, after the close and after the daily radar.
+    - cron: "30 11 * * 1-5"
+    # 06:30 Asia/Shanghai Mon-Fri. Same post-close session, so a successful evening run skips it.
+    # The job stops after 75 minutes, inside the platform 6-hour kill and before 07:50.
+    - cron: "30 22 * * 0-4"
+
+jobs:
+  rank:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    env:
+      TICKFLOW_API_KEY: ${{ secrets.TICKFLOW_API_KEY }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+      RADAR_INGEST_KEY: ${{ secrets.RADAR_INGEST_KEY }}
+      FIB_MAX_SYMBOLS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_symbols || '0' }}
+      FIB_PROFIT_SPACE_PROFILE: ${{ (github.event_name == 'schedule' || github.ref == 'refs/heads/main') && 'production' || 'ci' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check daily frequency
+        id: frequency
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/check_workflow_frequency.py
+          --workflow fib-profit-space.yml
+          --policy daily
+          --force "${{ inputs.force || 'false' }}"
+      - name: Install package
+        if: steps.frequency.outputs.should_run == 'true'
+        run: python -m pip install -e ".[dev]"
+      - name: Run profit-space tests
+        if: steps.frequency.outputs.should_run == 'true'
+        run: python -m pytest tests/test_fib_profit_space.py
+      - name: Rank Fibonacci profit space
+        if: steps.frequency.outputs.should_run == 'true'
+        run: python scripts/run_fib_profit_space.py
+      - name: Upload summary
+        if: always() && steps.frequency.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fib-profit-space
+          path: reports/fib
+          retention-days: 30
+          if-no-files-found: ignore

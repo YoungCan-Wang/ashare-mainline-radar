@@ -227,6 +227,7 @@ def _candidate_from_series(
         entry_plan=entry_plan,
         invalidation=invalidation,
         reasons=reasons,
+        daily_change_pct=snapshot.ret_1d,
     )
 
 
