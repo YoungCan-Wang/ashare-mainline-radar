@@ -1,22 +1,20 @@
 name: Sync theme baskets
 
 # Theme baskets are scoring config, not runtime market data.
-# Refresh weekly (or manually), and open a PR when the basket changes.
-# Do not fold this into daily-mainline: East Money flakiness must not block the radar,
-# and silent basket edits would rewrite breadth denominators without review.
+# Refresh weekly (or manually). When quality gates pass and the file changed,
+# commit configs/theme_baskets.json directly to main. When gates fail, skip:
+# no commit, no branch, no pull request.
+# Do not fold this into daily-mainline: East Money flakiness must not block the radar.
+# Schedule never opens a PR. GitHub Actions in this org cannot create PRs
+# (createPullRequest is denied), which is why the old open-PR step failed.
 
 on:
   workflow_dispatch:
     inputs:
       offline:
-        description: "Use seed symbols only; skip East Money HTTP"
+        description: "Use seed symbols only; skip East Money HTTP. Quality gates refuse to commit this run."
         required: false
         default: false
-        type: boolean
-      open_pr:
-        description: "Open a pull request when theme_baskets.json changes"
-        required: false
-        default: true
         type: boolean
   schedule:
     # Sunday 20:00 Beijing time — prep for the next trading week.
@@ -27,10 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     env:
       OFFLINE: ${{ github.event_name == 'workflow_dispatch' && inputs.offline || false }}
-      OPEN_PR: ${{ github.event_name == 'schedule' || inputs.open_pr }}
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,17 +42,25 @@ jobs:
         run: |
           set -euo pipefail
           as_of="$(TZ=Asia/Shanghai date +%F)"
-          args=(--all-presets --write --as-of "$as_of")
+          args=(--all-presets --write --as-of "$as_of" --enforce-quality-gates)
           if [[ "$OFFLINE" == "true" ]]; then
             args+=(--offline)
           fi
-          python scripts/sync_theme_concepts.py "${args[@]}"
+          mkdir -p reports
+          python scripts/sync_theme_concepts.py "${args[@]}" | tee reports/sync-theme-baskets.log
+          if grep -q '^QUALITY gate=skip' reports/sync-theme-baskets.log || ! grep -q '^QUALITY gate=pass' reports/sync-theme-baskets.log; then
+            git checkout -- configs/theme_baskets.json
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "::warning title=theme basket quality gate::Quality gates did not pass; left main untouched"
+            grep '^QUALITY ' reports/sync-theme-baskets.log || true
+            exit 0
+          fi
           if git diff --quiet -- configs/theme_baskets.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "theme_baskets.json unchanged"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            mkdir -p reports
             git --no-pager diff --stat -- configs/theme_baskets.json
             git --no-pager diff -- configs/theme_baskets.json > reports/theme-baskets.diff
             cp configs/theme_baskets.json reports/theme_baskets.json
@@ -68,35 +73,23 @@ jobs:
           path: |
             reports/theme-baskets.diff
             reports/theme_baskets.json
+            reports/sync-theme-baskets.log
           retention-days: 30
-      - name: Open pull request
-        if: steps.sync.outputs.changed == 'true' && env.OPEN_PR == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Commit theme baskets to main
+        if: steps.sync.outputs.changed == 'true'
         run: |
           set -euo pipefail
-          branch="chore/sync-theme-baskets-$(TZ=Asia/Shanghai date +%Y%m%d)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add configs/theme_baskets.json
+          git add -- configs/theme_baskets.json
           git commit -m "chore: refresh curated theme baskets from East Money" \
-            -m "Weekly liquidity/constituent sync for preset mainlines. Seed leaders stay first; review before merge because this changes scoring universes."
-          git push -u origin "HEAD:$branch" --force
-          existing="$(gh pr list --head "$branch" --json number --jq '.[0].number')"
-          if [[ -n "$existing" ]]; then
-            echo "Updated existing PR #$existing"
-            exit 0
+            -m "Weekly liquidity/constituent sync for preset mainlines. Quality gates passed, so this commits directly to main and does not open a pull request."
+          # contents:write lets GITHUB_TOKEN push. If a ruleset blocks Actions on
+          # the default branch, this push fails and main stays untouched.
+          if ! git push origin HEAD:main; then
+            echo "Push to main was rejected. Retrying once after rebase onto origin/main."
+            echo "If the error is a permission or ruleset denial, allow the Actions GITHUB_TOKEN to push to the default branch. This job does not open a pull request."
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
           fi
-          {
-            echo "## Summary"
-            echo "- Ran \`scripts/sync_theme_concepts.py --all-presets\` against East Money boards"
-            echo "- Seed leaders are preserved; only liquidity fill / source stamp may change"
-            echo "- Please skim symbol diffs before merge — this rewrites theme breadth denominators"
-            echo
-            echo "## Test plan"
-            echo "- [ ] Review \`configs/theme_baskets.json\` diff for unexpected small-cap churn"
-            echo "- [ ] Confirm seed leaders for 大消费 / 光伏 / 新能源车 / 电力电网 still present"
-            echo "- [ ] Optional: run \`python scripts/run_daily.py --mode curated\` after merge"
-          } > /tmp/pr-body.md
-          gh pr create --title "chore: refresh curated theme baskets" --body-file /tmp/pr-body.md

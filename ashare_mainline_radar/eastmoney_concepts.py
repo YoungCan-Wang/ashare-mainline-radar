@@ -615,11 +615,14 @@ def build_theme_from_preset(
     *,
     as_of: str | None = None,
     fetch_constituents=None,
+    fetch_stats: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Materialize a theme dict from a preset and live East Money constituents.
 
     A single flaky board (HTTP 502/503/timeout after retries) must not abort the
     preset: that board contributes no live fill, and seed_symbols still lead.
+    Optional ``fetch_stats`` accumulates ``attempted``, ``failed``, and
+    ``live_rows`` for the weekly quality gates.
     """
     preset = THEME_PRESETS.get(preset_name)
     if not preset:
@@ -629,19 +632,30 @@ def build_theme_from_preset(
     fetch = fetch_constituents or fetch_board_constituents
     constituents_by_board: dict[str, list[dict[str, Any]]] = {}
     board_labels: list[str] = []
+    attempted = 0
+    failed = 0
+    live_rows = 0
     for board in preset["boards"]:
         code = str(board["code"])
         label = str(board["name"])
         board_labels.append(f"{label}({code})")
+        attempted += 1
         try:
-            constituents_by_board[code] = fetch(code, pages=2)
+            rows = fetch(code, pages=2)
+            constituents_by_board[code] = rows
+            live_rows += len(rows)
         except (RuntimeError, OSError, TimeoutError, ValueError) as exc:
+            failed += 1
             print(
                 f"warning: East Money board {code} ({label}) fetch failed; "
                 f"continuing with seed/other-board fill: {exc}",
                 file=sys.stderr,
             )
             constituents_by_board[code] = []
+    if fetch_stats is not None:
+        fetch_stats["attempted"] = fetch_stats.get("attempted", 0) + attempted
+        fetch_stats["failed"] = fetch_stats.get("failed", 0) + failed
+        fetch_stats["live_rows"] = fetch_stats.get("live_rows", 0) + live_rows
 
     symbols = select_scoring_symbols(
         constituents_by_board,

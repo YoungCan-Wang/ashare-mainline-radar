@@ -71,6 +71,19 @@ def test_one_board_502_does_not_abort_all_presets() -> None:
     assert "BK0509" in media["source"]
 
 
+def test_fetch_stats_count_a_single_board_failure() -> None:
+    def fake_fetch(board_code: str, pages: int = 2) -> list[dict]:
+        if board_code == "BK0509":
+            raise RuntimeError("HTTP Error 502: Bad Gateway")
+        return [{"symbol": "600000.SH", "code": "600000", "amount": 1}]
+
+    stats: dict[str, int] = {}
+    build_theme_from_preset("传媒游戏", as_of="2026-10-05", fetch_constituents=fake_fetch, fetch_stats=stats)
+    assert stats["attempted"] == len(THEME_PRESETS["传媒游戏"]["boards"])
+    assert stats["failed"] == 1
+    assert stats["live_rows"] == stats["attempted"] - 1
+
+
 def test_request_json_rides_out_seven_502s(monkeypatch) -> None:
     """CDN 502 streaks of 7 must not exhaust retries before a 200 lands."""
     from ashare_mainline_radar import eastmoney_concepts as em

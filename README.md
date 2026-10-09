@@ -253,15 +253,16 @@ python3 scripts/sync_theme_concepts.py --preset 航运港口 --write
 2. 在 `ashare_mainline_radar/eastmoney_concepts.py` 的 `THEME_PRESETS` 增加或改一条预设，把 `boards` 写成东财原代码，例如 `{"code": "BK0473", "name": "化肥行业", "kind": "industry"}`。多个东财板块可以挂到同一雷达主题（many-to-one）。
 3. 干跑看成分：`python3 scripts/sync_theme_concepts.py --preset <主题名> --dry-run`
 4. 人工确认后再写回：`python3 scripts/sync_theme_concepts.py --preset <主题名> --write`
-5. `theme_baskets.json` 有 diff 就开 PR，不要从热板脚本直接推 main。
+5. 人工改 `theme_baskets.json` 有 diff 就开 PR，不要从热板脚本直接推 main。每周定时同步是另一条路：质检通过后由 Actions 直接提交 main，质检失败则整次跳过。
 
 **要不要每天跑同步？** 不用。日报只读当前 `theme_baskets.json`；主题名单是配置，不是盘中行情。热板快照才是每天写。  
-合理节奏是**每周刷新一次流动性成分**，有 diff 再人工过目。仓库已加 `.github/workflows/sync-theme-baskets.yml`：
+合理节奏是**每周刷新一次流动性成分**。仓库已加 `.github/workflows/sync-theme-baskets.yml`：
 
 - 每周日 20:00（北京时间）定时跑在线同步  
-- 也可在 Actions 里手动触发（可勾选 offline）  
-- `theme_baskets.json` 有变更时开 PR，不直接推 main  
-- 不并进 `daily-mainline`，避免东财超时拖垮日报，也避免无审改评分分母
+- 也可在 Actions 里手动触发（可勾选 offline；offline 会被质检拒绝提交）  
+- 质检通过且 `theme_baskets.json` 有变更时，直接提交 main，不开 PR  
+- 东财板块失败比例过高、种子回退过多、成分数量异常或小票换手过大时，整次跳过，main 保持不变  
+- 不并进 `daily-mainline`，避免东财超时拖垮日报
 
 后续可再接申万行业，做全市场扫描后的自动归因。
 
@@ -287,7 +288,7 @@ data/research_reports/inbox/
 - 重型策略回测只手动触发；同一提交在24小时内已有成功回测时跳过。
 - 两个任务都可以手动设置 `force=true` 绕过频率闸门，用于明确需要的补跑。
 - Artifact 保留90天；长期可查询历史写入 Supabase。
-- `sync-theme-baskets.yml` 每周刷新东财预设篮子并在有变更时开 PR；不改日报链路。
+- `sync-theme-baskets.yml` 每周刷新东财预设篮子；质检通过则直接提交 main，失败则跳过。不改日报链路。
 
 ## 可视化作战台
 
